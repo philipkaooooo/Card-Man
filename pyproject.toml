@@ -1,0 +1,8 @@
+[project]
+name = "cardman"
+version = "0.1.0"
+description = "Private Yu-Gi-Oh! (OCG/TCG) buying intelligence for one trader"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

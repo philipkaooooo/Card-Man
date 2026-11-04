@@ -1,0 +1,6 @@
+id,evidence_type,source,amount,currency,event_time,source_url,printing_id,listing_id,source_event_id,grade_company,grade,condition,is_lot,upstream
+d1,MARKETPLACE_MARKED_SOLD,demo,900,USD,2026-10-01T00:00:00+00:00,demo://1,p:LOB-EN001:UR:1st,A,,,,,,
+d2,ACCEPTED_OFFER,demo,820,USD,2026-10-20T00:00:00+00:00,demo://2,p:LOB-EN001:UR:1st,B,off2,,,,,
+d3,MARKETPLACE_MARKED_SOLD,demo,950,USD,2026-11-04T00:00:00+00:00,demo://3,p:LOB-EN001:UR:1st,C,,,,,,
+d4,ACTIVE_ASKING,demo,700,USD,2026-11-04T00:00:00+00:00,demo://4,p:LOB-EN001:UR:1st,D,,,,,,
+d5,AGGREGATE_ESTIMATE,feed,900,USD,2026-10-01T00:00:00+00:00,demo://5,p:LOB-EN001:UR:1st,,,,,,,demo:A

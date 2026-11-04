@@ -1,0 +1,16 @@
+{
+ "_note": "SYNTHETIC demo to exercise code paths. Not a real listing, not market evidence.",
+ "catalog_module": "tests.fixtures",
+ "listing_ref": "demo:1",
+ "signals": {"title": "Blue-Eyes White Dragon LOB-EN001 1st Edition", "printed_set_code": "LOB-EN001", "verified_edition": "1st"},
+ "ask": {"amount": "500", "currency": "USD"},
+ "last_seen": "2026-11-04T10:00:00+00:00",
+ "authenticity_ok": null,
+ "home_currency": "TWD",
+ "fx": [{"base": "USD", "quote": "TWD", "mid": "32.0", "as_of": "2026-10-01T00:00:00+00:00", "source": "demo"},
+        {"base": "USD", "quote": "TWD", "mid": "32.0", "as_of": "2026-11-04T00:00:00+00:00", "source": "demo"},
+        {"base": "USD", "quote": "TWD", "mid": "32.0", "as_of": "2026-10-20T00:00:00+00:00", "source": "demo"}],
+ "costs": {"target_return": "0.20", "holding_months": "2", "capital_cost_monthly": "0.01",
+           "acquisition": {"proxy_fee_pct": "0.0", "payment_fx_spread_pct": "0.015", "inbound_shipping": "600", "import_duty_pct": "0.0"},
+           "exit": {"platform_fee_pct": "0.1325", "outbound_shipping": "300", "returns_reserve_pct": "0.02"}}
+}
