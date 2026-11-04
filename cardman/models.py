@@ -6,7 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 from enum import Enum
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.2.0"
 
 
 class Region(str, Enum):
@@ -102,7 +102,11 @@ class Printing:
     game_format: GameFormat = GameFormat.DUEL_MONSTERS
     variant_evidence: tuple[str, ...] = ()
     source_refs: tuple[str, ...] = ()
-    # True only once cross-checked against a live identity source (Konami/YGOResources/YGOPRODeck).
+    product_name: str | None = None       # human product/promo name as the source spells it
+    # "documented" | "incomplete" (e.g. rarity missing in source). Incomplete printings never RESOLVE.
+    identity_status: str = "documented"
+    # True only once cross-checked against a primary identity source (Konami DB / YGOResources).
+    # Secondary compiled sources (YAML Yugi, YGOPRODeck) leave this False.
     verified_against_source: bool = False
 
 

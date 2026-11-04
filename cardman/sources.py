@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -14,6 +15,9 @@ from pathlib import Path
 
 # (source, capability, access_mode, probe_url or None, credential env var or None, notes)
 SOURCES = [
+    ("yaml_yugi", "canonical_identity", "git", "git+https://github.com/DawnbrandBots/yaml-yugi", None,
+     "secondary source compiled from Yugipedia: set code/product/rarity per region; no editions, release dates "
+     "or Asian-English prints; revision = git commit; synced by cardman.identity_cache"),
     ("ygoresources", "canonical_identity", "public_api", "https://db.ygoresources.com/manifest/0", None,
      "use /manifest/{revision} for cache invalidation"),
     ("ygoprodeck", "canonical_identity", "public_api",
@@ -23,7 +27,7 @@ SOURCES = [
      "https://www.db.yugioh-card.com/yugiohdb/card_search.action?ope=2&cid=4007&request_locale=ja", None,
      "official OCG/TCG database; respect terms"),
     ("ebay_browse", "active_listing", "oauth_api", "https://api.ebay.com/buy/browse/v1/item_summary/search?q=x",
-     "EBAY_CLIENT_ID", "needs app keys + OAuth"),
+     "EBAY_CLIENT_ID", "needs app keys + OAuth; adapter cardman.ebay_browse (asking/bid only, never sold)"),
     ("ebay_product_research", "accepted_offer", "account_ui", None, None,
      "seller-account research UI, not a developer endpoint; import via user export/screenshots"),
     ("tcgplayer", "market_aggregate", "partner_api", "https://api.tcgplayer.com/catalog/categories",
@@ -42,6 +46,13 @@ SOURCES = [
 
 
 def probe(url: str, timeout: float = 20) -> tuple[bool, str]:
+    if url.startswith("git+"):
+        try:
+            out = subprocess.run(["git", "ls-remote", url[4:], "HEAD"], capture_output=True, text=True,
+                                 timeout=timeout, check=True).stdout.split()
+            return True, f"git HEAD {out[0][:12]}" if out else "git ok"
+        except Exception as e:
+            return False, f"git: {type(e).__name__}: {e}"[:200]
     req = urllib.request.Request(url, headers={"User-Agent": "cardman-probe/0.1"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -74,7 +85,7 @@ def run_probes(out: Path) -> list[dict]:
             ok, detail = probe(url)
             row.update(tested=True, tested_at=now.isoformat())
             if ok:
-                row.update(available=True, last_success=now.isoformat(), failure_reason=None)
+                row.update(available=True, last_success=now.isoformat(), failure_reason=None, probe_detail=detail)
             else:
                 row["failure_reason"] = detail
         else:

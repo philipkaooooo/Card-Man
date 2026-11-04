@@ -1,0 +1,86 @@
+{
+ "konami_id": 4041,
+ "password": 36996508,
+ "card_type": "Monster",
+ "limit_regulation": {
+  "tcg": "Unlimited",
+  "ocg": "Unlimited",
+  "speed": "Unlimited"
+ },
+ "yugipedia_page_id": 4743,
+ "name": {
+  "en": "Dark Magician",
+  "ja": "ブラック・マジシャン",
+  "ja_romaji": "Burakku Majishan"
+ },
+ "sets": {
+  "en": [
+   {
+    "set_number": "YGLD-ENB02",
+    "set_name": "Yugi's Legendary Decks",
+    "rarities": [
+     "Ultra Rare"
+    ]
+   },
+   {
+    "set_number": "SBC1-ENG01",
+    "set_name": "Speed Duel: Streets of Battle City",
+    "rarities": [
+     "Secret Rare"
+    ]
+   },
+   {
+    "set_number": "SBC1-ENG10",
+    "set_name": "Speed Duel: Streets of Battle City",
+    "rarities": [
+     "Common"
+    ]
+   },
+   {
+    "set_number": "RA04-EN106",
+    "set_name": "Quarter Century Stampede",
+    "rarities": [
+     "Platinum Secret Rare",
+     "Quarter Century Secret Rare"
+    ]
+   }
+  ],
+  "ja": [
+   {
+    "set_number": "P4-02",
+    "set_name": "Premium Pack 4",
+    "rarities": [
+     "Ultra Rare"
+    ]
+   },
+   {
+    "set_number": "15AY-JPB02",
+    "set_name": "Memories of the Duel King: Battle City Arc",
+    "rarities": [
+     "Ultra Rare"
+    ]
+   },
+   {
+    "set_number": "DP16-JP008",
+    "set_name": "Duelist Pack: Battle City",
+    "rarities": [
+     "Super Rare"
+    ]
+   },
+   {
+    "set_number": "QCAC-JP018",
+    "set_name": "Quarter Century Art Collection",
+    "rarities": [
+     "Secret Rare",
+     "Quarter Century Secret Rare"
+    ]
+   }
+  ]
+ },
+ "images": [
+  {
+   "index": 1,
+   "image": "DarkMagician-RA04-EN-PlScR-1E.png"
+  }
+ ]
+}

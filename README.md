@@ -2,35 +2,49 @@
 
 Scope and rules: see the project's CLAUDE.md execution contract (JP OCG + EN TCG, TWD default, no Pokémon, no SaaS).
 
-## Status (2026-11-04)
+## Status (2026-11-04, second pass)
 
-### (a) Audit: what existed
-- No existing CardMan repository. Kao's GitHub has six repos; none contains card-market code (TB-Web is a 3D gallery site).
-- No source credentials in the environment (no eBay, TCGplayer, PriceCharting or PSA keys).
-- Every external card source was refused by the environment's network proxy (HTTP 403 on CONNECT):
-  YGOResources, YGOPRODeck, Konami DB, eBay Browse, TCGplayer, PriceCharting, PSA, Yahoo! Auctions JP, Mercari JP.
-  Results are recorded by `python -m cardman.sources` in `data/source_registry.json`.
+### Data access (tested, see `data/source_registry.json`)
+- **Working:** YAML Yugi (github.com/DawnbrandBots/yaml-yugi, compiled from Yugipedia) through the git proxy.
+  Revision `f0bbcfe1` (2026-11-04): 14,416 cards, 86,185 JP/EN printings in the local cache.
+- **Blocked (HTTP 403 from the environment's network proxy):** YGOResources, YGOPRODeck, Konami DB, eBay,
+  TCGplayer, PriceCharting, PSA, Yahoo! Auctions JP, Mercari JP. The network setting has to allow these hosts.
+- **No credentials set:** eBay, TCGplayer, PriceCharting.
 
-### (b) First vertical-slice code (pure Python 3.11+, stdlib only; pytest for tests)
-| Module | What it does |
-|---|---|
-| `models.py` | family / artwork / printing / specimen, 8 separate evidence types, Decimal money, tz-aware times |
-| `identity.py` | exact-print resolver with abstention; printed vs seller-typed fields kept apart; JP/EN never cross-mapped; Asian-English and Rush Duel quarantined; cert numbers not taken as set codes; names which photo would resolve an ambiguity |
-| `evidence.py` | lineage dedup (one sale through 3 feeds counts once; same slab sold twice stays two), up to 10 most recent exact-print sales, lots/grade mismatches/future data rejected, manual CSV import, content-addressed raw store |
-| `fx.py` | rate at event time, stale-rate refusal, explicit conversion spread |
-| `economics.py` | conservative/base/upside exits from comps (abstain under 3), closed-form buy ceiling for target return on all-in capital incl. buyer premium, proxy, duty, grading, holding cost; sensitivities |
-| `workflow.py` | hard gates for Qualified (identity, authenticity, comps, ceiling, freshness), expiry, one alert per immutable snapshot, WAIT requires a trigger, YES never buys |
-| `sources.py` | capability registry with real probes |
-| `slice.py` | end to end: listing JSON + observations CSV -> the five outputs |
+### Identity
+- `identity_sources.py`: YAML Yugi normalizer (family = Konami ID; artwork = passcode, so alternate-art
+  passcodes stay separate; printing = region + set code + product + rarity). Placeholder codes like
+  `MAMS-EN???` and entries without a rarity are `incomplete` and never resolve. YGOPRODeck / YGOResources
+  adapters exist but have not seen a live response.
+- `identity_cache.py`: SQLite cache. Sync is incremental by git blob hash, reads the committed bytes of a
+  given revision, retires (never deletes) printings that vanish, keeps a per-printing history and a sync log,
+  and leaves the previous revision intact if a sync fails. Real run: revision `6a82bdb8` -> `f0bbcfe1`
+  re-read 285 files, removed 80, +341 / ~6 / -170 printings in 0.5 s (full sync: 9 s).
+- Resolver: codes without a language segment (`LB-01`, `SKE-001`, `JMP-001`) take region from the catalog;
+  `verified_product` narrows code-less vintage prints; longest-name matching ("Dark Magician" is not
+  "Dark Magician Girl"); English prints never resolve while the loaded source has no edition data.
+- `tests/test_identity_real.py`: 18 traps on real printings (pinned subset in `tests/data/yaml_yugi`).
 
-Run: `pip install pytest && python -m pytest -q` (36 pass) and
-`python -m cardman.slice examples/demo_listing_SYNTHETIC.json examples/demo_observations_SYNTHETIC.csv --now 2026-11-04T12:00:00+00:00 --allow-synthetic`.
-The demo data is synthetic and is refused as evidence unless `--allow-synthetic` is passed.
+### Market
+- `ebay_browse.py`: OAuth client credentials, paginated search, backoff on 429/5xx, raw pages stored first,
+  outage raises instead of returning "no listings". Maps to ACTIVE_ASKING / OBSERVED_BID only; Best Offer
+  flagged. Untested live (no keys, host blocked).
+- Manual import (`examples/manual_import_TEMPLATE.csv`) is the path for sold, accepted-offer (eBay Product
+  Research) and Japanese marketplace records until an API path opens.
 
-### (c) Remaining gaps
-1. Network access to identity and market sources (environment setting) — blocks everything below.
-2. Identity cache from YGOResources/YGOPRODeck with revision-aware refresh; fixture printings are `verified_against_source=False` until cross-checked.
-3. Regression tests on real documented prints (JP original vs reprint, real shared-code multi-rarity sets, real promos) need the live data.
-4. First real market adapter (eBay Browse needs app keys; otherwise manual import of real listings/exports).
-5. Persistent DB (SQLite planned) with migrations and replayable decision snapshots; currently in-memory.
-6. Image/OCR pipeline, grading sensitivities, Taiwan/JP sources, portfolio outcomes: not started.
+### Run
+```
+pip install pytest && python -m pytest -q                      # 66 pass
+python -m cardman.sources                                       # re-probe every source
+python -m cardman.identity_cache sync                           # clone/update YAML Yugi, sync cache
+python -m cardman.slice examples/identity_only_LB-01.json examples/manual_import_TEMPLATE.csv
+```
+
+### Remaining gaps
+1. Network policy: open the hosts above, then test YGOResources (edition-level data) and YGOPRODeck live.
+2. EN edition (1st / Unlimited / Limited) and release dates: not in YAML Yugi; EN prints abstain until a
+   source with editions is reachable. Asian-English prints: no source yet (codes are quarantined on sight).
+3. eBay app keys for Browse; account exports for Product Research; no sold-data source is reachable yet,
+   so there are no real market observations.
+4. Persistent evidence/decision store (identity cache is SQLite; evidence and decisions are still in memory).
+5. Image/OCR, grading sensitivities, Taiwan/JP sources, portfolio outcomes: not started.

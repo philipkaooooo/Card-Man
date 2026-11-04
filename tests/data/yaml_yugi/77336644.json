@@ -1,0 +1,66 @@
+{
+ "konami_id": 8007,
+ "password": 77336644,
+ "card_type": "Monster",
+ "limit_regulation": {
+  "tcg": "Unlimited",
+  "ocg": "Unlimited"
+ },
+ "yugipedia_page_id": 42236,
+ "name": {
+  "en": "Red Dragon Archfiend/Assault Mode",
+  "ja": "レッド・デーモンズ・ドラゴン<ruby>／<rt>スラッシュ</rt></ruby>バスター",
+  "ja_romaji": "Reddo Dēmonzu Doragon Surasshu Basutā"
+ },
+ "sets": {
+  "en": [
+   {
+    "set_number": "CRMS-EN004",
+    "set_name": "Crimson Crisis",
+    "rarities": [
+     "Ultra Rare",
+     "Ultimate Rare",
+     "Ghost Rare"
+    ]
+   },
+   {
+    "set_number": "SDCK-EN017",
+    "set_name": "Structure Deck: The Crimson King",
+    "rarities": [
+     "Common"
+    ]
+   }
+  ],
+  "ja": [
+   {
+    "set_number": "CRMS-JP004",
+    "set_name": "Crimson Crisis",
+    "rarities": [
+     "Ultra Rare",
+     "Ultimate Rare",
+     "Holographic Rare"
+    ]
+   },
+   {
+    "set_number": "DE03-JP070",
+    "set_name": "Duelist Edition Volume 3",
+    "rarities": [
+     "Rare"
+    ]
+   },
+   {
+    "set_number": "SD46-JP017",
+    "set_name": "Structure Deck: Pulse of the King",
+    "rarities": [
+     "Common"
+    ]
+   }
+  ]
+ },
+ "images": [
+  {
+   "index": 1,
+   "image": "RedDragonArchfiendAssaultMode-SDCK-EN-C-1E.png"
+  }
+ ]
+}

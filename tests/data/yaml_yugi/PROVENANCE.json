@@ -1,0 +1,39 @@
+{
+ "source": "YAML Yugi (compiled from Yugipedia)",
+ "repository": "https://github.com/DawnbrandBots/yaml-yugi",
+ "revision": "f0bbcfe1f61f1dc309851010475628ae3f979e83",
+ "extracted_at": "2026-11-04T21:18:22.343899+00:00",
+ "fields": "identity only; card text removed",
+ "files": {
+  "89631139.json": {
+   "source_path": "data/cards/89631139.json",
+   "name_en": "Blue-Eyes White Dragon"
+  },
+  "46986414.json": {
+   "source_path": "data/cards/46986414.json",
+   "name_en": "Dark Magician"
+  },
+  "36996508.json": {
+   "source_path": "data/cards/36996508.json",
+   "name_en": "Dark Magician"
+  },
+  "38033121.json": {
+   "source_path": "data/cards/38033121.json",
+   "name_en": "Dark Magician Girl"
+  },
+  "77336644.json": {
+   "source_path": "data/cards/77336644.json",
+   "name_en": "Red Dragon Archfiend/Assault Mode"
+  },
+  "14558127.json": {
+   "source_path": "data/cards/14558127.json",
+   "name_en": "Ash Blossom & Joyous Spring"
+  }
+ },
+ "limitations": [
+  "no edition (1st/Unlimited/Limited) data",
+  "no release dates",
+  "no Asian-English prints",
+  "secondary source: not cross-checked against Konami DB or YGOResources"
+ ]
+}
