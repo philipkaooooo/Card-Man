@@ -155,7 +155,7 @@ list-style:none}
 .cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}@media(max-width:860px){.cols{grid-template-columns:1fr}}
 .cols>section{margin:0 0 14px;min-width:0}
 svg.chart{width:100%;height:auto;display:block;overflow:visible}
-.chartbox{overflow-x:auto}.chartbox svg.chart{min-width:760px}
+.chartbox{overflow-x:auto}
 @media(max-width:600px){table.compact td:last-child{display:none}main{padding:12px}section{padding:12px}}
 svg text{font:12px system-ui,-apple-system,"Segoe UI",sans-serif;fill:var(--fg2)}
 svg text.tick{fill:var(--muted);font-variant-numeric:tabular-nums}

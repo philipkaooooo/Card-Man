@@ -145,7 +145,7 @@ def price_chart(points: list[Point], refs: list[Ref], *, currency: str, valued_a
     X = lambda t: ml + (t - t0).total_seconds() / span * pw
     Y = lambda v: mt + ph - (v - y0) / (y1 - y0) * ph
 
-    out = [f'<svg class="chart" viewBox="0 0 {width} {height}" role="img" aria-label="{_e(label)}">']
+    out = [f'<svg class="chart" viewBox="0 0 {width} {height}" style="min-width:{width * 0.7:.0f}px" role="img" aria-label="{_e(label)}">']
     for tv in ticks:
         if y0 <= tv <= y1:
             out.append(f'<line class="grid" x1="{ml}" x2="{ml + pw}" y1="{Y(tv):.1f}" y2="{Y(tv):.1f}"/>'
@@ -286,7 +286,7 @@ def hbars(rows: list[tuple[str, float, str]], currency: str, *, width: int = 820
         zx, scale = ml, pw / vmax
     top = 18 if target else 0
     h = len(rows) * (bh + gap) + 6 + top
-    out = [f'<svg class="chart" viewBox="0 0 {width} {h}" role="img" aria-label="{_e(label)}">']
+    out = [f'<svg class="chart" viewBox="0 0 {width} {h}" style="min-width:{width * 0.7:.0f}px" role="img" aria-label="{_e(label)}">']
     for i, (name, v, extra) in enumerate(rows):
         y = 4 + top + i * (bh + gap)
         w = abs(v) * scale
