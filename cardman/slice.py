@@ -20,7 +20,7 @@ from .identity import ListingSignals, resolve
 from .workflow import evaluate
 
 
-def run(listing: dict, obs_csv: Path, now: datetime, allow_synthetic: bool = False) -> dict:
+def run(listing: dict, obs_csv: Path, now: datetime, allow_synthetic: bool = False, store_path: str | None = None) -> dict:
     if listing.get("catalog_db"):
         from .identity_cache import IdentityCache
         cache = IdentityCache(listing["catalog_db"])
@@ -52,7 +52,7 @@ def run(listing: dict, obs_csv: Path, now: datetime, allow_synthetic: bool = Fal
     report["rejected_evidence"] = rejected
     sc = scenarios_from_comps(prices)
     report["exit_scenarios"] = {k: (str(v) if v is not None else None) for k, v in sc.__dict__.items()}
-    ceiling, sens = None, None
+    ceiling, sens, inp = None, None, None
     if sc.conservative is not None:
         cost = listing["costs"]
         inp = CeilingInputs(sc.conservative, AcquisitionCosts(**{k: D(v) for k, v in cost["acquisition"].items()}),
@@ -73,6 +73,18 @@ def run(listing: dict, obs_csv: Path, now: datetime, allow_synthetic: bool = Fal
                   now=now, authenticity_ok=listing.get("authenticity_ok"), snapshot_payload=report)
     report["status"] = {"stage": ev.stage.value, "snapshot_id": ev.snapshot_id, "blocked_by": ev.reasons,
                         "expires_at": ev.expires_at.isoformat(), "human_action": "pending YES/WAIT/NO"}
+    if store_path:
+        from .store import Store, compute_valuation, valuation_inputs
+        st = Store(store_path)
+        for o in observations:
+            st.add_observation(o, now=now)
+        vin = valuation_inputs(prices, inp)
+        sid = st.save_snapshot(listing_ref=listing["listing_ref"], now=now, expires_at=ev.expires_at,
+                               stage=ev.stage.value, printing_ids=[p.id for p in ident.candidates],
+                               payload={"report": report, "valuation_inputs": vin,
+                                        "valuation": compute_valuation(vin), "listing": listing})
+        report["status"]["stored_snapshot_id"] = sid
+        report["status"]["alert_sent"] = st.maybe_alert(ev, sid, now)
     return report
 
 
@@ -80,9 +92,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("listing"); ap.add_argument("observations")
     ap.add_argument("--now"); ap.add_argument("--allow-synthetic", action="store_true")
+    ap.add_argument("--store", help="SQLite evidence/decision store to record this run in")
     a = ap.parse_args()
     now = datetime.fromisoformat(a.now) if a.now else datetime.now(timezone.utc)
-    print(json.dumps(run(json.loads(Path(a.listing).read_text()), Path(a.observations), now, a.allow_synthetic),
+    print(json.dumps(run(json.loads(Path(a.listing).read_text()), Path(a.observations), now, a.allow_synthetic,
+                         a.store),
                      indent=1, ensure_ascii=False, default=str))
 
 
