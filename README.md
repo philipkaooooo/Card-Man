@@ -39,13 +39,22 @@ Scope and rules: see the project's CLAUDE.md execution contract (JP OCG + EN TCG
   detects tampering. Alerts are unique per listing and snapshot and survive restarts.
 - Invalidating a printing (or the identity cache retiring it) invalidates every snapshot that used it,
   blocks its alerts and refuses YES on it.
+- Comparables come from the store across runs: with `--store`, the slice records the CSV (optional) and then
+  selects comps from every observation captured by the decision time, with status events known by then
+  applied. Re-importing the same row in a later run is a no-op that keeps the first capture time; a row whose
+  source fact changed is still refused.
+- `python -m cardman.store` maintains the store between runs: `import` a manual CSV, record a `status`
+  (CANCELLED, REFUNDED, INVALID, ...), list the `comps` for a printing at a time, `replay` a snapshot,
+  `decide` YES / WAIT / NO on a snapshot.
 
 ### Run
 ```
-pip install pytest && python -m pytest -q                      # 77 pass
+pip install pytest && python -m pytest -q                      # 84 pass
 python -m cardman.sources                                       # re-probe every source
 python -m cardman.identity_cache sync                           # clone/update YAML Yugi, sync cache
 python -m cardman.slice examples/identity_only_LB-01.json examples/manual_import_TEMPLATE.csv
+python -m cardman.store --store data/store/evidence.sqlite import my_sales.csv   # accumulate comps
+python -m cardman.slice listing.json --store data/store/evidence.sqlite          # value from the store
 ```
 
 ### Remaining gaps
@@ -54,6 +63,5 @@ python -m cardman.slice examples/identity_only_LB-01.json examples/manual_import
    source with editions is reachable. Asian-English prints: no source yet (codes are quarantined on sight).
 3. eBay app keys for Browse; account exports for Product Research; no sold-data source is reachable yet,
    so there are no real market observations.
-4. Evidence/decision store exists (`cardman/store.py`, `--store` on the slice); comp retrieval still reads the
-   CSV of a run rather than querying the store across runs.
+4. FX rates are still per listing file; comps from older runs need a rate near their sale date in that file.
 5. Image/OCR, grading sensitivities, Taiwan/JP sources, portfolio outcomes: not started.

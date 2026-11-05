@@ -98,6 +98,15 @@ def content_hash(obj) -> str:
     return hashlib.sha256(canonical(obj).encode()).hexdigest()
 
 
+# Fields that describe when/how we captured a record rather than the source fact itself.
+# Re-importing the same fact in a later run changes these, and that is not a rewrite.
+_CAPTURE_FIELDS = ("capture_time", "raw_ref")
+
+
+def _fact(d: dict) -> dict:
+    return {k: v for k, v in d.items() if k not in _CAPTURE_FIELDS}
+
+
 def _obs_to_dict(o: MarketObservation) -> dict:
     return asdict(o)
 
@@ -137,11 +146,12 @@ class Store:
         """Insert once. Returns False for an identical re-insert; raises if the content differs."""
         d = _obs_to_dict(o)
         h = content_hash(d)
-        row = self.db.execute("SELECT content_hash FROM observation WHERE id=?", (o.id,)).fetchone()
+        row = self.db.execute("SELECT content_hash, data_json FROM observation WHERE id=?", (o.id,)).fetchone()
         if row:
-            if row[0] != h:
+            if row[0] != h and _fact(json.loads(row[1])) != _fact(json.loads(canonical(d))):
                 raise ImmutableViolation(f"observation {o.id} already stored with different content; "
                                          "record a status event instead of rewriting the source fact")
+            # Same source fact seen again (possibly captured later): keep the first capture.
             return False
         with self.db:
             self.db.execute(
@@ -301,3 +311,67 @@ def replay(store: Store, sid: str) -> dict:
     valid, why = store.snapshot_validity(sid)
     return {"snapshot_id": sid, "matches": canonical(again) == canonical(recorded),
             "recorded": recorded, "recomputed": again, "identity_valid": valid, "invalidations": why}
+
+
+# -- command line -------------------------------------------------------------------------------
+
+def main(argv: list[str] | None = None) -> None:
+    """Maintain the evidence store between runs.
+
+    import  CSV                 record manual-import rows (same template as the slice)
+    status  OBS STATUS REASON   record a later finding: CANCELLED, REFUNDED, RELISTED, INVALID, DUPLICATE, VALID
+    comps   PRINTING            the comparables the store would give for a printing at --as-of
+    replay  SNAPSHOT            recompute a stored valuation and check it
+    decide  SNAPSHOT YES|WAIT|NO RATIONALE [--wait-trigger T]
+    """
+    import argparse
+
+    from .evidence import import_manual_csv, select_comps
+
+    ap = argparse.ArgumentParser(prog="python -m cardman.store", description=main.__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--store", default="data/store/evidence.sqlite")
+    ap.add_argument("--now", help="ISO time, default now (UTC)")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    p = sub.add_parser("import"); p.add_argument("csv")
+    p = sub.add_parser("status"); p.add_argument("obs_id"); p.add_argument("status"); p.add_argument("reason")
+    p.add_argument("--actor", default="manual")
+    p = sub.add_parser("comps"); p.add_argument("printing_id"); p.add_argument("--as-of")
+    p.add_argument("--grade-company"); p.add_argument("--grade"); p.add_argument("--condition")
+    p.add_argument("--include-synthetic", action="store_true")
+    p = sub.add_parser("replay"); p.add_argument("snapshot_id")
+    p = sub.add_parser("decide"); p.add_argument("snapshot_id"); p.add_argument("action", choices=[a.value for a in Action])
+    p.add_argument("rationale"); p.add_argument("--wait-trigger")
+    a = ap.parse_args(argv)
+    now = datetime.fromisoformat(a.now) if a.now else _now()
+    st = Store(a.store)
+    out: dict
+    if a.cmd == "import":
+        rows = import_manual_csv(Path(a.csv), now)
+        added = [o.id for o in rows if st.add_observation(o, now=now)]
+        out = {"rows": len(rows), "added": len(added), "already_stored": len(rows) - len(added),
+               "synthetic": sum(o.synthetic_fixture for o in rows)}
+    elif a.cmd == "status":
+        st.set_status(a.obs_id, a.status.upper(), a.reason, actor=a.actor, now=now)
+        out = {"obs_id": a.obs_id, "history": st.status_history(a.obs_id)}
+    elif a.cmd == "comps":
+        as_of = datetime.fromisoformat(a.as_of) if a.as_of else now
+        pool = st.observations_for(a.printing_id, as_of=as_of)
+        comps, rejected = select_comps(pool, a.printing_id, as_of=as_of, grade_company=a.grade_company,
+                                       grade=a.grade, raw_condition=a.condition,
+                                       include_synthetic=a.include_synthetic)
+        out = {"printing_id": a.printing_id, "as_of": as_of.isoformat(), "pool": len(pool),
+               "comps": [{"id": c.id, "date": c.event_time.isoformat(), "type": c.evidence_type.value,
+                          "amount": str(c.original_amount), "currency": c.currency, "url": c.source_url,
+                          "synthetic": c.synthetic_fixture} for c in comps],
+               "rejected": rejected}
+    elif a.cmd == "replay":
+        out = replay(st, a.snapshot_id)
+    else:
+        st.record_decision(Decision(a.snapshot_id, Action(a.action), a.rationale, now, a.wait_trigger))
+        out = {"snapshot_id": a.snapshot_id, "decisions": st.decisions(a.snapshot_id)}
+    print(json.dumps(_enc(out), indent=1, ensure_ascii=False, default=str))
+
+
+if __name__ == "__main__":
+    main()

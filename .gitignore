@@ -3,3 +3,4 @@ __pycache__/
 .env
 data/cache/
 data/raw/
+data/store/
