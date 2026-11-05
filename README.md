@@ -32,9 +32,17 @@ Scope and rules: see the project's CLAUDE.md execution contract (JP OCG + EN TCG
 - Manual import (`examples/manual_import_TEMPLATE.csv`) is the path for sold, accepted-offer (eBay Product
   Research) and Japanese marketplace records until an API path opens.
 
+### Evidence and decisions (`store.py`)
+- Observations are written once; rewriting one with different content is refused. Cancellations, refunds,
+  relists and invalid findings are separate status events, read back as of the decision time.
+- Each valuation is a snapshot keyed by a hash of its inputs and outputs; `replay` recomputes it and
+  detects tampering. Alerts are unique per listing and snapshot and survive restarts.
+- Invalidating a printing (or the identity cache retiring it) invalidates every snapshot that used it,
+  blocks its alerts and refuses YES on it.
+
 ### Run
 ```
-pip install pytest && python -m pytest -q                      # 66 pass
+pip install pytest && python -m pytest -q                      # 77 pass
 python -m cardman.sources                                       # re-probe every source
 python -m cardman.identity_cache sync                           # clone/update YAML Yugi, sync cache
 python -m cardman.slice examples/identity_only_LB-01.json examples/manual_import_TEMPLATE.csv
@@ -46,5 +54,6 @@ python -m cardman.slice examples/identity_only_LB-01.json examples/manual_import
    source with editions is reachable. Asian-English prints: no source yet (codes are quarantined on sight).
 3. eBay app keys for Browse; account exports for Product Research; no sold-data source is reachable yet,
    so there are no real market observations.
-4. Persistent evidence/decision store (identity cache is SQLite; evidence and decisions are still in memory).
+4. Evidence/decision store exists (`cardman/store.py`, `--store` on the slice); comp retrieval still reads the
+   CSV of a run rather than querying the store across runs.
 5. Image/OCR, grading sensitivities, Taiwan/JP sources, portfolio outcomes: not started.
