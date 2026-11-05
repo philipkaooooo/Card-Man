@@ -1,9 +1,9 @@
 """Code-verification fixtures. NOT market evidence and NOT yet source-verified.
 
-Printings below are entered from well-known documentation but carry
-verified_against_source=False until cross-checked against Konami/YGOResources/
-YGOPRODeck (blocked by network policy on 2026-11-04). The STRUCT_ fixtures are
-purely structural (same code, several rarities) and use a placeholder card.
+These hand-entered printings exercise code paths (economics, evidence, workflow). They are
+not used as identity truth: regression tests on real documented printings live in
+tests/test_identity_real.py and use tests/real_catalog.py (YAML Yugi records at a pinned
+revision). The STRUCT_ fixtures are purely structural and use a placeholder card.
 """
 from datetime import datetime, timezone
 from decimal import Decimal

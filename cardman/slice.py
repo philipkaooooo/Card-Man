@@ -1,8 +1,8 @@
 """End-to-end vertical slice: listing -> identity -> comps -> scenarios -> ceiling -> stage.
 
 usage: python -m cardman.slice listing.json observations.csv [--now ISO]
-The catalog is loaded from the listing file's "catalog" module path until the
-live identity cache exists. Synthetic observations are refused unless --allow-synthetic.
+The catalog comes from the identity cache ("catalog_db": path to identity.sqlite) or, for
+code tests, from a Python module ("catalog_module"). Synthetic observations are refused unless --allow-synthetic.
 """
 from __future__ import annotations
 
@@ -21,7 +21,14 @@ from .workflow import evaluate
 
 
 def run(listing: dict, obs_csv: Path, now: datetime, allow_synthetic: bool = False) -> dict:
-    catalog = importlib.import_module(listing["catalog_module"]).CATALOG
+    if listing.get("catalog_db"):
+        from .identity_cache import IdentityCache
+        cache = IdentityCache(listing["catalog_db"])
+        if not cache.revision():
+            raise SystemExit(f"identity cache {listing['catalog_db']} is empty: run python -m cardman.identity_cache sync")
+        catalog = cache.catalog()
+    else:
+        catalog = importlib.import_module(listing["catalog_module"]).CATALOG
     sig = ListingSignals(**listing["signals"])
     ident = resolve(sig, catalog)
     home = listing.get("home_currency", "TWD")

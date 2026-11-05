@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 from .models import CardFamily, GameFormat, IdentityStatus, Printing, Region
 
-RESOLVER_VERSION = "identity-0.1.0"
+RESOLVER_VERSION = "identity-0.2.0"
 
 # Which evidence separates candidates on each dimension.
 DIMENSION_EVIDENCE = {
@@ -25,7 +25,12 @@ DIMENSION_EVIDENCE = {
     "artwork": "front photo of the full artwork",
 }
 
-_SET_CODE_RE = re.compile(r"\b(RD/)?([A-Z0-9]{2,5})-(EN|E|JP|AE|KR|DE|FR|IT|SP|PT)?([0-9]{2,3}|[A-Z][0-9]{2})\b")
+_SET_CODE_RE = re.compile(r"(?<![A-Z0-9/])(RD/)?([A-Z0-9]{2,5})-([A-Z0-9]{2,7})(?![A-Z0-9])")
+# Language segments, longest first. Codes with no segment (LB-01, SKE-001, JMP-001) exist in
+# both JP and EN vintage products, so their region must come from the catalog and the card itself.
+_LANG_SEGMENTS = ("EN", "JP", "AE", "KR", "KO", "DE", "FR", "IT", "SP", "PT", "TC", "SC", "E", "A", "G", "F", "I", "S", "P", "K")
+_LANG_REGION = {"EN": Region.EN_TCG, "E": Region.EN_TCG, "A": Region.EN_TCG, "JP": Region.JP_OCG,
+                "AE": Region.ASIAN_EN_OCG_QUARANTINE}
 _CERT_RE = re.compile(r"^\d{7,10}$")
 
 
@@ -41,7 +46,8 @@ class ListingSignals:
     seller_edition: str | None = None
     card_language: str | None = None          # from visible card text, e.g. "ja", "en"
     slab_cert: str | None = None
-    product_hint: str | None = None
+    product_hint: str | None = None           # seller text; never narrows
+    verified_product: str | None = None       # confirmed from packaging, promo insert, or set list
     is_multi_card: bool = False
     photos: tuple[str, ...] = ()
 
@@ -72,53 +78,92 @@ def parse_set_code(raw: str | None) -> dict | None:
     raw = unicodedata.normalize("NFKC", raw).upper().strip()
     if _CERT_RE.match(raw):
         return {"kind": "cert_number", "raw": raw}
-    m = _SET_CODE_RE.search(raw)
+    # First code-shaped token whose suffix has a digit ("BLUE-EYES" is a name, "LOB-EN001" a code).
+    m = next((m for m in _SET_CODE_RE.finditer(raw) if any(ch.isdigit() for ch in m.group(3))), None)
     if not m:
         return None
-    rush, prefix, lang, num = m.groups()
-    lang = lang or ""
-    region = {
-        "EN": Region.EN_TCG, "E": Region.EN_TCG,
-        "JP": Region.JP_OCG,
-        "AE": Region.ASIAN_EN_OCG_QUARANTINE,
-    }.get(lang)
+    rush, prefix, suffix = m.groups()
+    lang = ""
+    if not suffix.isdigit():
+        for seg in _LANG_SEGMENTS:
+            rest = suffix[len(seg):]
+            if suffix.startswith(seg) and rest and rest[-1].isdigit():
+                lang = seg
+                break
     return {
         "kind": "set_code",
         "raw": raw,
-        "code": f"{rush or ''}{prefix}-{lang}{num}",
+        "code": f"{rush or ''}{prefix}-{suffix}",
         "prefix": prefix,
         "lang": lang,
-        "region": region,
+        # None when the code has no language segment: look the code up instead of guessing.
+        "region": _LANG_REGION.get(lang),
         "game_format": GameFormat.RUSH_DUEL if rush else GameFormat.DUEL_MONSTERS,
     }
+
+
+def _strip_ruby(s: str) -> tuple[str, str | None]:
+    """'<ruby>青眼の白龍<rt>ブルーアイズ…</rt></ruby>' -> ('青眼の白龍', 'ブルーアイズ…')."""
+    if "<ruby>" not in s:
+        return s, None
+    base = re.sub(r"<rt>.*?</rt>", "", s).replace("<ruby>", "").replace("</ruby>", "")
+    reading = re.sub(r"<ruby>(.*?)<rt>(.*?)</rt></ruby>", r"\2", s)
+    return base, reading
 
 
 class Catalog:
     def __init__(self, families: list[CardFamily], printings: list[Printing]):
         self.families = {f.id: f for f in families}
         self.printings = printings
+        self.by_family: dict[str, list[Printing]] = {}
+        self.by_code: dict[str, list[Printing]] = {}
+        for p in printings:
+            self.by_family.setdefault(p.family_id, []).append(p)
+            if p.set_code:
+                self.by_code.setdefault(p.set_code.upper(), []).append(p)
+        # normalized name -> family ids; Japanese ruby markup reduced to base text, reading kept as alias
+        self.name_index: dict[str, set[str]] = {}
+        for f in families:
+            for n in (*f.names.values(), *f.aliases):
+                for variant in _strip_ruby(n):
+                    nn = normalize_name(variant) if variant else ""
+                    if nn:
+                        self.name_index.setdefault(nn, set()).add(f.id)
+        self._by_len: dict[int, list[str]] = {}
+        for nn in self.name_index:
+            self._by_len.setdefault(len(nn.split()), []).append(nn)
 
     def family_matches(self, title: str, cutoff: float = 0.85) -> tuple[set[str], list[str]]:
-        """Names/aliases contained in the title, plus fuzzy matches for seller typos."""
+        """Names contained in the title (longest wins), plus fuzzy matches for seller typos."""
         t = normalize_name(title)
-        exact, notes = set(), []
-        for f in self.families.values():
-            for n in (*f.names.values(), *f.aliases):
-                if normalize_name(n) and normalize_name(n) in t:
-                    exact.add(f.id)
+        spaced = f" {t} "
+        hits = []
+        for nn, fams in self.name_index.items():
+            # Latin names must match on word boundaries; CJK titles have no spaces.
+            if (f" {nn} " in spaced) if nn.isascii() else (nn in t):
+                hits.append(nn)
+        # "Dark Magician" inside "Dark Magician Girl" is not a second card.
+        hits = [h for h in hits if not any(h != o and h in o for o in hits)]
+        exact = set().union(*(self.name_index[h] for h in hits)) if hits else set()
+        notes: list[str] = []
         if exact:
             return exact, notes
         words = t.split()
-        for f in self.families.values():
-            for n in (*f.names.values(), *f.aliases):
-                nn = normalize_name(n)
-                k = len(nn.split())
-                for i in range(max(1, len(words) - k + 1)):
-                    window = " ".join(words[i:i + k])
-                    r = difflib.SequenceMatcher(None, nn, window).ratio()
-                    if r >= cutoff:
-                        exact.add(f.id)
-                        notes.append(f"fuzzy name match '{window}' ~ '{n}' ({r:.2f}); treat as seller typo, needs image confirmation")
+        scored: list[tuple[float, str, str]] = []
+        for k, names in self._by_len.items():
+            if k < 2 and words and words[0].isascii():
+                continue  # one-word fuzzy hits ("dragon" ~ "dragong") are noise
+            for i in range(max(1, len(words) - k + 1)):
+                window = " ".join(words[i:i + k])
+                for nn in difflib.get_close_matches(window, names, n=3, cutoff=cutoff):
+                    scored.append((difflib.SequenceMatcher(None, nn, window).ratio(), window, nn))
+        if scored:
+            best = max(r for r, _, _ in scored)
+            for r, window, nn in sorted(set(scored), reverse=True):
+                if r >= best - 0.02:
+                    exact |= self.name_index[nn]
+                    notes.append(f"fuzzy name match '{window}' ~ '{nn}' ({r:.2f}); treat as seller typo, "
+                                 "needs image confirmation")
         return exact, notes
 
 
@@ -139,7 +184,7 @@ def resolve(signals: ListingSignals, catalog: Catalog) -> IdentityResult:
         return IdentityResult(IdentityStatus.UNRESOLVED, [], ev, ["no card family matched title"],
                               ["printed card name or set code close-up"])
 
-    cands = [p for p in catalog.printings if p.family_id in fam_ids]
+    cands = [p for fid in sorted(fam_ids) for p in catalog.by_family.get(fid, [])]
 
     # Set code: printed (from image) is evidence; seller-typed is a hint only.
     printed = parse_set_code(signals.printed_set_code)
@@ -159,17 +204,22 @@ def resolve(signals: ListingSignals, catalog: Catalog) -> IdentityResult:
             q = [p for p in cands if p.region == Region.ASIAN_EN_OCG_QUARANTINE]
             return IdentityResult(IdentityStatus.QUARANTINED, q, ev + [f"Asian-English OCG code {code['code']}"],
                                   ["Asian-English OCG is not English TCG; quarantined, not traded yet"], [])
-        if code["region"] is None:
+        if code["region"] is None and code["lang"]:
             block.append(f"set code language segment '{code['lang']}' is out of scope (JP/EN only)")
             return IdentityResult(IdentityStatus.UNRESOLVED, [], ev, block, [])
         matched = [p for p in cands if p.set_code and p.set_code.upper() == code["code"]]
         if not matched:
-            region_only = [p for p in cands if p.region == code["region"]]
+            region_only = [p for p in cands if code["region"] is None or p.region == code["region"]]
             block.append(f"set code {code['code']} not in catalog for this card")
             return IdentityResult(IdentityStatus.UNRESOLVED, region_only, ev, block,
                                   [DIMENSION_EVIDENCE["set_code"]])
+        if code["region"] is not None and any(p.region != code["region"] for p in matched):
+            block.append(f"catalog lists {code['code']} outside its language segment's region")
+            return IdentityResult(IdentityStatus.CONFLICT, matched, ev, block, [])
         cands = matched
         ev.append(f"set code {code['code']} ({'printed' if printed else 'seller-entered'})")
+        if code["region"] is None:
+            ev.append(f"{code['code']} has no language segment; region taken from catalog and card evidence")
         if printed and seller and seller["kind"] == "set_code" and seller["code"] != printed["code"]:
             ev.append(f"seller wrote {seller['code']} but card shows {printed['code']}; using printed code")
 
@@ -184,13 +234,19 @@ def resolve(signals: ListingSignals, catalog: Catalog) -> IdentityResult:
                                       [f"card language {signals.card_language} contradicts set code region"], [])
             ev.append(f"card language {signals.card_language}")
 
-    # Verified edition and rarity narrow; seller text does not.
+    # Verified edition, rarity and product narrow; seller text does not.
     if signals.verified_edition:
-        cands = [p for p in cands if (p.edition or "").lower() == signals.verified_edition.lower()]
+        # A catalog printing with edition=None means the identity source does not document editions;
+        # keep it as a candidate but it cannot be confirmed (see the edition gate below).
+        cands = [p for p in cands if p.edition is None or p.edition.lower() == signals.verified_edition.lower()]
         ev.append(f"edition {signals.verified_edition} (verified from image)")
     if signals.verified_rarity:
         cands = [p for p in cands if p.rarity.lower() == signals.verified_rarity.lower()]
         ev.append(f"rarity {signals.verified_rarity} (verified from angled image)")
+    if signals.verified_product:
+        want = normalize_name(signals.verified_product)
+        cands = [p for p in cands if normalize_name(p.product_name or p.product_id) == want]
+        ev.append(f"product {signals.verified_product} (verified from packaging/promo reference)")
 
     if not cands:
         return IdentityResult(IdentityStatus.CONFLICT, [], ev, block + ["verified evidence matches no known printing"], [])
@@ -210,13 +266,25 @@ def resolve(signals: ListingSignals, catalog: Catalog) -> IdentityResult:
         if not (printed or p.set_code is None):
             return IdentityResult(IdentityStatus.CANDIDATES, cands, ev,
                                   block + ["set code only seller-entered"], [DIMENSION_EVIDENCE["set_code"]])
+        if p.identity_status != "documented":
+            return IdentityResult(IdentityStatus.CANDIDATES, cands, ev,
+                                  block + [f"catalog printing is {p.identity_status}: {'; '.join(p.variant_evidence)}"],
+                                  ["identity source record with complete rarity/product data"])
+        if p.region == Region.EN_TCG and p.edition is None:
+            # English prints differ by 1st / Unlimited / Limited; the loaded source does not say which exist.
+            return IdentityResult(IdentityStatus.CANDIDATES, cands, ev,
+                                  block + ["edition not documented by identity source; 1st/Unlimited/Limited "
+                                           "cannot be confirmed"],
+                                  [DIMENSION_EVIDENCE["edition"],
+                                   "edition-level identity record (Konami DB / YGOResources)"])
         return IdentityResult(IdentityStatus.RESOLVED, cands, ev, block, [])
 
     # Abstain: say exactly which evidence separates the candidates.
     needed = []
-    for dim, attr in (("region", "region"), ("set_code", "set_code"), ("edition", "edition"),
-                      ("rarity", "rarity"), ("artwork", "artwork_id"), ("product", "product_id")):
-        if len({getattr(p, attr) for p in cands}) > 1:
+    for dim, key in (("region", lambda p: p.region), ("set_code", lambda p: p.set_code),
+                     ("edition", lambda p: p.edition), ("rarity", lambda p: p.rarity),
+                     ("artwork", lambda p: p.artwork_id), ("product", lambda p: p.product_name or p.product_id)):
+        if len({key(p) for p in cands}) > 1:
             needed.append(DIMENSION_EVIDENCE[dim])
     return IdentityResult(IdentityStatus.CANDIDATES, cands, ev,
                           block + [f"{len(cands)} printings remain"], list(dict.fromkeys(needed)))

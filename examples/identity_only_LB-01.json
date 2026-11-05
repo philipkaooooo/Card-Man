@@ -1,0 +1,8 @@
+{
+ "_note": "Identity check against the real identity cache. No market data: the observations file is the empty template.",
+ "catalog_db": "data/cache/identity.sqlite",
+ "listing_ref": "identity-check:LB-01",
+ "signals": {"title": "青眼の白龍 LB-01 ウルトラレア", "printed_set_code": "LB-01", "card_language": "ja"},
+ "home_currency": "TWD",
+ "costs": {"target_return": "0.20", "acquisition": {}, "exit": {}}
+}
