@@ -25,7 +25,7 @@ from pathlib import Path
 
 from .identity import Catalog
 from .identity_sources import YAML_YUGI_NORMALIZER_VERSION, normalize_yaml_yugi
-from .models import CardFamily, Printing, Region
+from .models import CardFamily, Printing, Region  # noqa: F401
 
 CACHE_SCHEMA_VERSION = 1
 YAML_YUGI_URL = "https://github.com/DawnbrandBots/yaml-yugi"
@@ -240,7 +240,36 @@ class IdentityCache:
             fams[f.id] = f
         prints = [_printing_from_json(r[0]) for r in
                   self.db.execute("SELECT data_json FROM printing WHERE retired_rev IS NULL ORDER BY id")]
+        prints = self._apply_crosschecks(prints)
         return Catalog(list(fams.values()), prints)
+
+    def _table_exists(self, name: str) -> bool:
+        return bool(self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone())
+
+    def _apply_crosschecks(self, prints: list[Printing]) -> list[Printing]:
+        """Overlay live cross-checks (see live_identity) without touching the stored source rows.
+
+        A CONFIRMED code from Konami DB (JP) or YGOResources (EN) adds the release date and marks
+        the printing's code as verified against a Konami-ID-keyed source. Asian-English prints it lists join the catalog as
+        quarantined printings.
+        """
+        from dataclasses import replace
+        if not self._table_exists("crosscheck"):
+            return prints
+        conf = {pid: json.loads(d) for pid, d in self.db.execute(
+            "SELECT printing_id, detail_json FROM crosscheck WHERE source IN ('ygoresources', 'konami_db')"
+            " AND verdict='CONFIRMED' ORDER BY source DESC")}   # konami_db wins for JP
+        out = []
+        for p in prints:
+            c = conf.get(p.id)
+            if c is not None:
+                notes = p.variant_evidence + ((c["warning"],) if c.get("warning") else ())
+                p = replace(p, release_date=p.release_date or c.get("release_date") or None,
+                            verified_against_source=True, variant_evidence=notes)
+            out.append(p)
+        if self._table_exists("remote_printing"):
+            out += [_printing_from_json(r[0]) for r in self.db.execute("SELECT data_json FROM remote_printing")]
+        return out
 
     def stats(self) -> dict:
         one = lambda q: self.db.execute(q).fetchone()[0]  # noqa: E731

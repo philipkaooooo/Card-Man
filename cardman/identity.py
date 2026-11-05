@@ -7,13 +7,14 @@ remaining candidates is backed by evidence that is not just seller text.
 from __future__ import annotations
 
 import difflib
+from dataclasses import replace
 import re
 import unicodedata
 from dataclasses import dataclass, field
 
 from .models import CardFamily, GameFormat, IdentityStatus, Printing, Region
 
-RESOLVER_VERSION = "identity-0.2.0"
+RESOLVER_VERSION = "identity-0.3.0"
 
 # Which evidence separates candidates on each dimension.
 DIMENSION_EVIDENCE = {
@@ -270,13 +271,21 @@ def resolve(signals: ListingSignals, catalog: Catalog) -> IdentityResult:
             return IdentityResult(IdentityStatus.CANDIDATES, cands, ev,
                                   block + [f"catalog printing is {p.identity_status}: {'; '.join(p.variant_evidence)}"],
                                   ["identity source record with complete rarity/product data"])
+        if p.region == Region.EN_TCG and p.edition is None and signals.verified_edition:
+            # No identity source we can reach lists editions (checked 2026-11-05: YAML Yugi, YGOResources,
+            # YGOPRODeck). The stamp photo is direct physical evidence, so the edition becomes part of
+            # the printing key; comps must match this derived id, never the edition-less one.
+            ed = signals.verified_edition
+            derived = replace(p, id=f"{p.id}#ed={normalize_name(ed).replace(' ', '-')}", edition=ed,
+                              variant_evidence=p.variant_evidence + (
+                                  f"edition '{ed}' from verified stamp photo; identity sources list no editions",))
+            return IdentityResult(IdentityStatus.RESOLVED, [derived], ev + ["edition from stamp photo"], block, [])
         if p.region == Region.EN_TCG and p.edition is None:
             # English prints differ by 1st / Unlimited / Limited; the loaded source does not say which exist.
             return IdentityResult(IdentityStatus.CANDIDATES, cands, ev,
                                   block + ["edition not documented by identity source; 1st/Unlimited/Limited "
                                            "cannot be confirmed"],
-                                  [DIMENSION_EVIDENCE["edition"],
-                                   "edition-level identity record (Konami DB / YGOResources)"])
+                                  [DIMENSION_EVIDENCE["edition"]])
         return IdentityResult(IdentityStatus.RESOLVED, cands, ev, block, [])
 
     # Abstain: say exactly which evidence separates the candidates.

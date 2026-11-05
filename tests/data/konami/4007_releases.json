@@ -1,0 +1,703 @@
+{
+ "source": "Konami DB",
+ "url": "https://www.db.yugioh-card.com/yugiohdb/card_search.action?ope=2&cid=4007&request_locale=ja",
+ "fetched_at": "2026-11-05T08:00:54.775758+00:00",
+ "releases": [
+  {
+   "date": "2026-10-31",
+   "code": "YAS3-JP003",
+   "product": "ORIGINAL ARTWORK DUEL SET－海馬編－",
+   "pid": "1000009613000",
+   "rarity_short": "UR",
+   "rarity_label": "ウルトラレア仕様"
+  },
+  {
+   "date": "2026-10-31",
+   "code": "YAS3-JP004",
+   "product": "ORIGINAL ARTWORK DUEL SET－海馬編－",
+   "pid": "1000009613000",
+   "rarity_short": "UR",
+   "rarity_label": "ウルトラレア仕様"
+  },
+  {
+   "date": "2026-10-31",
+   "code": "YAS3-JP005",
+   "product": "ORIGINAL ARTWORK DUEL SET－海馬編－",
+   "pid": "1000009613000",
+   "rarity_short": "UR",
+   "rarity_label": "ウルトラレア仕様"
+  },
+  {
+   "date": "2026-10-31",
+   "code": "YAS3-JPP01",
+   "product": "ORIGINAL ARTWORK DUEL SET－海馬編－",
+   "pid": "1000009613000",
+   "rarity_short": "UL",
+   "rarity_label": "アルティメットレア仕様"
+  },
+  {
+   "date": "2026-10-31",
+   "code": "YAS3-JPP01",
+   "product": "ORIGINAL ARTWORK DUEL SET－海馬編－",
+   "pid": "1000009613000",
+   "rarity_short": "UL",
+   "rarity_label": "アルティメットレア仕様"
+  },
+  {
+   "date": "2026-09-26",
+   "code": "YAC1-JP073",
+   "product": "ORIGINAL ARTWORK COLLECTION",
+   "pid": "1000009617000",
+   "rarity_short": "UR",
+   "rarity_label": "ウルトラレア仕様"
+  },
+  {
+   "date": "2026-09-26",
+   "code": "YAC1-JP073",
+   "product": "ORIGINAL ARTWORK COLLECTION",
+   "pid": "1000009617000",
+   "rarity_short": "UR",
+   "rarity_label": "ウルトラレア仕様"
+  },
+  {
+   "date": "2026-09-26",
+   "code": "YAC1-JP073",
+   "product": "ORIGINAL ARTWORK COLLECTION",
+   "pid": "1000009617000",
+   "rarity_short": "SE",
+   "rarity_label": "シークレットレア仕様"
+  },
+  {
+   "date": "2026-09-26",
+   "code": "YAC1-JP073",
+   "product": "ORIGINAL ARTWORK COLLECTION",
+   "pid": "1000009617000",
+   "rarity_short": "SE",
+   "rarity_label": "シークレットレア仕様"
+  },
+  {
+   "date": "2025-12-13",
+   "code": "LPST-JP003",
+   "product": "LIMITED PACK ー STAMP EDITION ー",
+   "pid": "1000009542000",
+   "rarity_short": "UR",
+   "rarity_label": "ウルトラレア仕様"
+  },
+  {
+   "date": "2025-12-13",
+   "code": "LPST-JP003",
+   "product": "LIMITED PACK ー STAMP EDITION ー",
+   "pid": "1000009542000",
+   "rarity_short": "SE",
+   "rarity_label": "シークレットレア仕様"
+  },
+  {
+   "date": "2025-12-13",
+   "code": "LPST-JP003",
+   "product": "LIMITED PACK ー STAMP EDITION ー",
+   "pid": "1000009542000",
+   "rarity_short": "PSE",
+   "rarity_label": "プリズマティックシークレットレア仕様"
+  },
+  {
+   "date": "2025-05-30",
+   "code": "SSC1-JP001",
+   "product": "サンスター コラボ記念カード",
+   "pid": "1000009507000",
+   "rarity_short": "P",
+   "rarity_label": "パラレル仕様"
+  },
+  {
+   "date": "2025-04-22",
+   "code": "NYC1-JP001",
+   "product": "日本郵政コラボ記念カード",
+   "pid": "1000009314000",
+   "rarity_short": "QCSE",
+   "rarity_label": "クォーターセンチュリーシークレットレア仕様"
+  },
+  {
+   "date": "2025-02-22",
+   "code": "QCAC-JP021",
+   "product": "QUARTER CENTURY ART COLLECTION",
+   "pid": "1000007508000",
+   "rarity_short": "UR",
+   "rarity_label": "ウルトラレア仕様"
+  },
+  {
+   "date": "2025-02-22",
+   "code": "QCAC-JP021",
+   "product": "QUARTER CENTURY ART COLLECTION",
+   "pid": "1000007508000",
+   "rarity_short": "SE",
+   "rarity_label": "シークレットレア仕様"
+  },
+  {
+   "date": "2025-02-22",
+   "code": "QCAC-JP021",
+   "product": "QUARTER CENTURY ART COLLECTION",
+   "pid": "1000007508000",
+   "rarity_short": "SE",
+   "rarity_label": "シークレットレア仕様"
+  },
+  {
+   "date": "2025-02-22",
+   "code": "QCAC-JP021",
+   "product": "QUARTER CENTURY ART COLLECTION",
+   "pid": "1000007508000",
+   "rarity_short": "SE",
+   "rarity_label": "シークレットレア仕様"
+  },
+  {
+   "date": "2025-02-22",
+   "code": "QCAC-JP021",
+   "product": "QUARTER CENTURY ART COLLECTION",
+   "pid": "1000007508000",
+   "rarity_short": "SE",
+   "rarity_label": "シークレットレア仕様"
+  },
+  {
+   "date": "2025-02-22",
+   "code": "QCAC-JP021",
+   "product": "QUARTER CENTURY ART COLLECTION",
+   "pid": "1000007508000",
+   "rarity_short": "QCSE",
+   "rarity_label": "クォーターセンチュリーシークレットレア仕様"
+  },
+  {
+   "date": "2025-02-22",
+   "code": "QCAC-JP021",
+   "product": "QUARTER CENTURY ART COLLECTION",
+   "pid": "1000007508000",
+   "rarity_short": "QCSE",
+   "rarity_label": "クォーターセンチュリーシークレットレア仕様"
+  },
+  {
+   "date": "2025-02-22",
+   "code": "QCAC-JP021",
+   "product": "QUARTER CENTURY ART COLLECTION",
+   "pid": "1000007508000",
+   "rarity_short": "QCSE",
+   "rarity_label": "クォーターセンチュリーシークレットレア仕様"
+  },
+  {
+   "date": "2025-02-22",
+   "code": "QCAC-JP021",
+   "product": "QUARTER CENTURY ART COLLECTION",
+   "pid": "1000007508000",
+   "rarity_short": "QCSE",
+   "rarity_label": "クォーターセンチュリーシークレットレア仕様"
+  },
+  {
+   "date": "2025-02-22",
+   "code": "QCAC-JP021",
+   "product": "QUARTER CENTURY ART COLLECTION",
+   "pid": "1000007508000",
+   "rarity_short": "QCSE",
+   "rarity_label": "クォーターセンチュリーシークレットレア仕様"
+  },
+  {
+   "date": "2024-09-07",
+   "code": "SD47-JP001",
+   "product": "ストラクチャーデッキ－青き眼の光臨－",
+   "pid": "1000009400000",
+   "rarity_short": "N",
+   "rarity_label": "ノーマル仕様"
+  },
+  {
+   "date": "2024-09-07",
+   "code": "SD47-JP001",
+   "product": "ストラクチャーデッキ－青き眼の光臨－",
+   "pid": "1000009400000",
+   "rarity_short": "N",
+   "rarity_label": "ノーマル仕様"
+  },
+  {
+   "date": "2024-09-07",
+   "code": "SD47-JP001",
+   "product": "ストラクチャーデッキ－青き眼の光臨－",
+   "pid": "1000009400000",
+   "rarity_short": "N",
+   "rarity_label": "ノーマル仕様"
+  },
+  {
+   "date": "2024-08-08",
+   "code": "711D-JP001",
+   "product": "セブンイレブン「遊戯王カードゲーム」コラボキャンペーン2024特典カード",
+   "pid": "1000009306000",
+   "rarity_short": "P",
+   "rarity_label": "パラレル仕様"
+  },
+  {
+   "date": "2024-05-25",
+   "code": "QCPC-JP001",
+   "product": "QUARTER CENTURY UNITY＆PRIDEキャンペーン",
+   "pid": "1000008195000",
+   "rarity_short": "QCSE",
+   "rarity_label": "クォーターセンチュリーシークレットレア仕様"
+  },
+  {
+   "date": "2024-03-23",
+   "code": "QCCP-JP001",
+   "product": "QUARTER CENTURY CHRONICLE side：PRIDE",
+   "pid": "1000007507000",
+   "rarity_short": "UR",
+   "rarity_label": "ウルトラレア仕様"
+  },
+  {
+   "date": "2024-03-23",
+   "code": "QCCP-JP001",
+   "product": "QUARTER CENTURY CHRONICLE side：PRIDE",
+   "pid": "1000007507000",
+   "rarity_short": "SE",
+   "rarity_label": "シークレットレア仕様"
+  },
+  {
+   "date": "2024-03-23",
+   "code": "QCCP-JP001",
+   "product": "QUARTER CENTURY CHRONICLE side：PRIDE",
+   "pid": "1000007507000",
+   "rarity_short": "UL",
+   "rarity_label": "アルティメットレア仕様"
+  },
+  {
+   "date": "2024-03-23",
+   "code": "QCCP-JP001",
+   "product": "QUARTER CENTURY CHRONICLE side：PRIDE",
+   "pid": "1000007507000",
+   "rarity_short": "QCSE",
+   "rarity_label": "クォーターセンチュリーシークレットレア仕様"
+  },
+  {
+   "date": "2024-02-04",
+   "code": "TD02-JP001",
+   "product": "遊戯王デュエルモンスターズ 決闘者伝説 QUARTER CENTURY - 来場者限定記念カード 2月4日 -",
+   "pid": "1000008199000",
+   "rarity_short": "QCSE",
+   "rarity_label": "クォーターセンチュリーシークレットレア仕様（TOKYO DOME GREEN Ver.）"
+  },
+  {
+   "date": "2024-02-03",
+   "code": null,
+   "product": "EX 復刻版 - 海馬デッキ -",
+   "pid": "1000000711000",
+   "rarity_short": "UR",
+   "rarity_label": "ウルトラレア仕様"
+  },
+  {
+   "date": "2023-12-23",
+   "code": "QCDB-JP009",
+   "product": "QUARTER CENTURY DUELIST BOX",
+   "pid": "1000007725000",
+   "rarity_short": "UR",
+   "rarity_label": "ウルトラレア仕様"
+  },
+  {
+   "date": "2023-12-23",
+   "code": "QCDB-JP009",
+   "product": "QUARTER CENTURY DUELIST BOX",
+   "pid": "1000007725000",
+   "rarity_short": "SE",
+   "rarity_label": "シークレットレア仕様"
+  },
+  {
+   "date": "2023-12-23",
+   "code": "QCDB-JP009",
+   "product": "QUARTER CENTURY DUELIST BOX",
+   "pid": "1000007725000",
+   "rarity_short": "QCSE",
+   "rarity_label": "クォーターセンチュリーシークレットレア仕様"
+  },
+  {
+   "date": "2022-06-11",
+   "code": "AC02-JP000",
+   "product": "アニメーション クロニクル 2022",
+   "pid": "1000006809000",
+   "rarity_short": "PSE",
+   "rarity_label": "プリズマティックシークレットレア仕様"
+  },
+  {
+   "date": "2022-04-23",
+   "code": null,
+   "product": "25th ANNIVERSARY ULTIMATE KAIBA SET『青眼の白龍』（シークレットレア仕様）3枚セット",
+   "pid": "1000008503001",
+   "rarity_short": "SE",
+   "rarity_label": "シークレットレア仕様"
+  },
+  {
+   "date": "2022-04-23",
+   "code": "KC01-JP004",
+   "product": "25th ANNIVERSARY ULTIMATE KAIBA SET",
+   "pid": "1000008503000",
+   "rarity_short": "UR",
+   "rarity_label": "ウルトラレア仕様"
+  },
+  {
+   "date": "2022-02-19",
+   "code": "HC01-JP001",
+   "product": "HISTORY ARCHIVE COLLECTION",
+   "pid": "1000007504000",
+   "rarity_short": "UR",
+   "rarity_label": "ウルトラレア仕様"
+  },
+  {
+   "date": "2021-07-10",
+   "code": "DR01-JPB01",
+   "product": "デュエルロワイヤル デッキセットEX[ 青眼の白龍 ]",
+   "pid": "1000008801000",
+   "rarity_short": "N",
+   "rarity_label": "ノーマル仕様"
+  },
+  {
+   "date": "2021-07-10",
+   "code": "DR01-JPB01",
+   "product": "デュエルロワイヤル デッキセットEX[ 青眼の白龍 ]",
+   "pid": "1000008801000",
+   "rarity_short": "UR",
+   "rarity_label": "ウルトラレア仕様"
+  },
+  {
+   "date": "2020-12-19",
+   "code": "PGB1-JP012",
+   "product": "PRISMATIC GOD BOX SPECIAL PACK",
+   "pid": "3304012",
+   "rarity_short": "UL",
+   "rarity_label": "アルティメットレア仕様"
+  },
+  {
+   "date": "2020-12-19",
+   "code": "PGB1-JP012",
+   "product": "PRISMATIC GOD BOX SPECIAL PACK",
+   "pid": "3304012",
+   "rarity_short": "M+UR",
+   "rarity_label": "ミレニアムウルトラレア仕様"
+  },
+  {
+   "date": "2020-08-29",
+   "code": "2020-EN001",
+   "product": "DUEL LINKS KC GRAND TOURNAMENT",
+   "pid": "1121219001",
+   "rarity_short": "EXSE",
+   "rarity_label": "エクストラシークレットレア仕様"
+  },
+  {
+   "date": "2020-07-01",
+   "code": "PSEC-JP001",
+   "product": "プリズマティックシークレットレア 「青眼の白龍」GETキャンペーン",
+   "pid": "141420000",
+   "rarity_short": "PSE",
+   "rarity_label": "プリズマティックシークレットレア仕様"
+  },
+  {
+   "date": "2019-12-21",
+   "code": "LGB1-JPS02",
+   "product": "LEGENDARY GOLD BOX",
+   "pid": "3304010",
+   "rarity_short": "PG",
+   "rarity_label": "プレミアムゴールドレア仕様"
+  },
+  {
+   "date": "2019-02-09",
+   "code": "20CP-JPS02",
+   "product": "20thシークレットレア SPECIAL PACK",
+   "pid": "141418013",
+   "rarity_short": "20th SE",
+   "rarity_label": "20thシークレットレア仕様"
+  },
+  {
+   "date": "2019-02-09",
+   "code": "20TH-JPC58",
+   "product": "20th ANNIVERSARY LEGEND COLLECTION",
+   "pid": "3320002",
+   "rarity_short": "SE",
+   "rarity_label": "シークレットレア仕様"
+  },
+  {
+   "date": "2019-02-09",
+   "code": "20TH-JPC58",
+   "product": "20th ANNIVERSARY LEGEND COLLECTION",
+   "pid": "3320002",
+   "rarity_short": "P+UR",
+   "rarity_label": "パラレル仕様ウルトラレア"
+  },
+  {
+   "date": "2018-08-05",
+   "code": "2018-JPP01",
+   "product": "Yu-Gi-Oh! WORLD CHAMPIONSHIP 2018 来場記念カード",
+   "pid": "141418005",
+   "rarity_short": "20th SE",
+   "rarity_label": "20thシークレットレア仕様"
+  },
+  {
+   "date": "2018-06-09",
+   "code": "DP20-JP006",
+   "product": "デュエリストパック － レジェンドデュエリスト編３ －",
+   "pid": "3309019",
+   "rarity_short": "N",
+   "rarity_label": "ノーマル仕様"
+  },
+  {
+   "date": "2017-06-02",
+   "code": "LG02-JP001",
+   "product": "遊戯王デュエルリンクス レジェンドデッキガイド 闇遊戯VS海馬瀬人 同梱カード",
+   "pid": "121219005",
+   "rarity_short": "P",
+   "rarity_label": "パラレル仕様"
+  },
+  {
+   "date": "2016-12-17",
+   "code": "20AP-JP000",
+   "product": "20th ANNIVERSARY PACK 1st WAVE",
+   "pid": "3304004",
+   "rarity_short": "P+HR",
+   "rarity_label": "パラレル仕様ホログラフィックレア"
+  },
+  {
+   "date": "2016-07-16",
+   "code": "SCB1-JPP01",
+   "product": "ブルーアイズを手にいれろ！クリア特典キャンペーン！！",
+   "pid": "141416007",
+   "rarity_short": "UR",
+   "rarity_label": "ウルトラレア仕様"
+  },
+  {
+   "date": "2016-06-18",
+   "code": "SDKS-JP009",
+   "product": "ストラクチャーデッキ － 海馬瀬人 －",
+   "pid": "2201044",
+   "rarity_short": "P",
+   "rarity_label": "パラレル仕様"
+  },
+  {
+   "date": "2016-04-23",
+   "code": "MVPI-JP002",
+   "product": "劇場版 遊戯王 THE DARK SIDE OF DIMENSIONS CoCo壱番屋特典カード 第2弾",
+   "pid": "141416002",
+   "rarity_short": "KC",
+   "rarity_label": "KC仕様"
+  },
+  {
+   "date": "2016-04-21",
+   "code": "JMPR-JP001",
+   "product": "DVD付分冊マンガ講座 ジャンプ流！ Vol.8 付録カード",
+   "pid": "121218004",
+   "rarity_short": "KC+UR",
+   "rarity_label": "KCウルトラレア仕様"
+  },
+  {
+   "date": "2015-08-15",
+   "code": "2015-JPP01",
+   "product": "Yu-Gi-Oh! WORLD CHAMPIONSHIP 2015 来場者特典カード",
+   "pid": "1000004892000",
+   "rarity_short": "M",
+   "rarity_label": "ミレニアム仕様"
+  },
+  {
+   "date": "2015-06-06",
+   "code": "DP16-JP015",
+   "product": "デュエリストパック － 決闘都市編 －",
+   "pid": "3309015",
+   "rarity_short": "UR",
+   "rarity_label": "ウルトラレア仕様"
+  },
+  {
+   "date": "2015-01-10",
+   "code": "15AX-JPY07",
+   "product": "15周年記念商品 決闘者の栄光 － 記憶の断片 － side：闇遊戯",
+   "pid": "3315004",
+   "rarity_short": "SE",
+   "rarity_label": "シークレットレア仕様"
+  },
+  {
+   "date": "2015-01-10",
+   "code": "15AX-JPY07",
+   "product": "15周年記念商品 決闘者の栄光 － 記憶の断片 － side：闇遊戯",
+   "pid": "3315004",
+   "rarity_short": "M",
+   "rarity_label": "ミレニアム仕様"
+  },
+  {
+   "date": "2014-12-20",
+   "code": "TRC1-JP000",
+   "product": "THE RARITY COLLECTION",
+   "pid": "3318000",
+   "rarity_short": "HR",
+   "rarity_label": "ホログラフィックレア仕様"
+  },
+  {
+   "date": "2013-06-15",
+   "code": "SD25-JP001",
+   "product": "ストラクチャーデッキ － 青眼龍轟臨 －",
+   "pid": "2201036",
+   "rarity_short": "UR",
+   "rarity_label": "ウルトラレア仕様"
+  },
+  {
+   "date": "2013-05-21",
+   "code": "VJMP-JP080",
+   "product": "Vジャンプ 2013年 7月号 付録カード",
+   "pid": "121215002",
+   "rarity_short": "UR",
+   "rarity_label": "ウルトラレア仕様"
+  },
+  {
+   "date": "2011-12-10",
+   "code": "SD22-JP004",
+   "product": "ストラクチャーデッキ － ドラゴニック・レギオン －",
+   "pid": "2201033",
+   "rarity_short": "N",
+   "rarity_label": "ノーマル仕様"
+  },
+  {
+   "date": "2011-05-14",
+   "code": "BE01-JP089",
+   "product": "BEGINNER'S EDITION 1 [ 2011 ]",
+   "pid": "3312002",
+   "rarity_short": "UR",
+   "rarity_label": "ウルトラレア仕様"
+  },
+  {
+   "date": "2010-09-25",
+   "code": "MFC3-JP001",
+   "product": "モンスターフィギュアコレクション Volume 3",
+   "pid": "111111001",
+   "rarity_short": "N",
+   "rarity_label": "ノーマル仕様"
+  },
+  {
+   "date": "2008-12-20",
+   "code": "YAP1-JP001",
+   "product": "ANNIVERSARY PACK",
+   "pid": "3304000",
+   "rarity_short": "UR",
+   "rarity_label": "ウルトラレア仕様"
+  },
+  {
+   "date": "2008-03-12",
+   "code": "DT01-JP001",
+   "product": "デュエルターミナル 「シンクロ覚醒！！」",
+   "pid": "4401000",
+   "rarity_short": "SR",
+   "rarity_label": "スーパーレア仕様"
+  },
+  {
+   "date": "2004-06-24",
+   "code": "BE1-JP098",
+   "product": "BEGINNER'S EDITION 1",
+   "pid": "3312000",
+   "rarity_short": "UR",
+   "rarity_label": "ウルトラレア仕様"
+  },
+  {
+   "date": "2003-12-11",
+   "code": "SK2-001",
+   "product": "ストラクチャーデッキ － 海馬編 － Volume 2",
+   "pid": "2201006",
+   "rarity_short": "N",
+   "rarity_label": "ノーマル仕様"
+  },
+  {
+   "date": "2002-12-17",
+   "code": "JMP-001",
+   "product": "週刊少年ジャンプ 2003年 3・4号 付録カード",
+   "pid": "121204007",
+   "rarity_short": "UR",
+   "rarity_label": "ウルトラレア仕様"
+  },
+  {
+   "date": "2002-08-22",
+   "code": "DL2-001",
+   "product": "DUELIST LEGACY Volume 2",
+   "pid": "3305001",
+   "rarity_short": "UR",
+   "rarity_label": "ウルトラレア仕様"
+  },
+  {
+   "date": "2002-08-22",
+   "code": "DL2-001",
+   "product": "DUELIST LEGACY Volume 2",
+   "pid": "3305001",
+   "rarity_short": "P+UR",
+   "rarity_label": "パラレル仕様ウルトラレア"
+  },
+  {
+   "date": "2002-01-24",
+   "code": "KA-03",
+   "product": "ストラクチャーデッキ － 海馬編 －",
+   "pid": "2201002",
+   "rarity_short": "N",
+   "rarity_label": "ノーマル仕様"
+  },
+  {
+   "date": "2002-01-24",
+   "code": "KA-04",
+   "product": "ストラクチャーデッキ － 海馬編 －",
+   "pid": "2201002",
+   "rarity_short": "N",
+   "rarity_label": "ノーマル仕様"
+  },
+  {
+   "date": "2002-01-24",
+   "code": "KA-05",
+   "product": "ストラクチャーデッキ － 海馬編 －",
+   "pid": "2201002",
+   "rarity_short": "N",
+   "rarity_label": "ノーマル仕様"
+  },
+  {
+   "date": "2001-04-19",
+   "code": "SM-51",
+   "product": "Spell Of Mask － 仮面の呪縛 －",
+   "pid": "1104000",
+   "rarity_short": "UL",
+   "rarity_label": "アルティメットレア仕様"
+  },
+  {
+   "date": "2000-11-23",
+   "code": "EX-49",
+   "product": "EX-R [ 二人対戦用構築済みデッキセット ]",
+   "pid": "111103000",
+   "rarity_short": "UR",
+   "rarity_label": "ウルトラレア仕様"
+  },
+  {
+   "date": "2000-05-18",
+   "code": "LB-01",
+   "product": "青眼の白龍伝説 － Legend of BlueEyesWhiteDragon －",
+   "pid": "3302000",
+   "rarity_short": "UR",
+   "rarity_label": "ウルトラレア仕様"
+  },
+  {
+   "date": "1999-12-16",
+   "code": null,
+   "product": "EX",
+   "pid": "111102000",
+   "rarity_short": "UR",
+   "rarity_label": "ウルトラレア仕様"
+  },
+  {
+   "date": "1999-10-21",
+   "code": null,
+   "product": "Vジャンプフェスタ 1999 プロモーションカード",
+   "pid": "141401000",
+   "rarity_short": "SE",
+   "rarity_label": "シークレットレア仕様"
+  },
+  {
+   "date": "1999-03-18",
+   "code": null,
+   "product": "STARTER BOX",
+   "pid": "111101000",
+   "rarity_short": "UR",
+   "rarity_label": "ウルトラレア仕様"
+  },
+  {
+   "date": "1999-03-06",
+   "code": null,
+   "product": "STARTER BOX 劇場限定版",
+   "pid": "111101001",
+   "rarity_short": "UR",
+   "rarity_label": "ウルトラレア仕様"
+  }
+ ]
+}

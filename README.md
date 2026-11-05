@@ -2,14 +2,24 @@
 
 Scope and rules: see the project's CLAUDE.md execution contract (JP OCG + EN TCG, TWD default, no Pokémon, no SaaS).
 
-## Status (2026-11-04, second pass)
+## Status (2026-11-05)
 
 ### Data access (tested, see `data/source_registry.json`)
-- **Working:** YAML Yugi (github.com/DawnbrandBots/yaml-yugi, compiled from Yugipedia) through the git proxy.
-  Revision `f0bbcfe1` (2026-11-04): 14,416 cards, 86,185 JP/EN printings in the local cache.
-- **Blocked (HTTP 403 from the environment's network proxy):** YGOResources, YGOPRODeck, Konami DB, eBay,
-  TCGplayer, PriceCharting, PSA, Yahoo! Auctions JP, Mercari JP. The network setting has to allow these hosts.
-- **No credentials set:** eBay, TCGplayer, PriceCharting.
+- **Working, with adapters:** YAML Yugi (git), YGOResources, YGOPRODeck, Konami DB (JP page per card).
+- **Reachable, need credentials:** eBay Browse (EBAY_CLIENT_ID/SECRET), TCGplayer, PriceCharting, PSA.
+- **Reachable, no adapter yet:** Yahoo! Auctions JP, Mercari JP (terms review needed before any capture).
+- No source credentials are set.
+
+### Live cross-check (`python -m cardman.live_identity 4007 4041 4766 8007 12950`)
+- Konami DB confirms every coded JP printing YAML Yugi lists for these five cards, gives release dates, and
+  adds prints YAML Yugi lacks (BEWD KA-04/KA-05 in Structure Deck: Kaiba; Oct 2026 YAC1/YAS3 prints).
+- YGOResources dates each print **code**, not each product (LOB-EN001 carries 2023-04-21 although it is also
+  listed under the original LOB product), so a date is attached only when one product uses the code. It lists
+  Asian-English codes: LOB-001 and SDK-001 are both EN TCG and Asian-English codes. Its JP list is sparse.
+- YGOPRODeck omits some products (e.g. Legendary Collection Gameboard Edition); disagreements are stored.
+- None of these sources lists editions. An English print resolves only with a verified edition-stamp photo,
+  and the edition becomes part of the printing id (1st and Unlimited comps never pool).
+- Corrected fixture: BEWD's first JP release is STARTER BOX (1999-03-18, Konami), not Vol.1.
 
 ### Identity
 - `identity_sources.py`: YAML Yugi normalizer (family = Konami ID; artwork = passcode, so alternate-art
@@ -42,18 +52,17 @@ Scope and rules: see the project's CLAUDE.md execution contract (JP OCG + EN TCG
 
 ### Run
 ```
-pip install pytest && python -m pytest -q                      # 77 pass
+pip install pytest && python -m pytest -q                      # 87 pass
 python -m cardman.sources                                       # re-probe every source
 python -m cardman.identity_cache sync                           # clone/update YAML Yugi, sync cache
 python -m cardman.slice examples/identity_only_LB-01.json examples/manual_import_TEMPLATE.csv
 ```
 
 ### Remaining gaps
-1. Network policy: open the hosts above, then test YGOResources (edition-level data) and YGOPRODeck live.
-2. EN edition (1st / Unlimited / Limited) and release dates: not in YAML Yugi; EN prints abstain until a
-   source with editions is reachable. Asian-English prints: no source yet (codes are quarantined on sight).
-3. eBay app keys for Browse; account exports for Product Research; no sold-data source is reachable yet,
-   so there are no real market observations.
+1. Cross-check runs per card on demand; run it for each card before it can reach Qualified.
+2. EN edition (1st / Unlimited / Limited) comes only from stamp photos: no reachable source lists editions.
+3. eBay app keys for Browse; account exports for Product Research; Yahoo! Auctions JP / Mercari need a terms
+   decision. There are still no real market observations.
 4. Evidence/decision store exists (`cardman/store.py`, `--store` on the slice); comp retrieval still reads the
    CSV of a run rather than querying the store across runs.
 5. Image/OCR, grading sensitivities, Taiwan/JP sources, portfolio outcomes: not started.

@@ -19,13 +19,16 @@ SOURCES = [
      "secondary source compiled from Yugipedia: set code/product/rarity per region; no editions, release dates "
      "or Asian-English prints; revision = git commit; synced by cardman.identity_cache"),
     ("ygoresources", "canonical_identity", "public_api", "https://db.ygoresources.com/manifest/0", None,
-     "use /manifest/{revision} for cache invalidation"),
+     "per-locale print codes + code dates incl. Asian-English; no rarity/edition; /manifest/{revision} for "
+     "invalidation; /data/meta/index/printcode answered 404 on 2026-11-05; adapter cardman.live_identity"),
     ("ygoprodeck", "canonical_identity", "public_api",
      "https://db.ygoprodeck.com/api/v7/cardsetsinfo.php?setcode=LOB-EN001", None,
-     "card_prices is not per-print sold evidence; tcgplayer_data removed Sept 2026"),
+     "EN card_sets with rarity, no edition/date; card_prices is not per-print sold evidence; tcgplayer_data "
+     "removed Sept 2026; adapter cardman.live_identity"),
     ("konami_db", "canonical_identity", "public_web",
      "https://www.db.yugioh-card.com/yugiohdb/card_search.action?ope=2&cid=4007&request_locale=ja", None,
-     "official OCG/TCG database; respect terms"),
+     "official DB; JP page lists every release with date, code, product pid, rarity; no editions; one page per "
+     "card on demand; adapter cardman.konami_db"),
     ("ebay_browse", "active_listing", "oauth_api", "https://api.ebay.com/buy/browse/v1/item_summary/search?q=x",
      "EBAY_CLIENT_ID", "needs app keys + OAuth; adapter cardman.ebay_browse (asking/bid only, never sold)"),
     ("ebay_product_research", "accepted_offer", "account_ui", None, None,
@@ -34,7 +37,7 @@ SOURCES = [
      "TCGPLAYER_PUBLIC_KEY", "new keys not routinely granted; Market Price is not a sale"),
     ("pricecharting", "market_aggregate", "paid_api", "https://www.pricecharting.com/api/products?q=blue-eyes",
      "PRICECHARTING_TOKEN", "current values only, no historical sales; 1 req/s"),
-    ("psa_cert", "graded_certification", "public_web", "https://www.psacard.com/cert/1", None,
+    ("psa_cert", "graded_certification", "public_web", "https://www.psacard.com/cert/1", "PSA_API_TOKEN",
      "cert presence is not authenticity proof"),
     ("yahoo_auctions_jp", "auction_result", "public_web", "https://auctions.yahoo.co.jp/", None,
      "closed-auction pages; check terms before any capture"),
@@ -43,6 +46,10 @@ SOURCES = [
     ("manual_import", "marketplace_marked_sold", "user_upload", None, None,
      "user-provided CSV/screenshots with source URL; always available"),
 ]
+
+
+# Sources with a working adapter in this repo (tested against a live response).
+IMPLEMENTED = {"yaml_yugi", "ygoresources", "ygoprodeck", "konami_db"}
 
 
 def probe(url: str, timeout: float = 20) -> tuple[bool, str]:
@@ -83,9 +90,15 @@ def run_probes(out: Path) -> list[dict]:
             row.update(tested=True, available=True, permitted="yes", tested_at=now.isoformat())
         elif url:
             ok, detail = probe(url)
-            row.update(tested=True, tested_at=now.isoformat())
-            if ok:
-                row.update(available=True, last_success=now.isoformat(), failure_reason=None, probe_detail=detail)
+            # reachable = the host answered at all; available = the capability works for us now
+            reachable = ok or detail.startswith("HTTP ")
+            row.update(tested=True, tested_at=now.isoformat(), reachable=reachable, probe_detail=detail)
+            if ok and source in IMPLEMENTED:
+                row.update(available=True, last_success=now.isoformat(), failure_reason=None)
+            elif ok:
+                row["failure_reason"] = "host reachable; no adapter for this capability yet"
+            elif reachable and not has_cred and cred_env:
+                row["failure_reason"] = f"{detail}: host reachable, needs credentials ({cred_env})"
             else:
                 row["failure_reason"] = detail
         else:

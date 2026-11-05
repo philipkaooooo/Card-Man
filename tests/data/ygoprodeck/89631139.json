@@ -1,0 +1,404 @@
+{
+ "source": "YGOPRODeck v7 cardinfo",
+ "url": "https://db.ygoprodeck.com/api/v7/cardinfo.php?id=89631139",
+ "fetched_at": "2026-11-05T07:58:54.922904+00:00",
+ "database_version": "147.67",
+ "data": [
+  {
+   "id": 89631139,
+   "name": "Blue-Eyes White Dragon",
+   "card_sets": [
+    {
+     "set_name": "2016 Mega-Tins",
+     "set_code": "CT13-EN008",
+     "set_rarity": "Ultra Rare"
+    },
+    {
+     "set_name": "2017 Mega-Tins",
+     "set_code": "CT14-EN002",
+     "set_rarity": "Secret Rare"
+    },
+    {
+     "set_name": "2022 Tin of the Pharaoh's Gods",
+     "set_code": "MP22-EN266",
+     "set_rarity": "Prismatic Secret Rare"
+    },
+    {
+     "set_name": "25th Anniversary Tin: Dueling Mirrors",
+     "set_code": "MP24-EN001",
+     "set_rarity": "Quarter Century Secret Rare"
+    },
+    {
+     "set_name": "25th Anniversary Ultimate Kaiba Set",
+     "set_code": "KC01-EN000",
+     "set_rarity": "Quarter Century Secret Rare"
+    },
+    {
+     "set_name": "25th Anniversary Ultimate Kaiba Set",
+     "set_code": "KC01-EN004",
+     "set_rarity": "Ultra Rare"
+    },
+    {
+     "set_name": "Anniversary Pack",
+     "set_code": "YAP1-EN001",
+     "set_rarity": "Ultra Rare"
+    },
+    {
+     "set_name": "Battles of Legend: Monster Mayhem",
+     "set_code": "BLMM-EN001",
+     "set_rarity": "Secret Rare"
+    },
+    {
+     "set_name": "Battles of Legend: Monster Mayhem",
+     "set_code": "BLMM-EN001",
+     "set_rarity": "Starlight Rare"
+    },
+    {
+     "set_name": "Booster Pack Collectors Tins 2002",
+     "set_code": "BPT-003",
+     "set_rarity": "Secret Rare"
+    },
+    {
+     "set_name": "Collectible Tins 2003",
+     "set_code": "BPT-009",
+     "set_rarity": "Secret Rare"
+    },
+    {
+     "set_name": "Dark Beginning 1",
+     "set_code": "DB1-EN098",
+     "set_rarity": "Ultra Rare"
+    },
+    {
+     "set_name": "Dark Legends",
+     "set_code": "DLG1-EN002",
+     "set_rarity": "Super Rare"
+    },
+    {
+     "set_name": "Dragons Collide Structure Deck",
+     "set_code": "SDDC-EN004",
+     "set_rarity": "Common"
+    },
+    {
+     "set_name": "Duel Terminal - Preview Wave 1",
+     "set_code": "DTP1-EN001",
+     "set_rarity": "Duel Terminal Normal Parallel Rare"
+    },
+    {
+     "set_name": "Duel Terminal - Preview Wave 2",
+     "set_code": "DTP1-EN001",
+     "set_rarity": "Duel Terminal Super Parallel Rare"
+    },
+    {
+     "set_name": "Duel Terminal 1",
+     "set_code": "DT01-EN001",
+     "set_rarity": "Duel Terminal Super Parallel Rare"
+    },
+    {
+     "set_name": "Duelist League 2010 participation cards",
+     "set_code": "DL09-EN001",
+     "set_rarity": "Rare"
+    },
+    {
+     "set_name": "Duelist Pack: Battle City",
+     "set_code": "DPBC-EN016",
+     "set_rarity": "Ultra Rare"
+    },
+    {
+     "set_name": "Duelist Pack: Kaiba",
+     "set_code": "DPKB-EN001",
+     "set_rarity": "Super Rare"
+    },
+    {
+     "set_name": "Duelist Saga",
+     "set_code": "DUSA-EN043",
+     "set_rarity": "Ultra Rare"
+    },
+    {
+     "set_name": "Forbidden Legacy",
+     "set_code": "FL1-EN001",
+     "set_rarity": "Secret Rare"
+    },
+    {
+     "set_name": "Ghosts From the Past: The 2nd Haunting",
+     "set_code": "GFP2-EN175",
+     "set_rarity": "Ghost Rare"
+    },
+    {
+     "set_name": "Gold Series: Haunted Mine",
+     "set_code": "GLD5-EN001",
+     "set_rarity": "Ghost/Gold Rare"
+    },
+    {
+     "set_name": "Hidden Arsenal: Chapter 1",
+     "set_code": "HAC1-EN001",
+     "set_rarity": "Common"
+    },
+    {
+     "set_name": "Hidden Arsenal: Chapter 1",
+     "set_code": "HAC1-EN001",
+     "set_rarity": "Duel Terminal Ultra Parallel Rare"
+    },
+    {
+     "set_name": "KC Grand Tournament prize card",
+     "set_code": "2020-EN001",
+     "set_rarity": "Extra Secret Rare"
+    },
+    {
+     "set_name": "Legend of Blue Eyes White Dragon",
+     "set_code": "LOB-001",
+     "set_rarity": "Ultra Rare"
+    },
+    {
+     "set_name": "Legend of Blue Eyes White Dragon",
+     "set_code": "LOB-E001",
+     "set_rarity": "Ultra Rare"
+    },
+    {
+     "set_name": "Legend of Blue Eyes White Dragon",
+     "set_code": "LOB-EN001",
+     "set_rarity": "Ultra Rare"
+    },
+    {
+     "set_name": "Legendary Collection",
+     "set_code": "LC01-EN004",
+     "set_rarity": "Ultra Rare"
+    },
+    {
+     "set_name": "Legendary Collection Kaiba Mega Pack",
+     "set_code": "LCKC-EN001",
+     "set_rarity": "Ultra Rare"
+    },
+    {
+     "set_name": "Legendary Collection: 25th Anniversary Edition",
+     "set_code": "LC01-EN004",
+     "set_rarity": "Quarter Century Secret Rare"
+    },
+    {
+     "set_name": "Legendary Decks II",
+     "set_code": "LDK2-ENK01",
+     "set_rarity": "Common"
+    },
+    {
+     "set_name": "Legendary Duelists: Season 2",
+     "set_code": "LDS2-EN001",
+     "set_rarity": "Ultra Rare"
+    },
+    {
+     "set_name": "Legendary Duelists: White Dragon Abyss",
+     "set_code": "LED3-EN006",
+     "set_rarity": "Common"
+    },
+    {
+     "set_name": "Magnificent Mavens",
+     "set_code": "MAMA-EN104",
+     "set_rarity": "Ultra Rare (Pharaoh's Rare)"
+    },
+    {
+     "set_name": "Maximum Gold",
+     "set_code": "MAGO-EN001",
+     "set_rarity": "Premium Gold Rare"
+    },
+    {
+     "set_name": "Maximum Gold: El Dorado",
+     "set_code": "MGED-EN001",
+     "set_rarity": "Premium Gold Rare"
+    },
+    {
+     "set_name": "OTS Tournament Pack 28",
+     "set_code": "OP28-EN001",
+     "set_rarity": "Ultimate Rare"
+    },
+    {
+     "set_name": "Premium Gold: Return of the Bling",
+     "set_code": "PGL2-EN080",
+     "set_rarity": "Gold Rare"
+    },
+    {
+     "set_name": "Quarter Century Bonanza",
+     "set_code": "RA03-EN079",
+     "set_rarity": "Platinum Secret Rare"
+    },
+    {
+     "set_name": "Quarter Century Bonanza",
+     "set_code": "RA03-EN079",
+     "set_rarity": "Quarter Century Secret Rare"
+    },
+    {
+     "set_name": "Quarter Century Stampede",
+     "set_code": "RA04-EN002",
+     "set_rarity": "Quarter Century Secret Rare"
+    },
+    {
+     "set_name": "Quarter Century Stampede",
+     "set_code": "RA04-EN108",
+     "set_rarity": "Platinum Secret Rare"
+    },
+    {
+     "set_name": "Quarter Century Stampede",
+     "set_code": "RA04-EN108",
+     "set_rarity": "Quarter Century Secret Rare"
+    },
+    {
+     "set_name": "Rarity Collection 5",
+     "set_code": "RA05-EN085",
+     "set_rarity": "Starlight Rare"
+    },
+    {
+     "set_name": "Rarity Collection 5",
+     "set_code": "RA05-EN085",
+     "set_rarity": "Ultra Rare"
+    },
+    {
+     "set_name": "Retro Pack",
+     "set_code": "RP01-EN001",
+     "set_rarity": "Ultra Rare"
+    },
+    {
+     "set_name": "Saga of Blue-Eyes White Dragon Structure Deck",
+     "set_code": "SDBE-EN001",
+     "set_rarity": "Ultra Rare"
+    },
+    {
+     "set_name": "Shonen Jump Vol. 1, Issue 1 promotional card",
+     "set_code": "JMP-001",
+     "set_rarity": "Ultra Rare"
+    },
+    {
+     "set_name": "Speed Duel Starter Decks: Duelists of Tomorrow",
+     "set_code": "SS02-ENA01",
+     "set_rarity": "Common"
+    },
+    {
+     "set_name": "Speed Duel Tournament Pack 1",
+     "set_code": "STP1-EN004",
+     "set_rarity": "Ultra Rare"
+    },
+    {
+     "set_name": "Speed Duel: Battle City Box",
+     "set_code": "SBCB-EN087",
+     "set_rarity": "Common"
+    },
+    {
+     "set_name": "Speed Duel: Battle City Box",
+     "set_code": "SBCB-EN087",
+     "set_rarity": "Secret Rare"
+    },
+    {
+     "set_name": "Starter Deck: Kaiba",
+     "set_code": "SDK-001",
+     "set_rarity": "Ultra Rare"
+    },
+    {
+     "set_name": "Starter Deck: Kaiba",
+     "set_code": "SDK-E001",
+     "set_rarity": "Ultra Rare"
+    },
+    {
+     "set_name": "Starter Deck: Kaiba Evolution",
+     "set_code": "SKE-001",
+     "set_rarity": "Super Rare"
+    },
+    {
+     "set_name": "Starter Deck: Kaiba Reloaded",
+     "set_code": "YSKR-EN001",
+     "set_rarity": "Common"
+    },
+    {
+     "set_name": "Starter Deck: Kaiba Reloaded",
+     "set_code": "YSKR-EN001",
+     "set_rarity": "Ultimate Rare"
+    },
+    {
+     "set_name": "Structure Deck: Blue-Eyes White Destiny",
+     "set_code": "SDWD-EN001",
+     "set_rarity": "Common"
+    },
+    {
+     "set_name": "Structure Deck: Blue-Eyes White Destiny",
+     "set_code": "SDWD-EN002",
+     "set_rarity": "Common"
+    },
+    {
+     "set_name": "Structure Deck: Blue-Eyes White Destiny",
+     "set_code": "SDWD-EN003",
+     "set_rarity": "Common"
+    },
+    {
+     "set_name": "Structure Deck: Seto Kaiba",
+     "set_code": "SDKS-EN009",
+     "set_rarity": "Common"
+    },
+    {
+     "set_name": "Swedish Shonen Jump 2004, Issue 2 promotional card",
+     "set_code": "JMP-EN001",
+     "set_rarity": "Ultra Rare"
+    },
+    {
+     "set_name": "Weekly Shonen Jump March 2014 membership promotional card",
+     "set_code": "JUMP-EN068",
+     "set_rarity": "Ultra Rare"
+    },
+    {
+     "set_name": "WSJ Jump Pack Spring 2016 promotional card",
+     "set_code": "JMPS-EN002",
+     "set_rarity": "Ultra Rare"
+    },
+    {
+     "set_name": "Yu-Gi-Oh! Championship Series 2025 prize cards",
+     "set_code": "25YC-ENP01",
+     "set_rarity": "Rare"
+    },
+    {
+     "set_name": "Yu-Gi-Oh! Dark Duel Stories promotional cards",
+     "set_code": "DDS-001",
+     "set_rarity": "Prismatic Secret Rare"
+    },
+    {
+     "set_name": "Yu-Gi-Oh! Power of Chaos: Kaiba the Revenge promotional cards",
+     "set_code": "PCK-001",
+     "set_rarity": "Prismatic Secret Rare"
+    },
+    {
+     "set_name": "Yu-Gi-Oh! Power of Chaos: Kaiba the Revenge promotional cards",
+     "set_code": "PCK-E001",
+     "set_rarity": "Prismatic Secret Rare"
+    },
+    {
+     "set_name": "Yu-Gi-Oh! The Dark Side of Dimensions Movie Pack",
+     "set_code": "MVP1-EN055",
+     "set_rarity": "Ultra Rare"
+    },
+    {
+     "set_name": "Yu-Gi-Oh! The Dark Side of Dimensions Movie Pack Secret Edition",
+     "set_code": "MVP1-ENS55",
+     "set_rarity": "Secret Rare"
+    },
+    {
+     "set_name": "Yu-Gi-Oh! The Dark Side of Dimensions Movie Pack Secret Edition",
+     "set_code": "MVP1-ENSV4",
+     "set_rarity": "Ultra Rare"
+    },
+    {
+     "set_name": "Yu-Gi-Oh! The Dark Side of Dimensions Movie Pack Special Edition",
+     "set_code": "MVP1-ENSE4",
+     "set_rarity": "Ultra Rare"
+    },
+    {
+     "set_name": "Yu-Gi-Oh! The Dark Side of Dimensions Movie Pack: Gold Edition",
+     "set_code": "MVP1-ENG55",
+     "set_rarity": "Gold Rare"
+    },
+    {
+     "set_name": "Yu-Gi-Oh! The Dark Side of Dimensions Movie Pack: Gold Edition",
+     "set_code": "MVP1-ENGV4",
+     "set_rarity": "Gold Secret Rare"
+    },
+    {
+     "set_name": "Yugi & Kaiba Collector Box",
+     "set_code": "KACB-EN001",
+     "set_rarity": "Ultra Rare"
+    }
+   ]
+  }
+ ]
+}

@@ -24,8 +24,10 @@ P_LOB_1ST = Printing("p:LOB-EN001:UR:1st", "fam:bewd", "art:bewd:1", Region.EN_T
                      set_code="LOB-EN001", edition="1st")
 P_LOB_UNL = Printing("p:LOB-EN001:UR:unl", "fam:bewd", "art:bewd:1", Region.EN_TCG, "en", "LOB", "Ultra Rare",
                      set_code="LOB-EN001", edition="Unlimited")
-P_JP_VOL1 = Printing("p:JP:Vol1:BEWD:UR", "fam:bewd", "art:bewd:1", Region.JP_OCG, "ja", "Vol.1", "Ultra Rare",
-                     set_code=None, release_date="1999-02-04")
+# Corrected 2026-11-05: an earlier version put BEWD in "Vol.1" (1999-02-04). Konami's database lists
+# BEWD's first Japanese release as STARTER BOX, 1999-03-18, with no print code (Vol.1 had Dark Magician).
+P_JP_STARTER = Printing("p:JP:StarterBox:BEWD:UR", "fam:bewd", "art:bewd:1", Region.JP_OCG, "ja", "Starter Box",
+                        "Ultra Rare", set_code=None, release_date="1999-03-18")
 P_DM_LOB_1ST = Printing("p:LOB-EN005:UR:1st", "fam:dm", "art:dm:1", Region.EN_TCG, "en", "LOB", "Ultra Rare",
                         set_code="LOB-EN005", edition="1st")
 STRUCT_SR = Printing("p:STRUCT-EN001:SR", "fam:struct", "art:s:1", Region.EN_TCG, "en", "STRUCT", "Super Rare",
@@ -35,7 +37,7 @@ STRUCT_QCSR = Printing("p:STRUCT-EN001:QCSR", "fam:struct", "art:s:1", Region.EN
 STRUCT_AE = Printing("p:STRUCT-AE001", "fam:struct", "art:s:1", Region.ASIAN_EN_OCG_QUARANTINE, "en", "STRUCT-AE",
                      "Super Rare", set_code="STRC-AE001")
 
-CATALOG = Catalog([BEWD, DM, STRUCT], [P_LOB_1ST, P_LOB_UNL, P_JP_VOL1, P_DM_LOB_1ST, STRUCT_SR, STRUCT_QCSR, STRUCT_AE])
+CATALOG = Catalog([BEWD, DM, STRUCT], [P_LOB_1ST, P_LOB_UNL, P_JP_STARTER, P_DM_LOB_1ST, STRUCT_SR, STRUCT_QCSR, STRUCT_AE])
 
 
 def obs(i, et, amount, *, printing=P_LOB_1ST.id, when=datetime(2026, 10, 1, tzinfo=UTC), **kw):

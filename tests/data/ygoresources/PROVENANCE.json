@@ -1,0 +1,15 @@
+{
+ "source": "YGOResources",
+ "base": "https://db.ygoresources.com",
+ "fetched": {
+  "/data/card/4007": {
+   "x_cache_revision": "32947",
+   "fetched_at": "2026-11-05T07:58:53.156230+00:00"
+  },
+  "/data/card/4041": {
+   "x_cache_revision": "32947",
+   "fetched_at": "2026-11-05T07:58:56.780508+00:00"
+  }
+ },
+ "fields": "cardId + per-locale prints (en, ja, ae); text removed"
+}

@@ -1,6 +1,6 @@
 from cardman.identity import ListingSignals, parse_set_code, resolve
 from cardman.models import IdentityStatus, Region
-from tests.fixtures import CATALOG, P_JP_VOL1, P_LOB_1ST, STRUCT_QCSR
+from tests.fixtures import CATALOG, P_JP_STARTER, P_LOB_1ST, STRUCT_QCSR
 
 
 def r(**kw):
@@ -27,8 +27,8 @@ def test_seller_typed_code_alone_never_resolves():
 
 
 def test_japanese_vintage_without_set_code_is_first_class():
-    res = r(title="青眼の白龍 Vol.1 ウルトラ", card_language="ja")
-    assert res.status == IdentityStatus.RESOLVED and res.printing == P_JP_VOL1
+    res = r(title="青眼の白龍 STARTER BOX ウルトラ", card_language="ja")
+    assert res.status == IdentityStatus.RESOLVED and res.printing == P_JP_STARTER
 
 
 def test_jp_listing_never_matches_en_tcg():
