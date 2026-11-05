@@ -48,19 +48,28 @@ Scope and rules: see the project's CLAUDE.md execution contract (JP OCG + EN TCG
   `decide` YES / WAIT / NO on a snapshot.
 
 ### Review UI (`python -m cardman.ui`)
-Local pages over the store, on 127.0.0.1 only, standard library, no JavaScript:
-- **Deals**: latest valuation per listing with stage, ask (in TWD), buy ceiling, comps and what blocks it.
-- **Deal**: figures, blockers, YES / WAIT / NO with rationale (YES refused on invalidated identity), replay
-  check, earlier valuations of the listing, comps and the evidence not used with the reason, ceiling
-  breakdown and sensitivity. "Re-evaluate now" makes a new snapshot from the current store.
-- **Evidence**: every stored record, filterable by printing, showing whether each one counts as a comp and
-  why not; each record page shows the untouched source fields, its status history, and a form to record a
-  new status.
+Local pages over the store on 127.0.0.1, standard library only; charts are server-rendered SVG, and one
+small bundled script shows tooltips (values are also always in a table next to each chart).
+- **Deals**: latest valuation per listing, qualified first then by room under the ceiling: the five checks
+  as icons, ask and ceiling in TWD, a room-under-ceiling bar, return at the ask, sales count.
+- **Deal**: a one-line verdict (ask vs ceiling and the return at the ask against the target), the five checks
+  with plain-language details and what to do next for each failing one, then:
+  - *Sales, ask and ceiling*: every record of the printing over time in TWD (used comps filled, unused
+    hollow, cancelled crossed) against the ask, buy ceiling and exit scenarios;
+  - *Where a resale goes*: the conservative exit split into item price, buying costs, target return and
+    selling costs, with the ask marked on the same scale;
+  - *Profit if you buy at the ask*: profit per exit scenario against the target-return line;
+  - *What moves the ceiling*: each sensitivity with the resulting ceiling and whether the ask still fits;
+  - decision form (YES refused on invalidated identity), the evidence table behind the chart, identity,
+    earlier valuations of the listing, calculation details.
+- **Evidence**: coverage by printing (usable sales vs the 3 needed); per printing, why each record is or
+  is not used, records over time per currency, and every record. Each record page shows the untouched source
+  fields, status history and a form to record a new status.
 - **Import**: upload a manual CSV; already-stored rows are skipped, changed rows are refused and listed.
 
 ### Run
 ```
-pip install pytest && python -m pytest -q                      # 91 pass
+pip install pytest && python -m pytest -q                      # 96 pass
 python -m cardman.sources                                       # re-probe every source
 python -m cardman.identity_cache sync                           # clone/update YAML Yugi, sync cache
 python -m cardman.slice examples/identity_only_LB-01.json examples/manual_import_TEMPLATE.csv

@@ -67,7 +67,14 @@ def test_deals_and_deal_page_render(app):
     home = app.get("/")
     assert "demo:1" in home and "17,125 TWD" in home and "16,000 TWD" in home     # ask shown in home currency
     page = app.get(f"/deal/{app.sid}")
-    assert "replays exactly" in page and "ACCEPTED_OFFER" in page and "authenticity: not reviewed" in page
+    assert "replays exactly" in page and "ACCEPTED_OFFER" in page
+    # verdict: ask 16,000 vs ceiling 17,125 -> 1,125 under, 6.6% room; authenticity is the failing check
+    assert "Ask is 1,125 TWD under the buy ceiling" in page and "6.6% room" in page
+    assert "1 of 5 checks fail" in page and "Review the photos for authenticity" in page
+    # the charts are there and agree with the numbers
+    assert page.count('<svg class="chart"') == 3               # price, profit at ask, sensitivity; split is html
+    assert 'class="split"' in page and "Item price (buy ceiling)" in page
+    assert "Resale 10% lower" in page and "−1,796 TWD" in page
 
 
 def test_store_values_are_escaped_and_only_web_links_open(app):
@@ -76,7 +83,7 @@ def test_store_values_are_escaped_and_only_web_links_open(app):
     from cardman.models import EvidenceType
     st.add_observation(obs(9, EvidenceType.MARKETPLACE_MARKED_SOLD, "1", source="<script>x</script>",
                            source_url="javascript:alert(1)"))
-    page = app.get("/evidence")
+    page = app.get("/evidence?printing=p%3ALOB-EN001%3AUR%3A1st&syn=1")
     assert "<script>x</script>" not in page and "&lt;script&gt;" in page
     assert 'href="javascript:' not in page
 
@@ -126,3 +133,14 @@ def test_import_upload(app):
     ctype, body = multipart({"t": TOKEN}, "bad.csv", b"id,evidence_type\nx,NOT_A_TYPE\n")
     _, _, page = app.post("/import", {}, ctype=ctype, body=body)
     assert "nothing was imported" in page
+
+
+def test_evidence_overview_and_script(app):
+    page = app.get("/evidence")
+    assert "Coverage by printing" in page and "p:LOB-EN001:UR:1st" in page
+    page = app.get("/evidence?printing=p%3ALOB-EN001%3AUR%3A1st")
+    assert "Synthetic fixture" in page and "Usable sales now" in page       # synthetic refused unless asked
+    page = app.get("/evidence?printing=p%3ALOB-EN001%3AUR%3A1st&syn=1")
+    assert "Not a sale (asks, bids, estimates)" in page and "Records over time (USD)" in page
+    js = app.get("/static/ui.js")
+    assert "textContent" in js and "innerHTML" not in js

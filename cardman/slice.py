@@ -87,6 +87,7 @@ def run(listing: dict, obs_csv: Path | None, now: datetime, allow_synthetic: boo
                   ask_all_in=None, ceiling=ceiling, ask_price=ask_home,
                   listing_last_seen=datetime.fromisoformat(listing["last_seen"]) if listing.get("last_seen") else None,
                   now=now, authenticity_ok=listing.get("authenticity_ok"), snapshot_payload=report)
+    report["gates"] = [{"name": g.name, "passed": g.passed, "detail": g.detail} for g in ev.gates]
     report["status"] = {"stage": ev.stage.value, "snapshot_id": ev.snapshot_id, "blocked_by": ev.reasons,
                         "expires_at": ev.expires_at.isoformat(), "human_action": "pending YES/WAIT/NO"}
     if st is not None:
