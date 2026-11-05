@@ -8,13 +8,14 @@
   "authenticated": false,
   "permitted": "unknown",
   "available": true,
-  "tested_at": "2026-11-04T21:21:11.185628+00:00",
-  "last_success": "2026-11-04T21:21:11.185628+00:00",
+  "tested_at": "2026-11-05T08:03:12.130622+00:00",
+  "last_success": "2026-11-05T08:03:12.130622+00:00",
   "failure_reason": null,
   "credential_env": null,
   "credential_present": false,
   "notes": "secondary source compiled from Yugipedia: set code/product/rarity per region; no editions, release dates or Asian-English prints; revision = git commit; synced by cardman.identity_cache",
-  "probe_detail": "git HEAD f0bbcfe1f61f"
+  "reachable": true,
+  "probe_detail": "git HEAD 03566e661c8e"
  },
  {
   "source": "ygoresources",
@@ -24,13 +25,15 @@
   "tested": true,
   "authenticated": false,
   "permitted": "unknown",
-  "available": false,
-  "tested_at": "2026-11-04T21:21:11.185628+00:00",
-  "last_success": null,
-  "failure_reason": "URLError: <urlopen error Tunnel connection failed: 403 Forbidden>",
+  "available": true,
+  "tested_at": "2026-11-05T08:03:12.130622+00:00",
+  "last_success": "2026-11-05T08:03:12.130622+00:00",
+  "failure_reason": null,
   "credential_env": null,
   "credential_present": false,
-  "notes": "use /manifest/{revision} for cache invalidation"
+  "notes": "per-locale print codes + code dates incl. Asian-English; no rarity/edition; /manifest/{revision} for invalidation; /data/meta/index/printcode answered 404 on 2026-11-05; adapter cardman.live_identity",
+  "reachable": true,
+  "probe_detail": "HTTP 200"
  },
  {
   "source": "ygoprodeck",
@@ -40,13 +43,15 @@
   "tested": true,
   "authenticated": false,
   "permitted": "unknown",
-  "available": false,
-  "tested_at": "2026-11-04T21:21:11.185628+00:00",
-  "last_success": null,
-  "failure_reason": "URLError: <urlopen error Tunnel connection failed: 403 Forbidden>",
+  "available": true,
+  "tested_at": "2026-11-05T08:03:12.130622+00:00",
+  "last_success": "2026-11-05T08:03:12.130622+00:00",
+  "failure_reason": null,
   "credential_env": null,
   "credential_present": false,
-  "notes": "card_prices is not per-print sold evidence; tcgplayer_data removed Sept 2026"
+  "notes": "EN card_sets with rarity, no edition/date; card_prices is not per-print sold evidence; tcgplayer_data removed Sept 2026; adapter cardman.live_identity",
+  "reachable": true,
+  "probe_detail": "HTTP 200"
  },
  {
   "source": "konami_db",
@@ -56,13 +61,15 @@
   "tested": true,
   "authenticated": false,
   "permitted": "unknown",
-  "available": false,
-  "tested_at": "2026-11-04T21:21:11.185628+00:00",
-  "last_success": null,
-  "failure_reason": "URLError: <urlopen error Tunnel connection failed: 403 Forbidden>",
+  "available": true,
+  "tested_at": "2026-11-05T08:03:12.130622+00:00",
+  "last_success": "2026-11-05T08:03:12.130622+00:00",
+  "failure_reason": null,
   "credential_env": null,
   "credential_present": false,
-  "notes": "official OCG/TCG database; respect terms"
+  "notes": "official DB; JP page lists every release with date, code, product pid, rarity; no editions; one page per card on demand; adapter cardman.konami_db",
+  "reachable": true,
+  "probe_detail": "HTTP 200"
  },
  {
   "source": "ebay_browse",
@@ -73,12 +80,14 @@
   "authenticated": false,
   "permitted": "unknown",
   "available": false,
-  "tested_at": "2026-11-04T21:21:11.185628+00:00",
+  "tested_at": "2026-11-05T08:03:12.130622+00:00",
   "last_success": null,
-  "failure_reason": "URLError: <urlopen error Tunnel connection failed: 403 Forbidden>",
+  "failure_reason": "HTTP 403: host reachable, needs credentials (EBAY_CLIENT_ID)",
   "credential_env": "EBAY_CLIENT_ID",
   "credential_present": false,
-  "notes": "needs app keys + OAuth; adapter cardman.ebay_browse (asking/bid only, never sold)"
+  "notes": "needs app keys + OAuth; adapter cardman.ebay_browse (asking/bid only, never sold)",
+  "reachable": true,
+  "probe_detail": "HTTP 403"
  },
  {
   "source": "ebay_product_research",
@@ -105,12 +114,14 @@
   "authenticated": false,
   "permitted": "unknown",
   "available": false,
-  "tested_at": "2026-11-04T21:21:11.185628+00:00",
+  "tested_at": "2026-11-05T08:03:12.130622+00:00",
   "last_success": null,
-  "failure_reason": "URLError: <urlopen error Tunnel connection failed: 403 Forbidden>",
+  "failure_reason": "HTTP 401: host reachable, needs credentials (TCGPLAYER_PUBLIC_KEY)",
   "credential_env": "TCGPLAYER_PUBLIC_KEY",
   "credential_present": false,
-  "notes": "new keys not routinely granted; Market Price is not a sale"
+  "notes": "new keys not routinely granted; Market Price is not a sale",
+  "reachable": true,
+  "probe_detail": "HTTP 401"
  },
  {
   "source": "pricecharting",
@@ -121,12 +132,14 @@
   "authenticated": false,
   "permitted": "unknown",
   "available": false,
-  "tested_at": "2026-11-04T21:21:11.185628+00:00",
+  "tested_at": "2026-11-05T08:03:12.130622+00:00",
   "last_success": null,
-  "failure_reason": "URLError: <urlopen error Tunnel connection failed: 403 Forbidden>",
+  "failure_reason": "HTTP 400: host reachable, needs credentials (PRICECHARTING_TOKEN)",
   "credential_env": "PRICECHARTING_TOKEN",
   "credential_present": false,
-  "notes": "current values only, no historical sales; 1 req/s"
+  "notes": "current values only, no historical sales; 1 req/s",
+  "reachable": true,
+  "probe_detail": "HTTP 400"
  },
  {
   "source": "psa_cert",
@@ -137,12 +150,14 @@
   "authenticated": false,
   "permitted": "unknown",
   "available": false,
-  "tested_at": "2026-11-04T21:21:11.185628+00:00",
+  "tested_at": "2026-11-05T08:03:12.130622+00:00",
   "last_success": null,
-  "failure_reason": "URLError: <urlopen error Tunnel connection failed: 403 Forbidden>",
-  "credential_env": null,
+  "failure_reason": "HTTP 403: host reachable, needs credentials (PSA_API_TOKEN)",
+  "credential_env": "PSA_API_TOKEN",
   "credential_present": false,
-  "notes": "cert presence is not authenticity proof"
+  "notes": "cert presence is not authenticity proof",
+  "reachable": true,
+  "probe_detail": "HTTP 403"
  },
  {
   "source": "yahoo_auctions_jp",
@@ -153,12 +168,14 @@
   "authenticated": false,
   "permitted": "unknown",
   "available": false,
-  "tested_at": "2026-11-04T21:21:11.185628+00:00",
-  "last_success": null,
-  "failure_reason": "URLError: <urlopen error Tunnel connection failed: 403 Forbidden>",
+  "tested_at": "2026-11-05T08:03:12.130622+00:00",
+  "last_success": "2026-11-05T07:56:36.892214+00:00",
+  "failure_reason": "host reachable; no adapter for this capability yet",
   "credential_env": null,
   "credential_present": false,
-  "notes": "closed-auction pages; check terms before any capture"
+  "notes": "closed-auction pages; check terms before any capture",
+  "reachable": true,
+  "probe_detail": "HTTP 200"
  },
  {
   "source": "mercari_jp",
@@ -169,12 +186,14 @@
   "authenticated": false,
   "permitted": "unknown",
   "available": false,
-  "tested_at": "2026-11-04T21:21:11.185628+00:00",
-  "last_success": null,
-  "failure_reason": "URLError: <urlopen error Tunnel connection failed: 403 Forbidden>",
+  "tested_at": "2026-11-05T08:03:12.130622+00:00",
+  "last_success": "2026-11-05T07:56:36.892214+00:00",
+  "failure_reason": "host reachable; no adapter for this capability yet",
   "credential_env": null,
   "credential_present": false,
-  "notes": "'sold' badge is not verified settlement"
+  "notes": "'sold' badge is not verified settlement",
+  "reachable": true,
+  "probe_detail": "HTTP 200"
  },
  {
   "source": "manual_import",
@@ -185,7 +204,7 @@
   "authenticated": false,
   "permitted": "yes",
   "available": true,
-  "tested_at": "2026-11-04T21:21:11.185628+00:00",
+  "tested_at": "2026-11-05T08:03:12.130622+00:00",
   "last_success": null,
   "failure_reason": null,
   "credential_env": null,

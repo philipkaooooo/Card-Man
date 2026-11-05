@@ -58,11 +58,22 @@ def test_lob_en001_original_vs_25th_anniversary_reprint_abstains():
         "Legend of Blue Eyes White Dragon", "Legend of Blue Eyes White Dragon (25th Anniversary Edition)"}
 
 
-def test_lob_en001_edition_stamp_still_blocked_without_edition_level_source():
-    res = r(title="Blue-Eyes White Dragon LOB-EN001", printed_set_code="LOB-EN001", verified_edition="1st",
-            verified_product="Legend of Blue Eyes White Dragon")
+def test_lob_en001_needs_stamp_photo_for_edition():
+    res = r(title="Blue-Eyes White Dragon LOB-EN001 1st Edition", printed_set_code="LOB-EN001",
+            seller_edition="1st", verified_product="Legend of Blue Eyes White Dragon")
     assert res.status == IdentityStatus.CANDIDATES and len(res.candidates) == 1
     assert any("edition not documented" in b for b in res.blocking_reasons)
+    assert any("edition stamp" in e for e in res.evidence_needed)
+
+
+def test_lob_en001_stamp_photo_gives_edition_specific_printing():
+    first = r(title="Blue-Eyes White Dragon", printed_set_code="LOB-EN001", verified_edition="1st",
+              verified_product="Legend of Blue Eyes White Dragon")
+    unl = r(title="Blue-Eyes White Dragon", printed_set_code="LOB-EN001", verified_edition="Unlimited",
+            verified_product="Legend of Blue Eyes White Dragon")
+    assert first.status == unl.status == IdentityStatus.RESOLVED
+    assert first.printing.edition == "1st" and first.printing.id.endswith("#ed=1st")
+    assert first.printing.id != unl.printing.id      # 1st and Unlimited comps never pool
 
 
 def test_dark_magician_lob_en005_reprint_trap():
