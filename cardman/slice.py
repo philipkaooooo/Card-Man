@@ -81,6 +81,8 @@ def run(listing: dict, obs_csv: Path | None, now: datetime, allow_synthetic: boo
         report["buy_ceiling"] = {"ceiling": None, "reason": sc.abstain_reason or "identity unresolved"}
     ask = listing.get("ask")
     ask_home = fx.convert(D(ask["amount"]), ask["currency"], home, now) if ask else None
+    if ask:
+        report["ask"] = {"amount": ask["amount"], "currency": ask["currency"], "home": str(ask_home)}
     ev = evaluate(listing_ref=listing["listing_ref"], identity=ident, n_comps=len(comps), min_comps=3,
                   ask_all_in=None, ceiling=ceiling, ask_price=ask_home,
                   listing_last_seen=datetime.fromisoformat(listing["last_seen"]) if listing.get("last_seen") else None,

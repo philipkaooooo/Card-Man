@@ -275,6 +275,39 @@ class Store:
             self.db.execute("INSERT INTO decision VALUES (?,?,?,?,?)",
                             (d.deal_snapshot_id, d.action.value, d.rationale, d.wait_trigger, _ts(d.timestamp)))
 
+    # -- listings for review -------------------------------------------------------------------
+    def snapshots(self, limit: int = 200) -> list[dict]:
+        """Newest first, with the latest human decision and whether an alert went out."""
+        rows = self.db.execute(
+            "SELECT s.id, s.listing_ref, s.created_at, s.expires_at, s.stage,"
+            " (SELECT action FROM decision d WHERE d.snapshot_id=s.id ORDER BY d.rowid DESC LIMIT 1),"
+            " EXISTS(SELECT 1 FROM alert a WHERE a.snapshot_id=s.id)"
+            " FROM snapshot s ORDER BY s.created_at DESC, s.rowid DESC LIMIT ?", (limit,)).fetchall()
+        keys = ("id", "listing_ref", "created_at", "expires_at", "stage", "decision", "alerted")
+        return [dict(zip(keys, r)) for r in rows]
+
+    def snapshot_meta(self, sid: str) -> dict:
+        row = self.db.execute("SELECT listing_ref, created_at, expires_at, stage FROM snapshot WHERE id=?",
+                              (sid,)).fetchone()
+        if not row:
+            raise KeyError(sid)
+        return dict(zip(("listing_ref", "created_at", "expires_at", "stage"), row))
+
+    def observation_list(self, printing_id: str | None = None, *, as_of: datetime | None = None,
+                         limit: int = 500) -> list[MarketObservation]:
+        """Stored observations (newest sale first), with status as known at `as_of`."""
+        if printing_id:
+            q = ("SELECT o.id FROM observation o JOIN observation_printing p ON p.obs_id=o.id"
+                 " WHERE p.printing_id=? ORDER BY o.event_time DESC LIMIT ?")
+            args: tuple = (printing_id, limit)
+        else:
+            q, args = "SELECT id FROM observation ORDER BY event_time DESC LIMIT ?", (limit,)
+        return [self.effective(r[0], as_of) for r in self.db.execute(q, args).fetchall()]
+
+    def printing_ids(self) -> list[str]:
+        return [r[0] for r in self.db.execute(
+            "SELECT DISTINCT printing_id FROM observation_printing ORDER BY printing_id")]
+
     def decisions(self, sid: str) -> list[tuple]:
         return self.db.execute("SELECT action, rationale, wait_trigger, decided_at FROM decision WHERE snapshot_id=?"
                                " ORDER BY rowid", (sid,)).fetchall()

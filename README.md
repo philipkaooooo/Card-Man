@@ -47,14 +47,26 @@ Scope and rules: see the project's CLAUDE.md execution contract (JP OCG + EN TCG
   (CANCELLED, REFUNDED, INVALID, ...), list the `comps` for a printing at a time, `replay` a snapshot,
   `decide` YES / WAIT / NO on a snapshot.
 
+### Review UI (`python -m cardman.ui`)
+Local pages over the store, on 127.0.0.1 only, standard library, no JavaScript:
+- **Deals**: latest valuation per listing with stage, ask (in TWD), buy ceiling, comps and what blocks it.
+- **Deal**: figures, blockers, YES / WAIT / NO with rationale (YES refused on invalidated identity), replay
+  check, earlier valuations of the listing, comps and the evidence not used with the reason, ceiling
+  breakdown and sensitivity. "Re-evaluate now" makes a new snapshot from the current store.
+- **Evidence**: every stored record, filterable by printing, showing whether each one counts as a comp and
+  why not; each record page shows the untouched source fields, its status history, and a form to record a
+  new status.
+- **Import**: upload a manual CSV; already-stored rows are skipped, changed rows are refused and listed.
+
 ### Run
 ```
-pip install pytest && python -m pytest -q                      # 84 pass
+pip install pytest && python -m pytest -q                      # 91 pass
 python -m cardman.sources                                       # re-probe every source
 python -m cardman.identity_cache sync                           # clone/update YAML Yugi, sync cache
 python -m cardman.slice examples/identity_only_LB-01.json examples/manual_import_TEMPLATE.csv
 python -m cardman.store --store data/store/evidence.sqlite import my_sales.csv   # accumulate comps
 python -m cardman.slice listing.json --store data/store/evidence.sqlite          # value from the store
+python -m cardman.ui --store data/store/evidence.sqlite                          # http://127.0.0.1:8765
 ```
 
 ### Remaining gaps
