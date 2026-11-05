@@ -48,28 +48,26 @@ Scope and rules: see the project's CLAUDE.md execution contract (JP OCG + EN TCG
   `decide` YES / WAIT / NO on a snapshot.
 
 ### Review UI (`python -m cardman.ui`)
-Local pages over the store on 127.0.0.1, standard library only; charts are server-rendered SVG, and one
-small bundled script shows tooltips (values are also always in a table next to each chart).
-- **Deals**: latest valuation per listing, qualified first then by room under the ceiling: the five checks
-  as icons, ask and ceiling in TWD, a room-under-ceiling bar, return at the ask, sales count.
-- **Deal**: a one-line verdict (ask vs ceiling and the return at the ask against the target), the five checks
-  with plain-language details and what to do next for each failing one, then:
-  - *Sales, ask and ceiling*: every record of the printing over time in TWD (used comps filled, unused
-    hollow, cancelled crossed) against the ask, buy ceiling and exit scenarios;
-  - *Where a resale goes*: the conservative exit split into item price, buying costs, target return and
-    selling costs, with the ask marked on the same scale;
-  - *Profit if you buy at the ask*: profit per exit scenario against the target-return line;
-  - *What moves the ceiling*: each sensitivity with the resulting ceiling and whether the ask still fits;
-  - decision form (YES refused on invalidated identity), the evidence table behind the chart, identity,
-    earlier valuations of the listing, calculation details.
-- **Evidence**: coverage by printing (usable sales vs the 3 needed); per printing, why each record is or
-  is not used, records over time per currency, and every record. Each record page shows the untouched source
-  fields, status history and a form to record a new status.
-- **Import**: upload a manual CSV; already-stored rows are skipped, changed rows are refused and listed.
+Local pages over the store on 127.0.0.1, standard library only. Amounts show in USD by default
+(switch to TWD in the header); conversion uses the listing's own FX at valuation time, and prices you
+may pay round down while resale thresholds round up, so the display never flatters a deal.
+- **The call** (`cardman/advice.py`): Buy / Buy after checks / Offer lower / Skip / Hold off, with the price
+  to pay and the reasons in plain sentences, what to do before buying, and a confidence level (sales count,
+  age of the newest sale, price spread, source variety, synthetic data).
+- **The numbers**: ask and all-in cost, pay up to (hits the target), walk away above (loses money at the
+  low-end resale), profit at the ask, break-even resale and how far below the cheapest sale it is.
+- **Charts**: buy-price zones with the ask marked; profit at the ask against each recent sale with the target
+  line (profit in X of N, target in Y of N); sales over time; where a low-end resale goes; what moves the
+  pay-up-to price and whether the ask still fits.
+- **What could go wrong**: flags (thin cushion, low confidence, stale or spread-out prices, selling slower
+  than the holding assumption, no returns reserve) and the result at 10 / 20 / 30% under the low end.
+- **The math**: the pay-up-to price worked out step by step, and every assumption used.
+- **Deals** ranks listings by call, then room under pay-up-to; **Evidence** shows coverage per printing and
+  why each record is or is not used; **Import** uploads a manual CSV.
 
 ### Run
 ```
-pip install pytest && python -m pytest -q                      # 96 pass
+pip install pytest && python -m pytest -q                      # 103 pass
 python -m cardman.sources                                       # re-probe every source
 python -m cardman.identity_cache sync                           # clone/update YAML Yugi, sync cache
 python -m cardman.slice examples/identity_only_LB-01.json examples/manual_import_TEMPLATE.csv

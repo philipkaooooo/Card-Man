@@ -30,7 +30,12 @@ def test_identical_points_are_stepped_apart_and_close_ref_labels_do_not_overlap(
     assert abs(ys[0] - ys[1]) >= 15
 
 
-def test_long_bar_label_moves_inside_the_bar():
-    svg = charts.hbars([("Resale 10% lower", -1796.0, "ceiling 15,329 · ask would be over"),
-                        ("Held 3 months longer", -425.0, "")], "TWD", width=1060)
-    assert 'class="rl inbar"' in svg and "−1,796 TWD · ceiling 15,329" in svg
+def test_bar_labels_fit_inside_the_chart():
+    rows = [("Resale 10% lower", -1796.0, "now NT$15,329; ask too high"), ("Held 3 months longer", -425.0, "")]
+    svg = charts.hbars(rows, "TWD", width=560)
+    import re
+    width = 560
+    for x, anchor, text in re.findall(r'<text class="rl strong" x="([\d.]+)" y="[\d.]+" text-anchor="(\w+)">([^<]*)<', svg):
+        end = float(x) + (len(text) * 6.8 if anchor == "start" else 0)
+        assert end <= width + 1, (text, end)
+    assert "−NT$1,796 · now NT$15,329; ask too high" in svg

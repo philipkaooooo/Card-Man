@@ -34,8 +34,11 @@ def app(tmp_path):
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{srv.server_address[1]}"
 
-    def get(path):
-        with urllib.request.urlopen(base + path) as r:
+    def get(path, cookie=None):
+        req = urllib.request.Request(base + path)
+        if cookie:
+            req.add_header("Cookie", cookie)
+        with urllib.request.urlopen(req) as r:
             return r.read().decode()
 
     def post(path, data, token=TOKEN, ctype=None, body=None):
@@ -64,17 +67,27 @@ def multipart(fields: dict, filename: str, content: bytes) -> tuple[str, bytes]:
 
 
 def test_deals_and_deal_page_render(app):
-    home = app.get("/")
-    assert "demo:1" in home and "17,125 TWD" in home and "16,000 TWD" in home     # ask shown in home currency
+    home = app.get("/")                                   # USD by default; the demo FX is 32 TWD per USD
+    assert "demo:1" in home and "$500" in home and "pay up to $535" in home and "Buy after checks" in home
     page = app.get(f"/deal/{app.sid}")
     assert "replays exactly" in page and "ACCEPTED_OFFER" in page
-    # verdict: ask 16,000 vs ceiling 17,125 -> 1,125 under, 6.6% room; authenticity is the failing check
-    assert "Ask is 1,125 TWD under the buy ceiling" in page and "6.6% room" in page
-    assert "1 of 5 checks fail" in page and "Review the photos for authenticity" in page
-    # the charts are there and agree with the numbers
-    assert page.count('<svg class="chart"') == 3               # price, profit at ask, sensitivity; split is html
-    assert 'class="split"' in page and "Item price (buy ceiling)" in page
-    assert "Resale 10% lower" in page and "−1,796 TWD" in page
+    # the call: price works (ask $500 vs pay-up-to $535.16 -> $535 rounded down), authenticity still open
+    assert "Good price. Buy once the checks below are done; pay up to $535." in page
+    assert "Review the photos for authenticity" in page
+    assert "you make $159" in page and "(30%)" in page               # 5,098.40 TWD / 32 at the low-end resale
+    assert "Walk away above</small><span>$656" in page                # 21,023 TWD / 32 = 656.97, rounded down
+    assert "Break-even resale</small><span>$633" in page              # 20,224.19 TWD / 32 = 632.01, rounded up
+    assert "Against each of the last 3 sales: profit in 3, target hit in 3." in page
+    assert page.count('<svg class="chart"') == 3         # per-sale profit, price over time, sensitivity
+    assert 'class="split zones"' in page and "Hits your target" in page
+    assert "Resale 10% lower" in page and "−$56.12" in page          # −1,796 TWD / 32 = 56.125
+    assert 'How "pay up to" is worked out' in page and "= pay up to" in page
+
+
+def test_currency_switch_shows_twd(app):
+    page = app.get(f"/deal/{app.sid}", cookie="cur=TWD")
+    assert "pay up to NT$17,125" in page and "NT$16,000" in page
+    assert app.get("/currency?c=TWD&back=//evil.example").startswith("<!doctype")   # open redirect refused -> "/"
 
 
 def test_store_values_are_escaped_and_only_web_links_open(app):

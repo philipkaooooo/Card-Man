@@ -15,7 +15,7 @@ import secrets
 import statistics
 import tempfile
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal, InvalidOperation
 from email.parser import BytesParser
 from email.policy import HTTP
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -23,6 +23,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote as _quote, unquote, urlencode, urlsplit
 
 from . import charts
+from .advice import advise
 from .charts import Point, Ref
 from .economics import AcquisitionCosts, ExitCosts
 from .evidence import import_manual_csv, select_comps
@@ -94,7 +95,7 @@ def stage_tag(stage: str | None) -> str:
 def pct(v: float | None, signed: bool = False) -> str:
     if v is None:
         return "—"
-    return f"{v:+.1f}%" if signed else f"{v:.1f}%"
+    return (f"{v:+.1f}%" if signed else f"{v:.1f}%").replace("-", "−")
 
 
 def icon(ok: bool | None) -> str:
@@ -119,7 +120,7 @@ header{background:var(--surface);border-bottom:1px solid var(--line);padding:10p
 align-items:baseline;flex-wrap:wrap}
 header b{font-size:15px}header a{color:var(--fg2);text-decoration:none}header a.on{color:var(--fg);
 font-weight:600}header .store{margin-left:auto;color:var(--muted);font-size:12px}
-main{max-width:1120px;margin:0 auto;padding:16px}
+main{max-width:1240px;margin:0 auto;padding:16px}
 h1{font-size:20px;margin:6px 0 2px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 h2{font-size:15px;margin:0 0 4px}
 .sub{color:var(--fg2);margin:0 0 14px}
@@ -188,6 +189,26 @@ padding:0 6px;min-width:2px;overflow:hidden;white-space:nowrap}
 border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:12px;max-width:320px;
 box-shadow:0 4px 14px rgba(0,0,0,.12)}
 .tip .tv{color:var(--fg);font-weight:600;font-size:13px}
+header .curs{display:inline-flex;border:1px solid var(--axis);border-radius:6px;overflow:hidden}
+header .curs a{padding:0 8px;font-size:12px}header .curs a.on{background:var(--fg);color:var(--surface)}
+.call{display:inline-flex;align-items:center;gap:6px;font-weight:700;font-size:13px;padding:2px 8px 2px 4px;
+border-radius:999px;border:1px solid var(--axis);white-space:nowrap}
+.call .ci{display:inline-flex;width:18px;height:18px;border-radius:50%;align-items:center;justify-content:center;
+font-size:11px;color:#fff;background:var(--muted)}
+.call.good .ci{background:var(--good)}.call.warn .ci{background:var(--warn);color:#0b0b0b}.call.crit .ci{background:var(--crit)}
+.call.big{font-size:15px;padding:4px 12px 4px 6px}.call.big .ci{width:22px;height:22px;font-size:13px}
+.callcard{border-left-width:6px}.callcard.good{border-left-color:var(--good)}.callcard.warn{border-left-color:var(--warn)}
+.callcard.crit{border-left-color:var(--crit)}
+.callcard .headline{font-size:26px;line-height:1.25;margin:10px 0 8px;font-weight:600}
+.because{margin:0 0 6px;padding-left:20px;font-size:15px}.because li{margin:3px 0}
+.conf{color:var(--fg2);margin:10px 0 0;font-size:13px}
+.flags{list-style:none;padding:0;margin:0 0 10px}.flags li{display:flex;gap:8px;margin:0 0 8px;align-items:flex-start}
+.ic.warnic{background:var(--warn);color:#0b0b0b}
+.zones{margin-top:22px}.zones .seg{color:#fff}.zones .seg:nth-child(2){color:#0b0b0b}
+.zticks{position:absolute;top:-20px;left:0;right:0;height:16px;font-size:12px;color:var(--fg2)}
+.zticks span{position:absolute;transform:translateX(-50%);white-space:nowrap}
+table.math tr.total td{font-weight:600;border-top:1px solid var(--axis)}
+tr.expired td{opacity:.6}.warnt{color:#9a6700}
 .note{padding:8px 12px;border-left:3px solid var(--axis);background:var(--soft);margin:0 0 12px;border-radius:0 6px 6px 0}
 .note.bad{border-color:var(--crit)}.note.ok{border-color:var(--good)}
 form.inline{display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin:8px 0}
@@ -216,9 +237,16 @@ document.addEventListener('focusout',function(){tip.style.display='none'});})();
 """
 
 
-def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str = "") -> bytes:
+CURRENCIES = ("USD", "TWD")
+
+
+def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str = "", cur: str = "USD",
+         path: str = "/") -> bytes:
     tabs = "".join(f'<a href="{h}" class="{"on" if k == nav else ""}">{k.title()}</a>'
                    for k, h in (("deals", "/"), ("evidence", "/evidence"), ("import", "/import")))
+    tabs += ('<span class="curs">' + "".join(
+        f'<a href="/currency?{urlencode({"c": c, "back": path})}" class="{"on" if c == cur else ""}">{c}</a>'
+        for c in CURRENCIES) + '</span>')
     flash = (f'<div class="note ok">{e(msg)}</div>' if msg else "") + (f'<div class="note bad">{e(err)}</div>' if err else "")
     tz = datetime.now().astimezone().strftime("UTC%z")
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
@@ -226,6 +254,45 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
             f'<style>{CSS}</style></head><body><header><b>CardMan</b>{tabs}'
             f'<span class="store">{e(store)} · times {e(tz)}</span></header>'
             f'<main>{flash}{body}</main><script src="/static/ui.js"></script></body></html>').encode()
+
+
+# -- display currency ---------------------------------------------------------------------------
+
+class Disp:
+    """Converts home-currency Decimals to the display currency with the listing's own FX at valuation time.
+
+    Rounding is chosen per number so the display never flatters a deal: prices you may pay round down,
+    resale thresholds you need to reach round up.
+    """
+
+    def __init__(self, want: str, home: str, fx: FxTable, at: datetime):
+        self.home, self.cur, self.factor, self.note = home, home, Decimal(1), ""
+        if want and want != home:
+            try:
+                r = fx.rate(want, home, at)              # home units per 1 display unit
+                self.cur, self.factor = want, 1 / r.mid
+            except ValueError:
+                try:
+                    r = fx.rate(home, want, at)
+                    self.cur, self.factor = want, r.mid
+                except ValueError:
+                    self.note = f"No {want}/{home} rate at the valuation time, so amounts are in {home}."
+
+    def v(self, x) -> Decimal | None:
+        return None if x is None else Decimal(str(x)) * self.factor
+
+    def f(self, x) -> float | None:
+        v = self.v(x)
+        return None if v is None else float(v)
+
+    def __call__(self, x, rnd: str = "near") -> str:
+        v = self.v(x)
+        if v is None:
+            return "—"
+        if rnd != "near":
+            step = Decimal("1") if abs(v) >= 100 or self.cur in ("TWD", "JPY") else Decimal("0.01")
+            v = v.quantize(step, rounding=ROUND_FLOOR if rnd == "down" else ROUND_CEILING)
+        return e(charts.fmt(float(v), self.cur))
 
 
 # -- deal model: everything a deal page or row needs, derived from one stored snapshot -----------
@@ -239,7 +306,7 @@ def _d(v) -> Decimal | None:
         return None
 
 
-def deal_model(st: Store, sid: str, now: datetime) -> dict:
+def deal_model(st: Store, sid: str, now: datetime, want: str = "USD") -> dict:
     meta = st.snapshot_meta(sid)
     snap = st.snapshot(sid)
     rep, lst = snap.get("report", {}), snap.get("listing", {})
@@ -247,6 +314,7 @@ def deal_model(st: Store, sid: str, now: datetime) -> dict:
     created = datetime.fromisoformat(meta["created_at"])
     fx = FxTable([FxRate(r["base"], r["quote"], Decimal(str(r["mid"])), datetime.fromisoformat(r["as_of"]),
                          r["source"], Decimal(str(r.get("spread_pct", "0")))) for r in lst.get("fx", [])])
+    D = Disp(want, home, fx, created)
     ask = rep.get("ask") or lst.get("ask") or {}
     ask_home = _d(ask.get("home"))
     if ask_home is None and ask:
@@ -260,42 +328,30 @@ def deal_model(st: Store, sid: str, now: datetime) -> dict:
     scen = {k: _d(sc.get(k)) for k in ("conservative", "base", "upside")}
     room = float((ceiling - ask_home) / ceiling * 100) if ceiling and ask_home is not None else None
 
-    # gates: stored in full since this version; older snapshots only kept the failures
     if rep.get("gates"):
-        gates = rep["gates"]
-    else:
+        gates = [dict(g) for g in rep["gates"]]
+    else:   # older snapshots kept only the failures
         failed = {b.split(":")[0]: b.split(":", 1)[1].strip() for b in rep.get("status", {}).get("blocked_by", [])}
         gates = [{"name": g, "passed": g not in failed, "detail": failed.get(g, "ok")} for g in GATES]
+    for g in gates:
+        g["detail"] = gate_detail(g, rep, lst, D, ask_home, ceiling, created)
 
-    # economics at the ask, per exit scenario
-    ci = (snap.get("valuation_inputs") or {}).get("ceiling_inputs")
-    at_ask, split, required = [], None, None
-    if ci:
-        acq, ex = AcquisitionCosts(**ci["acquisition"]), ExitCosts(**ci["exit"])
-        required = ci["target_return"] + ci["capital_cost_monthly"] * ci["holding_months"]
-        if ask_home is not None:
-            allin = acq.all_in(ask_home)
-            for k in ("conservative", "base", "upside"):
-                g = scen[k]
-                if g is not None:
-                    net = ex.net(g)
-                    at_ask.append({"scenario": k, "gross": g, "net": net, "profit": net - allin,
-                                   "ret": (net - allin) / allin if allin else None, "allin": allin})
-        if ceiling is not None and scen["conservative"] is not None:
-            g = scen["conservative"]
-            net = ex.net(g)
-            allin_c = acq.all_in(ceiling)
-            split = {"gross": g, "item": ceiling, "acq": allin_c - ceiling, "ret": net - allin_c, "exit": g - net}
-
-    # evidence points: comps as used, the rest as unused / void, converted with the listing's FX
-    points, unplotted = [], 0
     comps = rep.get("comps", [])
+    comp_rows = [{"date": datetime.fromisoformat(c["date"]), "home": Decimal(str(c["home"])), "type": c["type"],
+                  "source": c["source"], "synthetic": bool(c.get("synthetic"))} for c in comps]
+    ci = (snap.get("valuation_inputs") or {}).get("ceiling_inputs")
+    ident = rep.get("identity", {})
+    adv = advise(ci=ci, ask=ask_home, ceiling=ceiling, scen=scen, comps=comp_rows, valued_at=created, gates=gates,
+                 identity_status=ident.get("status"), money=lambda x, rnd="near": D(x, rnd), gate_todo=GATE_NEXT)
+
+    # evidence points in the display currency
+    points, unplotted, rejected = [], 0, []
     for c in comps:
-        points.append(Point(datetime.fromisoformat(c["date"]), float(c["home"]), c["type"], "used",
-                            f"{charts.fmt(float(c['home']), home)}\n{c['type'].replace('_', ' ').lower()} · "
-                            f"{c['source']} · {day(c['date'])}\n{c['amount']} {c['currency']} · used as comp"
+        v = D.f(c["home"])
+        points.append(Point(datetime.fromisoformat(c["date"]), v, c["type"], "used",
+                            f"{charts.fmt(v, D.cur)}\n{c['type'].replace('_', ' ').lower()} · {c['source']} · "
+                            f"{day(c['date'])}\n{c['amount']} {c['currency']} · used as comp"
                             + (" · synthetic" if c.get("synthetic") else "")))
-    rejected = []
     for oid, reason in rep.get("rejected_evidence", []):
         try:
             o = st.effective(oid, created)
@@ -304,49 +360,44 @@ def deal_model(st: Store, sid: str, now: datetime) -> dict:
             continue
         rejected.append({"id": oid, "reason": reason, "obs": o})
         try:
-            v = fx.convert(o.original_amount, o.currency, home, o.event_time)
+            v = D.f(fx.convert(o.original_amount, o.currency, home, o.event_time))
         except ValueError:
             unplotted += 1
             continue
-        state = "void" if o.status != "VALID" else "unused"
-        points.append(Point(o.event_time, float(v), o.evidence_type.value, state,
-                            f"{charts.fmt(float(v), home)}\n{o.evidence_type.value.replace('_', ' ').lower()} · "
-                            f"{o.source} · {day(o.event_time)}\n{o.original_amount} {o.currency} · not used: {reason}"))
+        points.append(Point(o.event_time, v, o.evidence_type.value, "void" if o.status != "VALID" else "unused",
+                            f"{charts.fmt(v, D.cur)}\n{o.evidence_type.value.replace('_', ' ').lower()} · {o.source}"
+                            f" · {day(o.event_time)}\n{o.original_amount} {o.currency} · not used: {reason}"))
     refs = []
     if ask_home is not None:
-        refs.append(Ref("Ask", float(ask_home), "ask"))
+        refs.append(Ref("Ask", D.f(ask_home), "ask"))
     if ceiling is not None:
-        refs.append(Ref("Buy ceiling", float(ceiling), "ceiling"))
-    names = {"conservative": "Conservative exit", "base": "Base exit", "upside": "Upside exit"}
+        refs.append(Ref("Pay up to", D.f(ceiling), "ceiling"))
     seen: dict[float, list[str]] = {}
     for k in ("conservative", "base", "upside"):
         if scen[k] is not None:
-            seen.setdefault(float(scen[k]), []).append(names[k].split()[0])
+            seen.setdefault(D.f(scen[k]), []).append({"conservative": "Low-end", "base": "Typical",
+                                                      "upside": "High"}[k])
     for v, ks in seen.items():
-        refs.append(Ref(" & ".join(ks) + " exit", v, "exit"))
+        refs.append(Ref(" & ".join(ks) + " resale", v, "exit"))
 
-    for g in gates:
-        g["detail"] = gate_detail(g, rep, lst, home, ask_home, ceiling, created)
     expired = bool(meta["expires_at"]) and datetime.fromisoformat(meta["expires_at"]) <= now
     ok, why = st.snapshot_validity(sid)
-    return {"sid": sid, "meta": meta, "rep": rep, "listing": lst, "home": home, "created": created,
+    return {"sid": sid, "meta": meta, "rep": rep, "listing": lst, "home": home, "D": D, "created": created,
             "ask": ask, "ask_home": ask_home, "ceiling": ceiling, "scen": scen, "room": room, "gates": gates,
-            "at_ask": at_ask, "split": split, "required": required, "points": points, "refs": refs,
-            "unplotted": unplotted, "comps": comps, "rejected": rejected, "expired": expired,
-            "valid": ok, "invalid_why": why, "bc": bc,
+            "adv": adv, "ci": ci, "points": points, "refs": refs, "unplotted": unplotted, "comps": comps,
+            "rejected": rejected, "expired": expired, "valid": ok, "invalid_why": why, "bc": bc,
             "synthetic": any(c.get("synthetic") for c in comps),
-            "printing": (rep.get("identity", {}).get("candidates") or [None])[0]
-            if rep.get("identity", {}).get("status") == "RESOLVED" else None}
+            "printing": (ident.get("candidates") or [None])[0] if ident.get("status") == "RESOLVED" else None}
 
 
-def gate_detail(g: dict, rep: dict, lst: dict, home: str, ask_home, ceiling, created: datetime) -> str:
+def gate_detail(g: dict, rep: dict, lst: dict, D: "Disp", ask_home, ceiling, created: datetime) -> str:
     name = g["name"]
     if name == "identity":
         ident = rep.get("identity", {})
         if ident.get("status") == "RESOLVED":
             return "one printing matches"
         n = len(ident.get("candidates", []))
-        return f"{ident.get('status', '').lower()}: {n} printings still possible" if n else "no printing matched"
+        return f"{n} printings still possible" if n else "no printing matched"
     if name == "authenticity":
         v = lst.get("authenticity_ok")
         return "not reviewed yet" if v is None else ("reviewed: ok" if v else "reviewed: failed")
@@ -357,8 +408,8 @@ def gate_detail(g: dict, rep: dict, lst: dict, home: str, ask_home, ceiling, cre
         if ask_home is None:
             return "no ask recorded"
         if ceiling is None:
-            return f"ask {charts.fmt(float(ask_home), home)}; no ceiling to compare"
-        return f"ask {charts.fmt(float(ask_home), home)} vs ceiling {charts.fmt(float(ceiling), home)}"
+            return f"ask {html.unescape(D(ask_home))}; nothing to compare yet"
+        return f"ask {html.unescape(D(ask_home))} vs pay-up-to {html.unescape(D(ceiling, 'down'))}"
     if name == "fresh_availability":
         seen = lst.get("last_seen")
         if not seen:
@@ -368,30 +419,19 @@ def gate_detail(g: dict, rep: dict, lst: dict, home: str, ask_home, ceiling, cre
     return g.get("detail", "")
 
 
-def headline(m: dict) -> tuple[str, str]:
-    home, ask_home, ceiling = m["home"], m["ask_home"], m["ceiling"]
-    cons = next((a for a in m["at_ask"] if a["scenario"] == "conservative"), None)
-    if ceiling is None:
-        reason = m["bc"].get("reason") or "identity not resolved"
-        return ("No buy ceiling yet", f"Why: {reason}. Until there is one, the ask cannot be judged.")
-    if ask_home is None:
-        return (f"Buy ceiling {charts.fmt(float(ceiling), home)}", "No ask recorded for this listing.")
-    diff = float(ceiling - ask_home)
-    if diff >= 0:
-        h = (f"Ask is {charts.fmt(diff, home)} under the buy ceiling "
-             f"<span class=\"good\">({m['room']:.1f}% room)</span>")
-    else:
-        h = (f"Ask is {charts.fmt(-diff, home)} over the buy ceiling "
-             f"<span class=\"bad\">({-m['room']:.1f}% too high)</span>")
-    s = ""
-    if cons and cons["ret"] is not None and m["required"] is not None:
-        s = (f"Bought at the ask and resold at the conservative exit ({charts.fmt(float(cons['gross']), home)}, "
-             f"the low end of {len(m['comps'])} sales), it returns {float(cons['ret']) * 100:.1f}% after all costs; "
-             f"the target is {float(m['required']) * 100:.1f}% including capital cost.")
-    return h, s
-
-
 # -- views ------------------------------------------------------------------------------------
+
+CALL_STYLE = {"BUY": ("good", "✓"), "CHECK": ("good", "✓"), "OFFER": ("warn", "!"), "SKIP": ("crit", "✕"),
+              "HOLD": ("muted", "…"), "NONE": ("muted", "–")}
+CALL_SHORT = {"BUY": "Buy", "CHECK": "Buy after checks", "OFFER": "Offer lower", "SKIP": "Skip", "HOLD": "Hold off",
+              "NONE": "No ask"}
+
+
+def call_badge(call: str, big: bool = False) -> str:
+    cls, ic = CALL_STYLE.get(call, ("muted", "–"))
+    return (f'<span class="call {cls}{" big" if big else ""}"><span class="ci">{ic}</span>'
+            f'{e(CALL_SHORT.get(call, call))}</span>')
+
 
 def gate_icons(gates: list[dict]) -> str:
     return ('<span class="room">' + "".join(
@@ -399,14 +439,14 @@ def gate_icons(gates: list[dict]) -> str:
         f'tabindex="0">{icon(g["passed"])}</span>' for g in gates) + "</span>")
 
 
-def view_deals(st: Store, now: datetime) -> str:
+def view_deals(st: Store, now: datetime, want: str) -> str:
     models, broken, seen = [], [], {}
     for s in st.snapshots():
         seen[s["listing_ref"]] = seen.get(s["listing_ref"], 0) + 1
         if seen[s["listing_ref"]] > 1:
             continue
         try:
-            m = deal_model(st, s["id"], now)
+            m = deal_model(st, s["id"], now, want)
         except ImmutableViolation:
             broken.append(s["id"])
             continue
@@ -415,109 +455,182 @@ def view_deals(st: Store, now: datetime) -> str:
     if not models and not broken:
         return ('<h1>Deals</h1><p class="sub">No valuations stored yet. Run '
                 '<code>python -m cardman.slice listing.json [obs.csv] --store PATH</code> to add one.</p>')
-    rank = {"QUALIFIED": 0, "OBSERVE": 1, "SPECTATE": 2}
-    models.sort(key=lambda m: (rank.get(m["meta"]["stage"], 3), -(m["room"] if m["room"] is not None else -1e9)))
-    n_q = sum(m["meta"]["stage"] == "QUALIFIED" for m in models)
-    n_pending = sum(m["decision"] is None and not m["expired"] for m in models)
-    n_room = sum(m["room"] is not None and m["room"] >= 0 for m in models)
+    rank = {"BUY": 0, "CHECK": 1, "OFFER": 2, "NONE": 3, "HOLD": 4, "SKIP": 5}
+    models.sort(key=lambda m: (m["expired"], rank.get(m["adv"].call, 9),
+                               -(m["room"] if m["room"] is not None else -1e9)))
+    live = [m for m in models if not m["expired"]]
+    count = lambda calls: sum(m["adv"].call in calls for m in live)
     older = sum(n - 1 for n in seen.values())
-    out = ['<h1>Deals</h1><p class="sub">Latest valuation per listing, qualified first, then by room under the '
-           'ceiling.' + (f' {older} earlier valuation(s) are on each listing\'s page.' if older else "") + '</p>',
+    out = ['<h1>Deals</h1><p class="sub">Best calls first. Expired valuations sink to the bottom: re-evaluate '
+           'them before acting.' + (f' {older} earlier valuation(s) are on each listing\'s page.' if older else "")
+           + '</p>',
            '<div class="tiles">'
-           f'<div class="tile"><small>Listings</small><span>{len(models)}</span></div>'
-           f'<div class="tile"><small>Qualified</small><span>{n_q}</span><em>all five checks pass</em></div>'
-           f'<div class="tile"><small>Ask under ceiling</small><span>{n_room}</span><em>price works, other checks may not</em></div>'
-           f'<div class="tile"><small>Awaiting your decision</small><span>{n_pending}</span><em>not expired</em></div>'
+           f'<div class="tile"><small>Buy</small><span>{count(("BUY",))}</span><em>price and every check pass</em></div>'
+           f'<div class="tile"><small>Buy after checks</small><span>{count(("CHECK",))}</span>'
+           '<em>price works, a check is open</em></div>'
+           f'<div class="tile"><small>Offer lower</small><span>{count(("OFFER",))}</span>'
+           '<em>profitable, under target at the ask</em></div>'
+           f'<div class="tile"><small>Skip or hold</small><span>{count(("SKIP", "HOLD"))}</span>'
+           '<em>loses money or cannot be priced</em></div>'
+           f'<div class="tile"><small>Expired</small><span>{len(models) - len(live)}</span><em>re-evaluate first</em></div>'
            '</div>']
     rows = []
     for m in models:
-        cons = next((a for a in m["at_ask"] if a["scenario"] == "conservative"), None)
-        ret = (f'{float(cons["ret"]) * 100:.0f}%' if cons and cons["ret"] is not None else "—")
-        ret_cls = ("good" if cons and m["required"] is not None and cons["ret"] >= m["required"]
-                   else ("bad" if cons else "muted"))
-        n = len(m["comps"])
+        a, D = m["adv"], m["D"]
+        cons = a.at_ask[0] if a.at_ask else None
+        ret_cls = "muted"
+        if cons and cons.ret is not None and a.required is not None:
+            ret_cls = "good" if cons.ret >= a.required else ("bad" if cons.profit < 0 else "warnt")
+        price_cell = {"BUY": f"pay up to {D(a.pay_up_to, 'down')}", "CHECK": f"pay up to {D(a.pay_up_to, 'down')}",
+                      "OFFER": f"offer ≤ {D(a.pay_up_to, 'down')}",
+                      "SKIP": (f"works under {D(a.walk_away, 'down')}" if a.walk_away else "no profitable price"),
+                      }.get(a.call, "—")
         rows.append(
-            f'<tr><td><a href="/deal/{e(m["sid"])}">{e(m["meta"]["listing_ref"])}</a>'
-            f'{SYN if m["synthetic"] else ""}<br><code class="muted">{e(m["printing"] or "printing not resolved")}</code>'
+            f'<tr class="{"expired" if m["expired"] else ""}"><td>{call_badge(a.call)}<br>'
+            f'<span class="fg2">{price_cell}</span></td>'
+            f'<td><a href="/deal/{e(m["sid"])}">{e(m["meta"]["listing_ref"])}</a>{SYN if m["synthetic"] else ""}'
+            f'<br><code class="muted">{e(m["printing"] or "printing not resolved")}</code>'
             + ("" if m["valid"] else '<br><span class="bad">identity invalidated</span>') + '</td>'
-            f'<td>{stage_tag(m["meta"]["stage"])}</td><td>{gate_icons(m["gates"])}</td>'
-            f'<td class="n">{money(m["ask_home"], m["home"]) if m["ask_home"] is not None else "—"}</td>'
-            f'<td class="n">{money(m["ceiling"], m["home"])}</td>'
+            f'<td class="n">{D(m["ask_home"]) if m["ask_home"] is not None else "—"}</td>'
             f'<td>{charts.room_bar(m["room"])}</td>'
-            f'<td class="n {ret_cls}">{ret}</td>'
-            f'<td class="n">{n} / {MIN_COMPS}</td>'
-            f'<td class="d">{when(m["meta"]["created_at"])}<br><span class="muted">'
+            f'<td class="n {ret_cls}">{(pct(float(cons.ret) * 100) if cons and cons.ret is not None else "—")}</td>'
+            f'<td class="n">{(f"{a.wins}/{len(a.per_sale)}" if a.per_sale else "—")}</td>'
+            f'<td>{e(a.confidence if a.confidence != "None" else "—")}</td><td>{gate_icons(m["gates"])}</td>'
+            f'<td class="d">{e(datetime.fromisoformat(m["meta"]["created_at"]).astimezone().strftime("%b %d %H:%M"))}<br><span class="muted">'
             f'{"expired" if m["expired"] else "until " + when(m["meta"]["expires_at"])}</span></td>'
             f'<td>{e(m["decision"] or "pending")}</td></tr>')
     for sid in broken:
         rows.append(f'<tr><td colspan="10" class="bad">{e(sid)}: stored content does not match its id</td></tr>')
-    out.append('<section><div class="wrap"><table><tr><th>Listing / printing</th><th>Stage</th>'
-               '<th>Checks</th><th class="n">Ask</th><th class="n">Buy ceiling</th><th>Room under ceiling</th>'
-               '<th class="n">Return at ask</th><th class="n">Sales</th><th>Valued</th><th>Decision</th></tr>'
+    out.append('<section><div class="wrap"><table><tr><th>Call</th><th>Listing</th><th class="n">Ask</th>'
+               '<th>Room under pay-up-to</th><th class="n">Return at ask</th><th class="n">Profitable vs sales</th>'
+               '<th>Confidence</th><th>Checks</th><th>Valued</th><th>Decision</th></tr>'
                + "".join(rows) + '</table></div>'
-               '<p class="muted" style="margin:8px 0 0">Checks, in order: exact printing, authenticity, enough sales, '
-               'ask under ceiling, listing still live. Return at ask assumes resale at the conservative exit.</p>'
-               '</section>')
+               '<p class="muted" style="margin:8px 0 0">Return at ask assumes resale at the low end of recent sales. '
+               '"Profitable vs sales": in how many of the recent sales you would have made money at the ask. '
+               'Checks: exact printing, authenticity, enough sales, price, listing still live.</p></section>')
     return "".join(out)
 
 
-def view_deal(st: Store, sid: str, now: datetime, token: str) -> str:
-    m = deal_model(st, sid, now)
-    meta, rep, home = m["meta"], m["rep"], m["home"]
+def price_zones(m: dict) -> str:
+    """Where the ask sits among the three buy-price zones."""
+    a, D = m["adv"], m["D"]
+    if a.pay_up_to is None or a.walk_away is None:
+        return ""
+    top = max(a.walk_away * Decimal("1.25"), (m["ask_home"] or 0) * Decimal("1.05"))
+    parts = [("Hits your target", a.pay_up_to, "--good", f"up to {html.unescape(D(a.pay_up_to, 'down'))}"),
+             ("Profit, under target", a.walk_away - a.pay_up_to, "--warn",
+              f"{html.unescape(D(a.pay_up_to, 'down'))} to {html.unescape(D(a.walk_away, 'down'))}"),
+             ("Loses money at the low end", top - a.walk_away, "--crit",
+              f"above {html.unescape(D(a.walk_away, 'down'))}")]
+    segs = "".join(
+        f'<div class="seg" style="flex:{float(amt):.4f} 0 0;background:var({var})" tabindex="0" '
+        f'data-tip="{e(rng + chr(10) + name)}">'
+        + (f'<span>{e(name)}</span>' if float(amt / top) * 480 > len(name) * 7 + 14 else "") + '</div>'
+        for name, amt, var, rng in parts)
+    legend = ('<table class="compact">' + "".join(
+        f'<tr><td><i class="key" style="background:var({var})"></i>{e(name)}</td><td class="n">{e(rng)}</td></tr>'
+        for name, amt, var, rng in parts) + '</table>')
+    marker = ""
+    if m["ask_home"] is not None:
+        pos = min(100.0, float(m["ask_home"] / top * 100))
+        marker = (f'<div class="marker" style="left:{pos:.2f}%"><b></b><span class="{"right" if pos > 70 else ""}">'
+                  f'Ask {D(m["ask_home"])}</span></div>')
+    ticks = (f'<div class="zticks"><span style="left:{float(a.pay_up_to / top * 100):.2f}%">{D(a.pay_up_to, "down")}</span>'
+             f'<span style="left:{float(a.walk_away / top * 100):.2f}%">{D(a.walk_away, "down")}</span></div>')
+    return f'<div class="split zones">{ticks}<div class="bar">{segs}</div>{marker}</div>{legend}'
+
+
+def view_deal(st: Store, sid: str, now: datetime, token: str, want: str) -> str:
+    m = deal_model(st, sid, now, want)
+    meta, rep, a, D = m["meta"], m["rep"], m["adv"], m["D"]
+    cur = D.cur
     rp = replay(st, sid)
     ident = rep.get("identity", {})
     out = [f'<h1>{e(meta["listing_ref"])} {stage_tag(meta["stage"])}{SYN if m["synthetic"] else ""}</h1>',
            f'<p class="sub"><code>{e(m["printing"] or "printing not resolved")}</code> · valued '
-           f'{when(meta["created_at"])} · {"expired " if m["expired"] else "valid until "}{when(meta["expires_at"])}'
-           f' · {"<span class=good>✓ replays exactly</span>" if rp["matches"] else "<span class=bad>✕ replay mismatch</span>"}'
+           f'{when(meta["created_at"])} · {"<b class=bad>expired</b> " if m["expired"] else "valid until "}'
+           f'{when(meta["expires_at"])} · '
+           f'{"<span class=good>✓ math replays exactly</span>" if rp["matches"] else "<span class=bad>✕ replay mismatch</span>"}'
            '</p>']
+    if D.note:
+        out.append(f'<div class="note">{e(D.note)}</div>')
+    if m["expired"]:
+        out.append('<div class="note bad">This valuation has expired: the listing may have changed or sold. '
+                   'Re-evaluate before acting on it.</div>')
     if not m["valid"]:
         out.append('<div class="note bad">Identity invalidated after this valuation: '
                    + e("; ".join(m["invalid_why"])) + '. YES is refused.</div>')
     if m["synthetic"]:
-        out.append('<div class="note">The sales behind this valuation are synthetic fixtures, not market evidence.</div>')
+        out.append('<div class="note">The sales behind this valuation are synthetic test data, not market evidence.</div>')
 
-    # verdict
-    h, s = headline(m)
-    failed = [g for g in m["gates"] if not g["passed"]]
-    out.append('<section class="verdict">'
-               f'<p class="headline">{h}</p><p class="subline">{e(s)}</p><ul class="gates">'
-               + "".join(f'<li>{icon(g["passed"])}<div><b>{e(GATE_LABEL.get(g["name"], g["name"]))}</b>'
-                         f'<small>{e(g["detail"])}</small></div></li>' for g in m["gates"]) + '</ul>'
-               + (('<div class="next"><b>' + ("All five checks pass. Ready for your YES / WAIT / NO."
-                                              if not failed else f"{len(failed)} of {len(m['gates'])} checks fail. "
-                                              "To move forward:") + '</b>'
-                   + ("<ol>" + "".join(f"<li>{e(GATE_NEXT.get(g['name'], g['detail']))}</li>" for g in failed
-                                       if not (g["name"] == "ceiling" and m["ceiling"] is None))
-                      + "</ol>" if failed else "") + '</div>'))
+    # 1. the call
+    if m["expired"]:
+        a.todo.insert(0, "Re-evaluate first: this valuation has expired and the listing may have changed.")
+    cls = CALL_STYLE.get(a.call, ("muted", ""))[0]
+    out.append(f'<section class="callcard {cls}">{call_badge(a.call, big=True)}'
+               f'<p class="headline">{a.title}</p>'
+               + ('<ul class="because">' + "".join(f"<li>{x}</li>" for x in a.because) + '</ul>' if a.because else "")
+               + (('<div class="next"><b>Before you buy</b><ol>' + "".join(f"<li>{e(t)}</li>" for t in a.todo)
+                   + '</ol></div>') if a.todo else "")
+               + f'<p class="conf">Confidence: <b>{e(a.confidence)}</b> · {e("; ".join(a.confidence_why))}</p>'
                + '</section>')
 
-    # tiles
-    cons = next((a for a in m["at_ask"] if a["scenario"] == "conservative"), None)
-    ask = m["ask"]
-    ask_sub = (f'{money(ask.get("amount"))} {e(ask.get("currency"))}' if ask and ask.get("currency") != home else "")
+    # 2. the numbers that matter
+    cons = a.at_ask[0] if a.at_ask else None
     out.append('<div class="tiles">'
-               f'<div class="tile"><small>Ask</small><span>{money(m["ask_home"], home)}</span><em>{ask_sub}</em></div>'
-               f'<div class="tile"><small>Buy ceiling</small><span>{money(m["ceiling"], home)}</span>'
-               f'<em>most you can pay and still hit the target</em></div>'
-               f'<div class="tile"><small>Room under ceiling</small><span>{pct(m["room"], True) if m["room"] is not None else "—"}</span>'
-               f'<em>negative = ask too high</em></div>'
-               f'<div class="tile"><small>Return at ask</small><span>'
-               f'{pct(float(cons["ret"]) * 100) if cons and cons["ret"] is not None else "—"}</span>'
-               f'<em>target {pct(float(m["required"]) * 100) if m["required"] is not None else "—"}</em></div>'
-               f'<div class="tile"><small>Verified sales</small><span>{len(m["comps"])} / {MIN_COMPS}</span>'
-               f'<em>exact printing, same grade</em></div></div>')
+               f'<div class="tile"><small>Ask</small><span>{D(m["ask_home"])}</span>'
+               f'<em>all-in {D(a.all_in_at_ask)} with buying costs</em></div>'
+               f'<div class="tile"><small>Pay up to</small><span>{D(a.pay_up_to, "down")}</span>'
+               f'<em>hits the {pct(float(a.required) * 100) if a.required is not None else "—"} target</em></div>'
+               f'<div class="tile"><small>Walk away above</small><span>{D(a.walk_away, "down")}</span>'
+               '<em>loses money at the low-end resale</em></div>'
+               f'<div class="tile"><small>Profit at the ask</small><span>{D(cons.profit) if cons else "—"}</span>'
+               f'<em>{(pct(float(cons.ret) * 100) + " if it resells at the low end") if cons and cons.ret is not None else "needs a price"}</em></div>'
+               f'<div class="tile"><small>Break-even resale</small><span>{D(a.breakeven_resale, "up")}</span>'
+               f'<em>{(pct(float(a.cushion_pct) * 100) + " below the cheapest sale") if a.cushion_pct is not None else "—"}</em></div>'
+               '</div>')
 
-    # price chart
-    n_used = len(m["comps"])
-    out.append('<section><h2>Sales, ask and ceiling</h2>'
-               '<p class="why">Every record for this printing, in ' + e(home) + '. Filled marks are the sales the '
-               f'valuation used ({n_used}); hollow ones were seen but not used (hover for the reason). The '
-               'conservative exit is the low end of the used sales; the buy ceiling is what is left of it after '
-               'selling costs, the target return and buying costs. The ask needs to sit at or below the ceiling.</p>'
+    # 3. price zones + what could go wrong
+    zones = price_zones(m)
+    risks = ""
+    if a.flags or a.downside:
+        sev = {"high": ("ic no", "!"), "medium": ("ic warnic", "!"), "info": ("ic na", "i")}
+        risks = ('<section><h2>What could go wrong</h2>'
+                 + ('<ul class="flags">' + "".join(f'<li><span class="{sev[s][0]}">{sev[s][1]}</span>{e(t)}</li>'
+                                                   for s, t in a.flags) + '</ul>' if a.flags else "")
+                 + ('<table class="compact"><tr><th>If it resells</th><th class="n">for</th><th class="n">profit</th>'
+                    '<th class="n">return</th></tr>'
+                    + "".join(f'<tr><td>{e(o.label)}</td><td class="n">{D(o.resale)}</td>'
+                              f'<td class="n {"bad" if o.profit < 0 else ""}">{D(o.profit)}</td>'
+                              f'<td class="n">{pct(float(o.ret) * 100) if o.ret is not None else "—"}</td></tr>'
+                              for o in a.downside) + '</table>' if a.downside else "")
+                 + '</section>')
+    if zones:
+        out.append('<div class="cols"><section><h2>Your buy price</h2><p class="why">Green: you hit your target. '
+                   'Amber: still profitable at the low-end resale, but under target. Red: you lose money if it '
+                   'resells at the low end. The black line is the ask.</p>' + zones + '</section>' + risks + '</div>')
+    elif risks:
+        out.append(risks)
+
+    # 4. at the ask, against every recent sale
+    if a.per_sale:
+        rows = [(o.label, D.f(o.profit), f"resold at {html.unescape(D(o.resale))}"
+                 + (f" · {float(o.ret) * 100:.0f}%" if o.ret is not None else "")) for o in a.per_sale]
+        target = (("Target", D.f(a.required * a.all_in_at_ask)) if a.required is not None and a.all_in_at_ask else None)
+        out.append(f'<section><h2>If you buy at the ask: profit against each recent sale</h2>'
+                   f'<p class="why">Each bar takes one real recent sale as your resale price, after every cost. '
+                   f'Past the black line you beat your target. Profit in {a.wins} of {len(a.per_sale)}; '
+                   f'target hit in {a.hits} of {len(a.per_sale)}.</p>'
+                   + charts.hbars(rows, cur, width=1060, label="Profit at the ask against each recent sale",
+                                  target=target) + '</section>')
+
+    # 5. sales over time
+    out.append('<section><h2>Sales, ask and pay-up-to over time</h2>'
+               f'<p class="why">Every record for this printing in {e(cur)}. Filled marks are the sales the valuation '
+               'used; hollow ones were seen but not used (hover for why); crossed ones were cancelled or refunded.</p>'
                + (charts.price_legend(m["points"], m["refs"])
-                  + charts.price_chart(m["points"], m["refs"], currency=home, valued_at=m["created"],
-                                       label="Sales, ask and buy ceiling over time")
+                  + charts.price_chart(m["points"], m["refs"], currency=cur, valued_at=m["created"],
+                                       label="Sales, ask and pay-up-to over time")
                   if m["points"] else '<p class="note">No records to plot: '
                   + ("the printing is not resolved, so no sales can be matched to it."
                      if not m["printing"] else "no records for this printing yet.") + '</p>')
@@ -525,64 +638,78 @@ def view_deal(st: Store, sid: str, now: datetime, token: str) -> str:
                   'listing file.</p>' if m["unplotted"] else "")
                + '</section>')
 
-    # where the money goes / profit at ask
-    left, right = "", ""
-    if m["split"]:
-        sp = m["split"]
-        parts = [("Item price (buy ceiling)", float(sp["item"]), "--s1", "what you can pay the seller"),
-                 ("Buying costs", float(sp["acq"]), "--s2", "shipping in, FX spread, proxy, duty"),
-                 ("Target return + capital", float(sp["ret"]), "--s3", "the profit the ceiling protects"),
-                 ("Selling costs", float(sp["exit"]), "--s4", "platform fee, shipping out, returns reserve")]
-        marker = ("Ask", float(m["ask_home"])) if m["ask_home"] is not None else None
-        left = ('<section><h2>Where a resale at the conservative exit goes</h2>'
-                f'<p class="why">If the card resells for {money(sp["gross"], home)}, this is how that splits when '
-                'you pay exactly the ceiling. The black line is the ask on the same scale: left of the first '
-                'boundary means you keep more than the target.</p>'
-                + charts.split_bar(parts, float(sp["gross"]), home, marker) + '</section>')
-    if m["at_ask"]:
-        rows = []
-        label = {"conservative": "Conservative exit", "base": "Base exit", "upside": "Upside exit"}
-        for a in m["at_ask"]:
-            rows.append((f'{label[a["scenario"]]} {charts.compact(float(a["gross"]))}', float(a["profit"]),
-                         f'{float(a["ret"]) * 100:.0f}% return' if a["ret"] is not None else ""))
-        right = ('<section><h2>Profit if you buy at the ask</h2>'
-                 f'<p class="why">All-in cost at the ask is {money(m["at_ask"][0]["allin"], home)}. Profit after '
-                 'selling costs for each resale scenario; the target return is '
-                 f'{pct(float(m["required"]) * 100) if m["required"] is not None else "—"}.</p>'
-                 + charts.hbars(rows, home, width=560, label="Profit at the ask by exit scenario",
-                                target=("Target", float(m["required"] * m["at_ask"][0]["allin"]))
-                                if m["required"] is not None else None)
-                 + '<p class="muted">Bars past the black line beat the target; bars short of it make money but '
-                 'less than the target; bars left of zero lose money.</p></section>')
-    if left or right:
+    # 6. the math, step by step + assumptions
+    if a.steps:
+        ci = m["ci"]
+        acq, ex = ci["acquisition"], ci["exit"]
+        assumptions = [
+            ("Target return", pct(float(ci["target_return"]) * 100)),
+            ("Capital cost", f"{float(ci['capital_cost_monthly']) * 100:.1f}% a month × {ci['holding_months']} months"),
+            ("Selling fee", pct(float(ex["platform_fee_pct"]) * 100) + (f" + {D(ex['platform_fee_fixed'])}"
+                                                                         if ex["platform_fee_fixed"] else "")),
+            ("Payment fee (selling)", pct(float(ex["payment_fee_pct"]) * 100)),
+            ("Returns reserve", pct(float(ex["returns_reserve_pct"]) * 100)),
+            ("Payout FX spread", pct(float(ex["payout_fx_spread_pct"]) * 100)),
+            ("Shipping out", D(ex["outbound_shipping"])),
+            ("Shipping in", D(acq["inbound_shipping"])),
+            ("Payment FX spread (buying)", pct(float(acq["payment_fx_spread_pct"]) * 100)),
+            ("Proxy fee", pct(float(acq["proxy_fee_pct"]) * 100) + (f" + {D(acq['proxy_fee_fixed'])}"
+                                                                    if acq["proxy_fee_fixed"] else "")),
+            ("Buyer premium", pct(float(acq["buyer_premium_pct"]) * 100)),
+            ("Import duty", pct(float(acq["import_duty_pct"]) * 100)),
+            ("Insurance / grading", f"{D(acq['insurance'])} / {D(acq['grading'])}"),
+        ]
+        out.append('<div class="cols"><section><h2>How "pay up to" is worked out</h2>'
+                   '<p class="why">From the low end of recent sales back to the most you can pay the seller.</p>'
+                   '<table class="compact math">'
+                   + "".join(f'<tr class="{"total" if s.startswith("=") else ""}"><td>{e(s)}</td>'
+                             f'<td class="fg2">{e(f)}</td><td class="n">{v}</td></tr>' for s, f, v in a.steps)
+                   + '</table></section><section><h2>Assumptions used</h2><p class="why">From the listing file at '
+                   'valuation time. Change them there and re-evaluate.</p><table class="compact">'
+                   + "".join(f'<tr><td>{e(k)}</td><td class="n">{v}</td></tr>' for k, v in assumptions)
+                   + '</table></section></div>')
+
+    # 7. where a resale goes / sensitivity
+    if a.pay_up_to is not None and m["scen"]["conservative"] is not None and m["ci"]:
+        acq_c = AcquisitionCosts(**m["ci"]["acquisition"])
+        ex_c = ExitCosts(**m["ci"]["exit"])
+        g = m["scen"]["conservative"]
+        net = ex_c.net(g)
+        allin_c = acq_c.all_in(a.pay_up_to)
+        parts = [("Paid to the seller", D.f(a.pay_up_to), "--s1", "the pay-up-to price"),
+                 ("Buying costs", D.f(allin_c - a.pay_up_to), "--s2", "shipping in, FX spread, proxy, duty"),
+                 ("Your profit (target)", D.f(net - allin_c), "--s3", "what the pay-up-to price protects"),
+                 ("Selling costs", D.f(g - net), "--s4", "fees, shipping out, returns reserve")]
+        left = ('<section><h2>Where a low-end resale goes</h2>'
+                f'<p class="why">A resale at {D(g)} split up when you pay exactly {D(a.pay_up_to, "down")}. '
+                'The black line is the ask on the same scale.</p>'
+                + charts.split_bar(parts, D.f(g), cur, ("Ask", D.f(m["ask_home"])) if m["ask_home"] is not None else None)
+                + '</section>')
+        sens = {k: v for k, v in (rep.get("sensitivities") or {}).items() if k != "base" and v is not None}
+        right = ""
+        if sens:
+            rows = []
+            for k, v in sens.items():
+                new = a.pay_up_to + Decimal(str(v))
+                extra = f"now {html.unescape(D(new, 'down'))}"
+                if m["ask_home"] is not None:
+                    extra += "; ask fits" if m["ask_home"] <= new else "; ask too high"
+                rows.append((SENS_LABEL.get(k, k.replace("_", " ")), D.f(v), extra))
+            rows.sort(key=lambda r: r[1])
+            right = ('<section><h2>What moves the pay-up-to price</h2><p class="why">If one assumption is wrong. '
+                     'Double-check the biggest one before saying YES.</p>'
+                     + charts.hbars(rows, cur, width=560, label="Pay-up-to sensitivity") + '</section>')
         out.append(f'<div class="cols">{left}{right}</div>')
 
-    sens = {k: v for k, v in (rep.get("sensitivities") or {}).items() if k != "base" and v is not None}
-    if sens:
-        rows = []
-        for k, v in sens.items():
-            extra = ""
-            if m["ceiling"] is not None:
-                new = m["ceiling"] + Decimal(str(v))
-                extra = f"ceiling {charts.fmt(float(new))}"
-                if m["ask_home"] is not None:
-                    extra += " · ask still fits" if m["ask_home"] <= new else " · ask would be over"
-            rows.append((SENS_LABEL.get(k, k.replace("_", " ")), float(v), extra))
-        rows.sort(key=lambda r: r[1])
-        out.append('<section><h2>What moves the ceiling</h2>'
-                   f'<p class="why">Change in the buy ceiling ({money(m["ceiling"], home)}) if one assumption is '
-                   'wrong. The biggest bar is the assumption to double-check before saying YES.</p>'
-                   + charts.hbars(rows, home, width=1060, label="Ceiling sensitivity") + '</section>')
-
-    # decision
+    # 8. decision
     hist = st.decisions(sid)
     opts = '<option value="">Choose</option>' + "".join(
-        f'<option value="{a.value}"{" disabled" if a == Action.YES and not m["valid"] else ""}>{a.value}</option>'
-        for a in Action)
-    out.append('<section><h2>Decision</h2>'
+        f'<option value="{x.value}"{" disabled" if x == Action.YES and not m["valid"] else ""}>{x.value}</option>'
+        for x in Action)
+    out.append('<section><h2>Your decision</h2>'
                + ('<table><tr><th>Action</th><th>Rationale</th><th>Wait trigger</th><th>When</th></tr>'
-                  + "".join(f"<tr><td>{e(a)}</td><td>{e(r)}</td><td>{e(w or '—')}</td><td>{when(t)}</td></tr>"
-                            for a, r, w, t in hist) + "</table>" if hist else "")
+                  + "".join(f"<tr><td>{e(x)}</td><td>{e(r)}</td><td>{e(w or '—')}</td><td>{when(t)}</td></tr>"
+                            for x, r, w, t in hist) + "</table>" if hist else "")
                + f'<form class="inline" method="post" action="/deal/{e(sid)}/decide">'
                f'<input type="hidden" name="t" value="{e(token)}">'
                f'<label>Action<select name="action" required>{opts}</select></label>'
@@ -595,13 +722,13 @@ def view_deal(st: Store, sid: str, now: datetime, token: str) -> str:
                '<span class="muted">New valuation with the current evidence and status events.</span></form>'
                '</section>')
 
-    # evidence table: same records as the chart
+    # 9. evidence table
     rows = []
     for c in m["comps"]:
         rows.append(f'<tr><td><span class="ic ok" aria-label="used">✓</span></td><td class="d">{day(c["date"])}</td>'
                     f'<td>{e(c["type"])}</td><td>{e(c["source"])}{SYN if c.get("synthetic") else ""}</td>'
-                    f'<td class="n">{money(c["amount"], c["currency"])}</td><td class="n">{money(c["home"])}</td>'
-                    f'<td class="fg2">used as comp</td>'
+                    f'<td class="n">{money(c["amount"], c["currency"])}</td><td class="n">{D(c["home"])}</td>'
+                    f'<td class="fg2">used</td>'
                     f'<td><a href="/obs/{quote(c["id"])}">{e(c["id"])}</a> · {link(c.get("url"))}</td></tr>')
     for r in m["rejected"]:
         o = r["obs"]
@@ -613,14 +740,14 @@ def view_deal(st: Store, sid: str, now: datetime, token: str) -> str:
                     f'<td><a href="/obs/{quote(r["id"])}">{e(r["id"])}</a>'
                     f'{" · " + link(o.source_url) if o else ""}</td></tr>')
     out.append(f'<section><h2>Evidence ({len(m["comps"])} used, {len(m["rejected"])} not used)</h2>'
-               '<p class="why">The table behind the chart. A record is only a comp if it is a completed sale of this '
-               'exact printing, single copy, same grade, still valid, and dated before the valuation.</p>'
-               '<div class="wrap"><table><tr><th></th><th>Date</th><th>Type</th><th>Source</th>'
-               f'<th class="n">Amount</th><th class="n">{e(home)}</th><th>Used?</th><th>Record</th></tr>'
+               '<p class="why">A record only counts if it is a completed sale of this exact printing, a single copy, '
+               'the same grade, still valid, and dated before the valuation. Resale prices exclude shipping the '
+               'buyer paid.</p><div class="wrap"><table><tr><th></th><th>Date</th><th>Type</th><th>Source</th>'
+               f'<th class="n">Amount</th><th class="n">{e(cur)}</th><th>Used?</th><th>Record</th></tr>'
                + "".join(rows) + '</table></div>'
                + ('' if rows else '<p class="muted">No records.</p>') + '</section>')
 
-    # identity + history + calculation
+    # 10. identity + history
     out.append('<div class="cols"><section><h2>Identity</h2>'
                f'<p>{icon(ident.get("status") == "RESOLVED")} {e(ident.get("status"))}</p>'
                + "".join(f"<div><code>{e(c)}</code></div>" for c in ident.get("candidates", []))
@@ -629,28 +756,20 @@ def view_deal(st: Store, sid: str, now: datetime, token: str) -> str:
                + "".join(f'<div class="bad">{e(x)}</div>' for x in ident.get("blocking", []))
                + "".join(f'<div class="fg2">needs: {e(x)}</div>' for x in ident.get("evidence_needed", []))
                + '</section>')
-    others = [x for x in st.snapshots() if x["listing_ref"] == meta["listing_ref"]]
     hist_rows = []
-    for x in others:
+    for x in [x for x in st.snapshots() if x["listing_ref"] == meta["listing_ref"]]:
         try:
-            xm = deal_model(st, x["id"], now)
+            xm = deal_model(st, x["id"], now, want)
         except ImmutableViolation:
             continue
         idcell = (f'<code>{e(x["id"][:10])}</code> (this)' if x["id"] == sid
                   else f'<a href="/deal/{e(x["id"])}"><code>{e(x["id"][:10])}</code></a>')
-        hist_rows.append(f'<tr><td class="d">{when(x["created_at"])}</td><td>{stage_tag(x["stage"])}</td>'
-                         f'<td class="n">{money(xm["ceiling"], home)}</td><td class="n">{len(xm["comps"])}</td>'
+        hist_rows.append(f'<tr><td class="d">{when(x["created_at"])}</td><td>{call_badge(xm["adv"].call)}</td>'
+                         f'<td class="n">{xm["D"](xm["ceiling"], "down")}</td><td class="n">{len(xm["comps"])}</td>'
                          f'<td>{e(x["decision"] or "pending")}</td><td>{idcell}</td></tr>')
-    out.append('<section><h2>Valuations of this listing</h2>'
-               '<div class="wrap"><table><tr><th>Valued</th><th>Stage</th><th class="n">Ceiling</th><th class="n">Sales</th>'
-               '<th>Decision</th><th>Snapshot</th></tr>' + "".join(hist_rows) + '</table></div></section></div>')
-    bc = m["bc"]
-    if bc.get("ceiling") is not None:
-        out.append('<section><details><summary>Calculation details</summary><table class="compact">'
-                   + "".join(f'<tr><td class="fg2">{e(k.replace("_", " "))}</td><td class="n">{e(v)}</td></tr>'
-                             for k, v in bc.items() if k != "reason")
-                   + f'<tr><td class="fg2">snapshot</td><td class="n"><code>{e(sid)}</code></td></tr>'
-                   '</table></details></section>')
+    out.append('<section><h2>Valuations of this listing</h2><div class="wrap"><table><tr><th>Valued</th><th>Call</th>'
+               '<th class="n">Pay up to</th><th class="n">Sales</th><th>Decision</th><th>Snapshot</th></tr>'
+               + "".join(hist_rows) + '</table></div></section></div>')
     return "".join(out)
 
 
@@ -892,8 +1011,18 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
             self.send_header("Content-Length", "0")
             self.end_headers()
 
+        def _cur(self) -> str:
+            for part in (self.headers.get("Cookie") or "").split(";"):
+                k, _, v = part.strip().partition("=")
+                if k == "cur" and v in CURRENCIES:
+                    return v
+            return CURRENCIES[0]
+
         def _page(self, nav, title, body, qs):
-            self._send(200, page(title, body, nav=nav, store=store_path,
+            u = urlsplit(self.path)
+            back = u.path + ("?" + urlencode({k: v[0] for k, v in qs.items() if k not in ("msg", "err")})
+                             if any(k not in ("msg", "err") for k in qs) else "")
+            self._send(200, page(title, body, nav=nav, store=store_path, cur=self._cur(), path=back,
                                  msg=qs.get("msg", [""])[0], err=qs.get("err", [""])[0]))
 
         def do_GET(self):
@@ -905,11 +1034,23 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
             if parts == ["static", "ui.js"]:
                 st.db.close()
                 return self._send(200, JS.encode(), "text/javascript; charset=utf-8")
+            if parts == ["currency"]:
+                st.db.close()
+                c = qs.get("c", [""])[0]
+                back = qs.get("back", ["/"])[0]
+                if not back.startswith("/") or back.startswith("//"):
+                    back = "/"
+                self.send_response(303)
+                if c in CURRENCIES:
+                    self.send_header("Set-Cookie", f"cur={c}; Path=/; SameSite=Lax; Max-Age=31536000")
+                self.send_header("Location", back)
+                self.send_header("Content-Length", "0")
+                return self.end_headers()
             try:
                 if not parts:
-                    self._page("deals", "Deals", view_deals(st, now), qs)
+                    self._page("deals", "Deals", view_deals(st, now, self._cur()), qs)
                 elif parts[0] == "deal" and len(parts) == 2:
-                    self._page("deals", parts[1], view_deal(st, parts[1], now, token), qs)
+                    self._page("deals", parts[1], view_deal(st, parts[1], now, token, self._cur()), qs)
                 elif parts == ["evidence"]:
                     self._page("evidence", "Evidence", view_evidence(st, now, qs.get("printing", [""])[0] or None,
                                                                      qs.get("syn", [""])[0] == "1"), qs)

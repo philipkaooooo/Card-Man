@@ -17,11 +17,18 @@ def _e(v) -> str:
     return html.escape("" if v is None else str(v), quote=True)
 
 
+SYMBOL = {"USD": "$", "TWD": "NT$", "JPY": "¥", "EUR": "€", "GBP": "£"}
+
+
 def fmt(v: float | None, cur: str = "") -> str:
+    """Money with the currency symbol when known: $535, NT$17,125, −$12.50. Plain number without a currency."""
     if v is None:
         return "—"
-    s = f"{v:,.0f}" if abs(v) >= 100 else f"{v:,.2f}"
-    return f"{s} {cur}".strip()
+    s = f"{abs(v):,.0f}" if abs(v) >= 100 or cur in ("TWD", "JPY") else f"{abs(v):,.2f}"
+    sign = "−" if v < 0 else ""
+    if cur in SYMBOL:
+        return f"{sign}{SYMBOL[cur]}{s}"
+    return f"{sign}{s} {cur}".strip()
 
 
 def compact(v: float) -> str:
@@ -226,10 +233,10 @@ def price_legend(points: list[Point], refs: list[Ref]) -> str:
                      'listing ask</span>')
     if "ceiling" in roles:
         items.append('<span><svg width="18" height="14"><line class="ref-ceiling" x1="0" x2="18" y1="7" y2="7"/></svg>'
-                     'buy ceiling</span>')
+                     'pay up to</span>')
     if "exit" in roles:
         items.append('<span><svg width="18" height="14"><line class="ref-exit" x1="0" x2="18" y1="7" y2="7"/></svg>'
-                     'exit scenarios</span>')
+                     'resale scenarios (low / mid / high)</span>')
     if "median" in roles:
         items.append('<span><svg width="18" height="14"><line class="ref-exit" x1="0" x2="18" y1="7" y2="7"/></svg>'
                      'median of usable sales</span>')
@@ -270,56 +277,61 @@ def split_bar(parts: list[tuple[str, float, str, str]], total: float, currency: 
 
 def hbars(rows: list[tuple[str, float, str]], currency: str, *, width: int = 820, label: str = "",
           target: tuple[str, float] | None = None) -> str:
-    """rows: (name, value, extra text). Bars grow from a shared zero; negatives use the red pole."""
+    """rows: (name, value, extra text). Bars grow from zero; losses use the red pole and a minus sign.
+
+    When every value is negative (a list of losses) the bars grow rightwards from zero so each label can
+    sit at the bar's end; the colour and the sign carry the direction. Labels are never drawn inside a bar
+    or clipped: the right margin is sized to the longest label.
+    """
     if not rows:
         return ""
-    bh, gap, ml, mr = 18, 14, 210, 150
-    pw = width - ml - mr
-    vmax = max([abs(v) for _, v, _ in rows] + ([abs(target[1])] if target else [])) or 1
+    texts = []
+    for _, v, extra in rows:
+        sign = "+" if v > 0 else ("−" if v < 0 else "")
+        val = f"{sign}{fmt(abs(v), currency)}"
+        texts.append((val, val + (f" · {extra}" if extra else "")))
+    est = max(len(t) for _, t in texts) * 6.8 + 14
+    bh, gap, ml = 18, 14, 190
     has_neg = any(v < 0 for _, v, _ in rows)
     has_pos = any(v > 0 for _, v, _ in rows)
-    if has_neg and has_pos:
-        zx, scale = ml + pw / 2, pw / 2 / vmax
-    elif has_neg:
-        zx, scale = ml + pw, pw / vmax
+    mixed = has_neg and has_pos
+    mr = max(60.0, est)
+    pw = max(80.0, width - ml - mr)
+    vmax = max([abs(v) for _, v, _ in rows] + ([abs(target[1])] if target else [])) or 1
+    if mixed:
+        neg_max = max(abs(v) for _, v, _ in rows if v < 0)
+        share = neg_max / (neg_max + max(max(v for _, v, _ in rows), target[1] if target else 0))
+        zx = ml + pw * share
+        scale = pw / (neg_max + max(max(v for _, v, _ in rows), target[1] if target else 0))
     else:
         zx, scale = ml, pw / vmax
     top = 18 if target else 0
     h = len(rows) * (bh + gap) + 6 + top
-    out = [f'<svg class="chart" viewBox="0 0 {width} {h}" style="min-width:{width * 0.7:.0f}px" role="img" aria-label="{_e(label)}">']
-    for i, (name, v, extra) in enumerate(rows):
+    out = [f'<svg class="chart" viewBox="0 0 {width} {h}" style="min-width:{width * 0.7:.0f}px" role="img" '
+           f'aria-label="{_e(label)}">']
+    for i, ((name, v, extra), (val, text)) in enumerate(zip(rows, texts)):
         y = 4 + top + i * (bh + gap)
         w = abs(v) * scale
-        x = zx - w if v < 0 else zx
+        left = mixed and v < 0                      # only a mixed chart draws bars leftwards
+        x0, x1 = (zx - w, zx) if left else (zx, zx + w)
         r = min(4, w / 2)
         var = "--neg" if v < 0 else "--s1"
-        # square at the baseline, rounded at the data end
-        if v < 0:
-            d = (f"M{zx:.1f} {y}H{x + r:.1f}Q{x:.1f} {y} {x:.1f} {y + r:.1f}V{y + bh - r:.1f}"
-                 f"Q{x:.1f} {y + bh} {x + r:.1f} {y + bh}H{zx:.1f}Z")
+        if left:   # rounded at the data end (left), square at zero
+            d = (f"M{x1:.1f} {y}H{x0 + r:.1f}Q{x0:.1f} {y} {x0:.1f} {y + r:.1f}V{y + bh - r:.1f}"
+                 f"Q{x0:.1f} {y + bh} {x0 + r:.1f} {y + bh}H{x1:.1f}Z")
+            tx, anchor = x0 - 6, "end"
+            if tx - len(text) * 6.8 < ml:          # no room: write on the empty right side of zero
+                tx, anchor = zx + 6, "start"
         else:
-            xe = zx + w
-            d = (f"M{zx:.1f} {y}H{xe - r:.1f}Q{xe:.1f} {y} {xe:.1f} {y + r:.1f}V{y + bh - r:.1f}"
-                 f"Q{xe:.1f} {y + bh} {xe - r:.1f} {y + bh}H{zx:.1f}Z")
-        sign = "+" if v > 0 else ("−" if v < 0 else "")
-        val = f"{sign}{fmt(abs(v), currency)}"
-        text = val + (f" · {extra}" if extra else "")
-        est = len(text) * 6.6
-        tcls = "rl strong"
-        if v < 0:
-            tx, anchor = x - 6, "end"
-            if tx - est < 4:                       # no room left of the bar: write inside it
-                tx, anchor, tcls = x + 8, "start", "rl inbar"
-        else:
-            tx, anchor = zx + w + 6, "start"
-            if tx + est > width - 4:
-                tx, anchor, tcls = zx + w - 8, "end", "rl inbar"
+            d = (f"M{x0:.1f} {y}H{x1 - r:.1f}Q{x1:.1f} {y} {x1:.1f} {y + r:.1f}V{y + bh - r:.1f}"
+                 f"Q{x1:.1f} {y + bh} {x1 - r:.1f} {y + bh}H{x0:.1f}Z")
+            tx, anchor = x1 + 6, "start"
         tip = f"{val}\n{name}" + (f"\n{extra}" if extra else "")
         out.append(f'<g data-tip="{_e(tip)}" tabindex="0">'
                    f'<text class="rl" x="{ml - 10}" y="{y + 13}" text-anchor="end">{_e(name)}</text>'
                    + (f'<path d="{d}" style="fill:var({var})"/>' if w > 0.5 else "")
                    + f'<rect class="hit-r" x="{ml}" y="{y - 4}" width="{pw}" height="{bh + 8}"/>'
-                   f'<text class="{tcls}" x="{tx:.1f}" y="{y + 13}" text-anchor="{anchor}">{_e(text)}</text></g>')
+                   f'<text class="rl strong" x="{tx:.1f}" y="{y + 13}" text-anchor="{anchor}">{_e(text)}</text></g>')
     out.append(f'<line class="axis" x1="{zx:.1f}" x2="{zx:.1f}" y1="{top}" y2="{h}"/>')
     if target:
         tx = zx + target[1] * scale
@@ -335,7 +347,7 @@ def hbars(rows: list[tuple[str, float, str]], currency: str, *, width: int = 820
 def room_bar(room_pct: float | None, *, width: int = 120) -> str:
     """Ask vs ceiling as a diverging bar around zero, clipped at ±50%."""
     if room_pct is None:
-        return '<span class="muted">no ceiling</span>'
+        return '<span class="muted">no price yet</span>'
     half = width / 2
     v = max(-50.0, min(50.0, room_pct))
     w = abs(v) / 50 * (half - 2)
