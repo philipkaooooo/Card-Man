@@ -92,9 +92,24 @@ Paste a title and description as the seller wrote them (English or Japanese) wit
   print otherwise: buys, profit, return on capital, money-losing buys, missed winners, unknown outcomes.
 - FX rates used by any run are now kept in the store, so old sales can be converted later (inverse pairs work).
 
+### Continuous engine (`engine.py`, page **Opportunities**)
+- `python -m cardman.engine run` (or the button on the Opportunities page) reads new files dropped in `data/inbox/`
+  (CSV, JSONL, saved pages with schema.org data) and eBay once keys exist, keeps every listing's price history, and
+  re-analyzes only what changed. Each listing becomes an opportunity with the printings it could be, weights, a
+  value of information ("a check is worth"), the next research step, and a stage: Observe, Spectate, or escalated to a
+  stored valuation (the deal page) once a person confirms the card's code / edition / authenticity.
+- Market signals: price shifts, volume spikes, regional gaps that survive costs, sellers listing a lot at once.
+- Pricing (`pricing.py`): recency- and trust-weighted quantiles, a robust trend that can lower (never raise) the
+  estimate for the expected time to sell, liquidity, chance of loss and a max buy at a set confidence.
+- English edition rules (`data/edition_rules.json`, hand-written, to be checked against a source) split edition-less
+  English prints into edition scenarios priced from confirmed-edition sales.
+- Costs come from `data/profile.json`; until it exists the engine uses `examples/cost_profiles_ASSUMED.json`.
+- The Results page and the engine share one outcome table: a purchase recorded in either place counts in both, and
+  the engine's resale calibration learns from it.
+
 ### Run
 ```
-pip install pytest && python -m pytest -q                      # 127 pass
+pip install pytest && python -m pytest -q                      # 179 pass
 python -m cardman.sources                                       # re-probe every source
 python -m cardman.identity_cache sync                           # clone/update YAML Yugi, sync cache
 python -m cardman.slice examples/identity_only_LB-01.json examples/manual_import_TEMPLATE.csv
