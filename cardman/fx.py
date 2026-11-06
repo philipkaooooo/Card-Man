@@ -30,6 +30,11 @@ class FxTable:
             return FxRate(base, quote, Decimal(1), at, "identity")
         cands = [r for r in self.rates if r.base == base and r.quote == quote and r.as_of <= at]
         if not cands:
+            # The inverse pair is the same fact (USD/TWD 32 is TWD/USD 1/32), with the same timestamp rules.
+            inv = [r for r in self.rates if r.base == quote and r.quote == base and r.as_of <= at]
+            cands = [FxRate(base, quote, Decimal(1) / r.mid, r.as_of, r.source + " (inverse)", r.spread_pct)
+                     for r in inv]
+        if not cands:
             raise StaleRateError(f"no {base}/{quote} rate at or before {at.isoformat()}")
         r = max(cands, key=lambda r: r.as_of)
         if at - r.as_of > self.max_age:

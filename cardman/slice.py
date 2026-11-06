@@ -50,8 +50,14 @@ def run(listing: dict, obs_csv: Path | None, now: datetime, allow_synthetic: boo
                            "evidence": ident.evidence, "blocking": ident.blocking_reasons,
                            "evidence_needed": ident.evidence_needed}}
     if st is not None:
+        from .store import ImmutableViolation
         for o in observations:
             st.add_observation(o, now=now)
+        for r in fx.rates:            # keep every rate a run used, so later tools can convert old sales
+            try:
+                st.add_fx(r, now=now)
+            except ImmutableViolation:
+                pass                  # a conflicting rate for the same source and time: keep the first
     comps, rejected, prices = [], [], []
     if ident.printing:
         pool = st.observations_for(ident.printing.id, as_of=now) if st is not None else observations

@@ -116,11 +116,27 @@ CSS = """
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,"Segoe UI",
 "Noto Sans TC","Noto Sans JP",sans-serif}
-header{background:var(--surface);border-bottom:1px solid var(--line);padding:10px 16px;display:flex;gap:18px;
-align-items:baseline;flex-wrap:wrap}
-header b{font-size:15px}header a{color:var(--fg2);text-decoration:none}header a.on{color:var(--fg);
-font-weight:600}header .store{margin-left:auto;color:var(--muted);font-size:12px}
-main{max-width:1240px;margin:0 auto;padding:16px}
+header{background:var(--surface);border-bottom:1px solid var(--line);padding:10px 16px;display:flex;gap:14px;
+align-items:center;flex-wrap:wrap;position:sticky;top:0;z-index:5}
+header .logo{font-size:15px}header a{color:var(--fg2);text-decoration:none}
+header .store{margin-left:auto;color:var(--muted);font-size:12px}
+.shell{display:grid;grid-template-columns:200px minmax(0,1fr);max-width:1460px;margin:0 auto}
+aside{border-right:1px solid var(--line);padding:14px 10px;position:sticky;top:45px;align-self:start;
+max-height:calc(100vh - 45px);overflow-y:auto}
+aside .menu>summary{display:none}
+aside details details{margin:0 0 10px}
+aside details details>summary{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);
+padding:4px 8px;list-style-position:inside}
+aside nav{display:flex;flex-direction:column;gap:1px;margin-top:2px}
+aside nav a{color:var(--fg2);text-decoration:none;padding:6px 10px;border-radius:6px}
+aside nav a:hover{background:var(--soft);color:var(--fg)}
+aside nav a.on{background:var(--soft);color:var(--fg);font-weight:600;box-shadow:inset 3px 0 0 var(--accent)}
+aside a:focus-visible,header a:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+main{padding:16px 20px;min-width:0}
+@media(max-width:800px){.shell{grid-template-columns:1fr}
+aside{position:static;border-right:0;border-bottom:1px solid var(--line);padding:6px 12px;max-height:none}
+aside .menu>summary{display:list-item;cursor:pointer;font-weight:600;padding:6px 4px}
+aside .menu:not([open])>details{display:none}}
 h1{font-size:20px;margin:6px 0 2px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 h2{font-size:15px;margin:0 0 4px}
 .sub{color:var(--fg2);margin:0 0 14px}
@@ -233,27 +249,38 @@ document.addEventListener('pointermove',function(ev){var el=ev.target.closest&&e
 if(el)show(el,ev.clientX,ev.clientY);else tip.style.display='none'});
 document.addEventListener('focusin',function(ev){var el=ev.target.closest&&ev.target.closest('[data-tip]');
 if(el){var r=el.getBoundingClientRect();show(el,r.right,r.top)}});
-document.addEventListener('focusout',function(){tip.style.display='none'});})();
+document.addEventListener('focusout',function(){tip.style.display='none'});
+var m=document.querySelector('aside .menu');if(m&&window.matchMedia('(max-width:800px)').matches)m.open=false;})();
 """
 
 
 CURRENCIES = ("USD", "TWD")
 
 
+ON = ' class="on" aria-current="page"'
+NAV = (("Decide", (("deals", "Deals", "/"), ("scan", "Scan a listing", "/scan"))),
+       ("Evidence", (("evidence", "Evidence", "/evidence"), ("import", "Import sales", "/import"))),
+       ("Learn", (("results", "Results", "/results"),)))
+
+
 def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str = "", cur: str = "USD",
          path: str = "/") -> bytes:
-    tabs = "".join(f'<a href="{h}" class="{"on" if k == nav else ""}">{k.title()}</a>'
-                   for k, h in (("deals", "/"), ("evidence", "/evidence"), ("import", "/import")))
-    tabs += ('<span class="curs">' + "".join(
+    groups = []
+    for label, items in NAV:
+        links = "".join(f'<a href="{h}"{ON if k == nav else ""}>{e(t)}</a>' for k, t, h in items)
+        groups.append(f'<details open><summary>{e(label)}</summary><nav>{links}</nav></details>')
+    curs = ('<span class="curs" role="group" aria-label="Display currency">' + "".join(
         f'<a href="/currency?{urlencode({"c": c, "back": path})}" class="{"on" if c == cur else ""}">{c}</a>'
         for c in CURRENCIES) + '</span>')
+    here = next((t for _, items in NAV for k, t, _h in items if k == nav), "Menu")
     flash = (f'<div class="note ok">{e(msg)}</div>' if msg else "") + (f'<div class="note bad">{e(err)}</div>' if err else "")
     tz = datetime.now().astimezone().strftime("UTC%z")
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)} · CardMan</title>'
-            f'<style>{CSS}</style></head><body><header><b>CardMan</b>{tabs}'
+            f'<style>{CSS}</style></head><body><header><b class="logo">CardMan</b>{curs}'
             f'<span class="store">{e(store)} · times {e(tz)}</span></header>'
-            f'<main>{flash}{body}</main><script src="/static/ui.js"></script></body></html>').encode()
+            f'<div class="shell"><aside><details class="menu" open><summary>{e(here)}</summary>{"".join(groups)}</details></aside>'
+            f'<main>{flash}{body}</main></div><script src="/static/ui.js"></script></body></html>').encode()
 
 
 # -- display currency ---------------------------------------------------------------------------

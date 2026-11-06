@@ -52,6 +52,14 @@ CREATE TABLE IF NOT EXISTS invalidation (
 CREATE TABLE IF NOT EXISTS alert (
     listing_ref TEXT NOT NULL, snapshot_id TEXT NOT NULL, sent_at TEXT NOT NULL, expires_at TEXT NOT NULL,
     PRIMARY KEY (listing_ref, snapshot_id));
+CREATE TABLE IF NOT EXISTS fx_rate (
+    base TEXT NOT NULL, quote TEXT NOT NULL, mid TEXT NOT NULL, as_of TEXT NOT NULL, source TEXT NOT NULL,
+    spread_pct TEXT NOT NULL, recorded_at TEXT NOT NULL, PRIMARY KEY (base, quote, as_of, source));
+CREATE TABLE IF NOT EXISTS outcome (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, position TEXT NOT NULL, kind TEXT NOT NULL, at TEXT NOT NULL,
+    amount TEXT, currency TEXT, snapshot_id TEXT, printing_id TEXT, data_json TEXT NOT NULL,
+    recorded_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS outcome_position ON outcome(position);
 CREATE TABLE IF NOT EXISTS decision (
     snapshot_id TEXT NOT NULL REFERENCES snapshot(id), action TEXT NOT NULL, rationale TEXT NOT NULL,
     wait_trigger TEXT, decided_at TEXT NOT NULL);
@@ -307,6 +315,59 @@ class Store:
     def printing_ids(self) -> list[str]:
         return [r[0] for r in self.db.execute(
             "SELECT DISTINCT printing_id FROM observation_printing ORDER BY printing_id")]
+
+    # -- FX rates shared by every run -----------------------------------------------------------
+    def add_fx(self, r, *, now: datetime | None = None) -> bool:
+        """Store a timestamped rate once (base, quote, as_of, source). A different mid for the same key is refused."""
+        row = self.db.execute("SELECT mid FROM fx_rate WHERE base=? AND quote=? AND as_of=? AND source=?",
+                              (r.base, r.quote, _ts(r.as_of), r.source)).fetchone()
+        if row:
+            if Decimal(row[0]) != r.mid:
+                raise ImmutableViolation(f"{r.base}/{r.quote} {r.source} at {r.as_of} already stored as {row[0]}")
+            return False
+        with self.db:
+            self.db.execute("INSERT INTO fx_rate VALUES (?,?,?,?,?,?,?)",
+                            (r.base, r.quote, str(r.mid), _ts(r.as_of), r.source, str(r.spread_pct), _ts(now or _now())))
+        return True
+
+    def fx_rates(self) -> list:
+        from .fx import FxRate
+        return [FxRate(b, q, Decimal(m), datetime.fromisoformat(a), src, Decimal(sp)) for b, q, m, a, src, sp in
+                self.db.execute("SELECT base, quote, mid, as_of, source, spread_pct FROM fx_rate ORDER BY as_of")]
+
+    # -- outcomes: what actually happened after a decision ---------------------------------------
+    def add_outcome(self, position: str, kind: str, at: datetime, *, amount: Decimal | None = None,
+                    currency: str | None = None, snapshot_id: str | None = None, printing_id: str | None = None,
+                    data: dict | None = None, now: datetime | None = None) -> int:
+        """Append one event to a position's history (never edited; a correction is another event)."""
+        from .outcomes import KINDS
+        if kind not in KINDS:
+            raise ValueError(f"unknown outcome kind {kind!r}; one of {', '.join(KINDS)}")
+        if amount is not None and not currency:
+            raise ValueError("an amount needs its currency")
+        if snapshot_id and not self.db.execute("SELECT 1 FROM snapshot WHERE id=?", (snapshot_id,)).fetchone():
+            raise KeyError(f"no snapshot {snapshot_id}")
+        with self.db:
+            cur = self.db.execute("INSERT INTO outcome (position, kind, at, amount, currency, snapshot_id, printing_id,"
+                                  " data_json, recorded_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                                  (position, kind, _ts(at), str(amount) if amount is not None else None,
+                                   currency.upper() if currency else None, snapshot_id, printing_id,
+                                   canonical(data or {}), _ts(now or _now())))
+        return cur.lastrowid
+
+    def outcomes(self, position: str | None = None) -> list[dict]:
+        q = "SELECT id, position, kind, at, amount, currency, snapshot_id, printing_id, data_json, recorded_at FROM outcome"
+        rows = self.db.execute(q + (" WHERE position=?" if position else "") + " ORDER BY at, id",
+                               (position,) if position else ()).fetchall()
+        keys = ("id", "position", "kind", "at", "amount", "currency", "snapshot_id", "printing_id", "data", "recorded_at")
+        out = []
+        for r in rows:
+            d = dict(zip(keys, r))
+            d["at"] = datetime.fromisoformat(d["at"])
+            d["amount"] = Decimal(d["amount"]) if d["amount"] is not None else None
+            d["data"] = _dec(json.loads(d["data"]))
+            out.append(d)
+        return out
 
     def decisions(self, sid: str) -> list[tuple]:
         return self.db.execute("SELECT action, rationale, wait_trigger, decided_at FROM decision WHERE snapshot_id=?"
