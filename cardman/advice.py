@@ -175,9 +175,9 @@ def advise(*, ci: dict | None, ask: Decimal | None, ceiling: Decimal | None, sce
                                             f"{ci['capital_cost_monthly'] * 100:.1f}% a month."))
         if ex.returns_reserve_pct == 0:
             adv.flags.append(("info", "No returns reserve is set; a return or chargeback comes straight out of profit."))
-        if acq.payment_fx_spread_pct and acq.inbound_shipping:
-            adv.flags.append(("info", "The payment FX spread is applied to the item price only, not to shipping "
-                                      "paid in foreign currency; the cost of that is small but not zero."))
+        if acq.payment_fx_spread_pct and acq.inbound_shipping and not acq.shipping_fx_spread_pct:
+            adv.flags.append(("info", "If you pay the shipping in a foreign currency, set shipping_fx_spread_pct in the "
+                                      "listing costs; right now the FX spread is charged on the item price only."))
 
     # --- the call ------------------------------------------------------------------------------
     cons_s = money(cons) if cons is not None else "—"

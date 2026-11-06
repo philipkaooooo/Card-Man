@@ -60,14 +60,15 @@ may pay round down while resale thresholds round up, so the display never flatte
   line (profit in X of N, target in Y of N); sales over time; where a low-end resale goes; what moves the
   pay-up-to price and whether the ask still fits.
 - **What could go wrong**: flags (thin cushion, low confidence, stale or spread-out prices, selling slower
-  than the holding assumption, no returns reserve) and the result at 10 / 20 / 30% under the low end.
+  than the holding assumption, no returns reserve, FX spread not set for foreign-currency shipping via
+  `shipping_fx_spread_pct` in the listing's acquisition costs) and the result at 10 / 20 / 30% under the low end.
 - **The math**: the pay-up-to price worked out step by step, and every assumption used.
 - **Deals** ranks listings by call, then room under pay-up-to; **Evidence** shows coverage per printing and
   why each record is or is not used; **Import** uploads a manual CSV.
 
 ### Run
 ```
-pip install pytest && python -m pytest -q                      # 103 pass
+pip install pytest && python -m pytest -q                      # 104 pass
 python -m cardman.sources                                       # re-probe every source
 python -m cardman.identity_cache sync                           # clone/update YAML Yugi, sync cache
 python -m cardman.slice examples/identity_only_LB-01.json examples/manual_import_TEMPLATE.csv

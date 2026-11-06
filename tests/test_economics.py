@@ -69,3 +69,13 @@ def test_sparse_comps_abstain_or_widen():
 def test_sensitivities_are_all_non_positive():
     sens = sensitivities(inputs(acquisition=AcquisitionCosts(inbound_shipping=D(300))))
     assert all(v is None or v <= 0 for k, v in sens.items() if k != "base")
+
+
+def test_fx_spread_on_foreign_currency_shipping_lowers_the_ceiling_by_exactly_its_cost():
+    base = inputs(acquisition=AcquisitionCosts(inbound_shipping=D(600), payment_fx_spread_pct=D("0.015")))
+    spread = inputs(acquisition=AcquisitionCosts(inbound_shipping=D(600), payment_fx_spread_pct=D("0.015"),
+                                                 shipping_fx_spread_pct=D("0.015")))
+    assert spread.acquisition.all_in(D(1000)) - base.acquisition.all_in(D(1000)) == D("9.000")
+    assert buy_ceiling(spread).buy_ceiling < buy_ceiling(base).buy_ceiling
+    # default 0 keeps every earlier valuation identical (replay must still match)
+    assert AcquisitionCosts(inbound_shipping=D(600)).linear() == (D(1), D(600))

@@ -653,6 +653,7 @@ def view_deal(st: Store, sid: str, now: datetime, token: str, want: str) -> str:
             ("Shipping out", D(ex["outbound_shipping"])),
             ("Shipping in", D(acq["inbound_shipping"])),
             ("Payment FX spread (buying)", pct(float(acq["payment_fx_spread_pct"]) * 100)),
+            ("FX spread on shipping in", pct(float(acq.get("shipping_fx_spread_pct", 0)) * 100)),
             ("Proxy fee", pct(float(acq["proxy_fee_pct"]) * 100) + (f" + {D(acq['proxy_fee_fixed'])}"
                                                                     if acq["proxy_fee_fixed"] else "")),
             ("Buyer premium", pct(float(acq["buyer_premium_pct"]) * 100)),
