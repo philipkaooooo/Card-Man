@@ -1344,7 +1344,9 @@ def view_opportunities(st: Store, now: datetime, token: str, cur: str, show: str
         errs = r.get("errors") or []
         lastrun = (f'<p class="muted small">Last check {when(last[0])}: {r.get("new_listings", 0)} new, '
                    f'{r.get("analyzed", 0)} analyzed, {r.get("skipped_unchanged", 0)} unchanged skipped, '
-                   f'{r.get("signals", 0)} market signals, {r.get("seconds", 0)} s.'
+                   f'{r.get("signals", 0)} market signals, {r.get("seconds", 0)} s. '
+                   + " · ".join(f'{e(x.get("name"))}: {"on" if x.get("on") else "off"} ({e(x.get("detail") or "")})'
+                                for x in r.get("routes") or [])
                    + (f' <span class="bad">{len(errs)} problem{"s" if len(errs) != 1 else ""}:</span> {e("; ".join(errs[:3]))}' if errs else "")
                    + '</p>')
     tiles = ('<div class="tiles">' + "".join(

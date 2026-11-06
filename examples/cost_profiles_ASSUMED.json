@@ -13,5 +13,5 @@
  },
  "exit": {"platform_fee_pct": "0.1325", "outbound_shipping": "300", "returns_reserve_pct": "0.02", "payout_fx_spread_pct": "0.015"},
  "grading": {"company": "PSA", "cost_home": "1500", "months_added": 3, "prior": null},
- "ebay_queries": []
+ "ebay_queries": ["yugioh 1st edition ultra rare", "yugioh LOB 1st edition", "yugioh japanese ultimate rare", "yugioh quarter century secret rare", "yugioh psa 10", "yugioh lot vintage"]
 }

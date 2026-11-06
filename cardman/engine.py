@@ -91,6 +91,8 @@ class Engine:
         self.ledger = Ledger(store_path, home=self.profile["home_currency"])
         self.raw = RawEvidenceStore(Path(raw_dir or (ROOT / "data" / "raw")))
         self.inbox = InboxAdapter(inbox or (ROOT / "data" / "inbox"), self.raw, self._seen)
+        from .settings import load_env
+        load_env()                       # eBay keys from the git-ignored .env, if present
         self.ebay = EbayAdapter(self.raw, list(self.profile.get("ebay_queries") or []), self.catalog)
         self.reference = YgoprodeckReference(self.db, get=reference_get) if use_reference else None
         self.routes = [self.inbox, self.ebay] + ([self.reference] if self.reference else [])
