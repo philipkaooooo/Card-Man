@@ -14,34 +14,6 @@ from .identity import ListingSignals, parse_set_code
 
 PARSER_VERSION = "listing-text-0.1.0"
 
-# Canonical rarity names as the identity source spells them, with seller spellings (EN and JP).
-# Order matters: longer / more specific names first, so "Ultra Parallel" is not read as "Ultra".
-RARITY_PATTERNS: list[tuple[str, tuple[str, ...]]] = [
-    ("Quarter Century Secret Rare", (r"quarter\s*century(\s*secret)?", r"\bqcsr\b", r"\b25th\s*secret",
-                                     r"クォーターセンチュリー", r"クオーターセンチュリー", r"クオシク", r"25thシク")),
-    ("Platinum Secret Rare", (r"platinum\s*secret", r"\bplsr\b", r"プラチナシークレット", r"プラシク")),
-    ("Prismatic Secret Rare", (r"prismatic\s*secret", r"\bprsr\b", r"プリズマティックシークレット", r"プリシク")),
-    ("20th Secret Rare", (r"\b20th\s*secret", r"20thシークレット", r"20thシク")),
-    ("Extra Secret Rare", (r"extra\s*secret", r"エクストラシークレット", r"エクシク")),
-    ("Gold Secret Rare", (r"gold\s*secret", r"ゴールドシークレット", r"ゴルシク")),
-    ("Premium Gold Rare", (r"premium\s*gold", r"プレミアムゴールド", r"プレゴル")),
-    ("Starlight Rare", (r"star\s*light", r"\bstlr\b", r"スターライト")),
-    ("Ultimate Rare", (r"ultimate\s*rare", r"\butr\b", r"\bultimate\b", r"レリーフ", r"アルティメット")),
-    ("Ghost Rare", (r"ghost\s*rare", r"\bghost\b",)),
-    ("Holographic Rare", (r"holographic\s*rare", r"ホログラフィック", r"ホロレア", r"(?<![ァ-ヴ])ホロ(?![ァ-ヴ])")),
-    ("Collector's Rare", (r"collector'?s\s*rare", r"コレクターズレア", r"コレクターズ", r"コレレア")),
-    ("Millennium Rare", (r"millennium\s*rare", r"ミレニアム")),
-    ("Gold Rare", (r"gold\s*rare", r"ゴールドレア")),
-    ("Ultra Parallel Rare", (r"ultra\s*parallel", r"ウルトラパラレル", r"ウルパラ")),
-    ("Super Parallel Rare", (r"super\s*parallel", r"スーパーパラレル", r"スーパラ")),
-    ("Normal Parallel Rare", (r"normal\s*parallel", r"ノーマルパラレル", r"ノーパラ")),
-    ("Secret Rare", (r"secret\s*rare", r"\bscr\b", r"\bsecret\b", r"シークレット", r"シク(?!レ)")),
-    ("Ultra Rare", (r"ultra\s*rare", r"\bur\b", r"ウルトラ", r"ウルレア")),
-    ("Super Rare", (r"super\s*rare", r"\bsr\b(?!\s*-?\d)", r"スーパーレア", r"スーパー")),
-    ("Rare", (r"\brare\b", r"(?<![ァ-ヴー])レア(?!リティ)")),
-    ("Common", (r"\bcommon\b", r"(?<![ァ-ヴー])ノーマル(?!パラ)")),
-]
-
 _EDITION = [("1st", r"\b1st(\s*ed(ition|\.)?)?\b|\bfirst\s*edition\b"),
             ("Limited", r"\blimited\s*edition\b"),
             ("Unlimited", r"\bunlimited\b|\bunl\b")]
@@ -113,25 +85,10 @@ def _norm(s: str) -> str:
     return unicodedata.normalize("NFKC", s or "")
 
 
-_RARE_TAIL = re.compile(r"\s*(rare\b|レア)")
-
-
 def find_rarities(text: str) -> list[str]:
-    """Rarity names the text claims, most specific first, without double-reading a longer phrase."""
-    t = _norm(text).lower()
-    found: list[str] = []
-    for name, pats in RARITY_PATTERNS:
-        hit = False
-        for pat in pats:
-            for m in list(re.finditer(pat, t)):
-                hit = True
-                end = m.end()
-                tail = _RARE_TAIL.match(t, end)          # "ultra parallel| rare": the trailing word is part of it
-                end = tail.end() if tail else end
-                t = t[:m.start()] + " " * (end - m.start()) + t[end:]   # consume every spelling of it
-        if hit:
-            found.append(name)
-    return found
+    """Rarity names the text claims, most specific first. One vocabulary for the whole system: listing_parser's."""
+    from .listing_parser import parse_listing_text
+    return list(parse_listing_text(text).rarities)
 
 
 def parse_listing(title: str, body: str = "") -> ParsedListing:
@@ -189,6 +146,17 @@ def parse_listing(title: str, body: str = "") -> ParsedListing:
         m = re.search(pat, low)
         if m:
             flags.append(Flag(c, m.group(0).strip(), meaning))
+    from .listing_parser import parse_listing_text
+    core = parse_listing_text(text)
+    if core.counterfeit_cues and "proxy" not in {f.code for f in flags}:
+        flags.append(Flag("proxy", core.counterfeit_cues[0], "Seller text says proxy / custom / replica: not a genuine card."))
+    if core.not_a_card_cues:
+        flags.append(Flag("not_a_card", core.not_a_card_cues[0], "Accessory or empty product, not a card."))
+    if core.ignorance_cues:
+        flags.append(Flag("seller_unsure", core.ignorance_cues[0],
+                          "Seller says they don't know what it is: rarities and old prints are often missed."))
+    if core.vintage_cues:
+        flags.append(Flag("vintage", core.vintage_cues[0], "Seller calls it early-era: check the print against reprints."))
     if code and code["kind"] == "cert_number":
         flags.append(Flag("cert_as_code", code["raw"], "A grading cert number where a set code should be."))
     if len(set(rarities)) > 1:

@@ -78,7 +78,11 @@ def build_positions(store, *, home: str, now: datetime) -> list[Position]:
                 p.offers.append((e["at"], KIND_LABEL[k], val))
             elif k == "PURCHASE":
                 p.bought_at, paid = e["at"], val
-                p.cost += val or 0
+                # The engine's ledger records the all-in cost next to the price; count that, not just the price.
+                if e["data"].get("all_in_home") not in (None, "") and amt is not None:
+                    p.cost += _home(fx, Decimal(str(e["data"]["all_in_home"])), e["currency"], home, e["at"], p.fx_problems)
+                else:
+                    p.cost += val or 0
                 p.state = "HOLDING"
             elif k == "COST":
                 p.cost += val or 0

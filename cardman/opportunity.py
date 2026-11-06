@@ -174,8 +174,20 @@ def evaluate_listing(raw: RawListing, an: ListingAnalysis, book: PriceBook, cata
     rate = float(P.get("research_value_per_hour", 600)) / 60
 
     # -- scenarios ------------------------------------------------------------------------------------------------
-    by_id = {p.id: p for p in an.identity.candidates}
-    weights = an.weights or {}
+    from .identity import edition_variants
+    by_id, weights = {}, {}
+    base_w = an.weights or {}
+    for c in an.identity.candidates:
+        variants = edition_variants(c, catalog) if catalog is not None else [c]
+        for v in variants:
+            by_id[v.id] = v
+            # The seller's edition claim tilts the weights but is not proof: 2/3 to the claimed edition.
+            claimed = [e for e in getattr(an.parsed, "editions", ()) if e in {x.edition for x in variants}]
+            if len(variants) > 1 and len(claimed) == 1:
+                share = 2 / 3 if v.edition == claimed[0] else (1 / 3) / (len(variants) - 1)
+            else:
+                share = 1 / len(variants)
+            weights[v.id] = base_w.get(c.id, 1 / max(1, len(an.identity.candidates))) * share
     ranked = sorted(by_id, key=lambda i: -weights.get(i, 0))[:MAX_SCENARIOS]
     scenarios: list[Scenario] = []
     for pid in ranked:

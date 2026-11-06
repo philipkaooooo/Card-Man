@@ -23,7 +23,7 @@ from .models import IdentityStatus, Printing, Region
 SCAN_VERSION = "scan-0.1.0"
 MIN_SALES = 3
 # Flags that mean the thing for sale is not a tradable genuine single in scope.
-BLOCKING = {"proxy", "asian_english", "korean", "unopened_lottery", "graded_slab_only"}
+BLOCKING = {"proxy", "asian_english", "korean", "unopened_lottery", "graded_slab_only", "not_a_card"}
 
 DEFAULT_COSTS = {
     # Resale on a US marketplace, buying from a domestic seller. Every number is shown on the page.
@@ -168,7 +168,7 @@ def scan(*, title: str, body: str = "", ask: Decimal | None, ask_currency: str |
     for f in parsed.flags:
         kind = "risk" if f.code in BLOCKING | {"stock_photo", "no_returns", "damage_hint", "language_conflict",
                                                "cert_as_code", "graded_unclear", "reprint_hint"} else "info"
-        if f.code == "collection":
+        if f.code in ("collection", "seller_unsure"):
             kind = "upside"
         findings.append(Finding(kind, f.meaning.split(":")[0], f"{f.meaning} (listing says \"{f.text}\")"))
 

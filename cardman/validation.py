@@ -60,7 +60,7 @@ def _median_or_none(xs):
 def run_backtest(engine, as_of: datetime, *, include_synthetic: bool = False, horizon: timedelta = HORIZON) -> dict:
     db, store, profile, catalog = engine.db, engine.store, engine.profile, engine.catalog
     fam_of = {p.id: p.family_id for p in catalog.printings}
-    ledger = Ledger(engine.store_path)
+    ledger = engine.ledger
     buys_by_listing = {b["listing_key"]: b for b in ledger.events("PURCHASE", as_of) if b.get("listing_key")}
     sale_of = {s["purchase_id"]: s for s in ledger.events("SALE", as_of)}
     grade_cost: dict[str, float] = {}
@@ -115,8 +115,11 @@ def run_backtest(engine, as_of: datetime, *, include_synthetic: bool = False, ho
             engine_buy = rv.max_buy is not None and ask <= rv.max_buy and bool(stored_pid)
 
         family_prices = []
-        for other in catalog.by_family.get(fam_of.get(pid.split("|")[0], ""), []):
-            for o in store.observations_for(other.id, as_of=t0):
+        from .identity import edition_variants
+        fam_ids = {x.id for other in catalog.by_family.get(fam_of.get(pid.split("|")[0], ""), [])
+                   for x in [other, *edition_variants(other, catalog)]}   # sales under confirmed editions count too
+        for other_id in sorted(fam_ids):
+            for o in store.observations_for(other_id, as_of=t0):
                 if o.evidence_type in COMP_ELIGIBLE and t0 - o.event_time <= timedelta(days=90) and (include_synthetic or not o.synthetic_fixture):
                     try:
                         family_prices.append(float(book.to_home(o.original_amount, o.currency, o.event_time)))

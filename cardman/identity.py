@@ -170,6 +170,20 @@ class Catalog:
         return exact, notes
 
 
+def edition_variants(p: Printing, catalog: Catalog) -> list[Printing]:
+    """An English printing whose source has no edition data, split into the editions its product is known to have.
+
+    The ids match what resolve() gives a confirmed card (`<id>|ed:<edition>`), so sales recorded against a confirmed
+    edition price the unconfirmed candidates too. Printings with known editions, or no rule, come back unchanged.
+    """
+    allowed = catalog.edition_rules.get(p.product_name or "", ())
+    if p.region != Region.EN_TCG or p.edition is not None or not allowed:
+        return [p]
+    return [replace(p, id=f"{p.id}|ed:{ed}", edition=ed,
+                    variant_evidence=p.variant_evidence + ("edition scenario from edition rule; not confirmed",))
+            for ed in allowed]
+
+
 def resolve(signals: ListingSignals, catalog: Catalog) -> IdentityResult:
     ev: list[str] = []
     block: list[str] = []

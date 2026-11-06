@@ -88,7 +88,7 @@ class Engine:
         self.catalog = catalog if catalog is not None else self._load_catalog()
         self.profile = profile or load_profile()
         self.fx = FxStore(store_path, get_json=fx_get) if fx_get else FxStore(store_path)
-        self.ledger = Ledger(store_path)
+        self.ledger = Ledger(store_path, home=self.profile["home_currency"])
         self.raw = RawEvidenceStore(Path(raw_dir or (ROOT / "data" / "raw")))
         self.inbox = InboxAdapter(inbox or (ROOT / "data" / "inbox"), self.raw, self._seen)
         self.ebay = EbayAdapter(self.raw, list(self.profile.get("ebay_queries") or []), self.catalog)

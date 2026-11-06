@@ -109,3 +109,20 @@ def test_outcome_kinds_are_checked(st):
         st.add_outcome("x", "PURCHASE", NOW, amount=D("1"))
     with pytest.raises(KeyError):
         st.add_outcome("x", "PURCHASE", NOW, amount=D("1"), currency="USD", snapshot_id="nope")
+
+
+def test_one_outcome_table_for_the_results_page_and_the_engine(st):
+    from cardman.ledger import Ledger
+    L = Ledger(st.path, home="USD")
+    # Engine-side purchase and sale show up as a position on the Results page...
+    b = L.add("PURCHASE", {"printing_id": PID, "price_home": 400, "all_in_home": 420, "predicted_resale_home": 900},
+              at=NOW, listing_key="ebay:1")
+    L.add("SALE", {"purchase_id": b, "gross_home": 800, "net_home": 700}, at=NOW + timedelta(days=10))
+    # ...and a Results-page position counts in the engine's calibration.
+    st.add_outcome("UI #1", "PURCHASE", NOW, amount=D("480"), currency="USD", snapshot_id=st.sids["480"])
+    st.add_outcome("UI #1", "SOLD", NOW + timedelta(days=20), amount=D("700"), currency="USD", data={"fees": "100"})
+    pos = {p.name: p for p in build_positions(st, home="USD", now=NOW + timedelta(days=30))}
+    assert pos[b].state == "SOLD" and pos[b].realized == D("700") - D("420")
+    assert {e["id"] for e in L.events("PURCHASE")} == {b, "UI #1"}
+    cal = L.calibration(NOW + timedelta(days=30))
+    assert cal.n_sales == 2 and cal.realized_profit == pytest.approx(280 + 120)

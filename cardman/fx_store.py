@@ -6,7 +6,6 @@ source and date. A missing rate stays missing: conversion then raises rather tha
 from __future__ import annotations
 
 import json
-import sqlite3
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -25,16 +24,24 @@ def _get_json(url: str) -> dict:
 
 
 class FxStore:
+    """Fetches daily rates into the evidence store's own fx_rate table (one table for every rate the system uses)."""
+
     def __init__(self, path: Path | str, get_json=_get_json):
-        self.db = sqlite3.connect(str(path))
+        from .store import Store
+        self.store = Store(path)          # creates the schema, including fx_rate
+        self.db = self.store.db
         self.get_json = get_json
-        self.db.execute("""CREATE TABLE IF NOT EXISTS fx_rate (base TEXT, quote TEXT, day TEXT, mid TEXT NOT NULL, as_of TEXT NOT NULL,
-                           source TEXT NOT NULL, PRIMARY KEY (base, quote, day))""")
 
     def put(self, base: str, quote: str, day: str, mid, as_of: datetime, source: str) -> None:
-        with self.db:
-            self.db.execute("INSERT OR IGNORE INTO fx_rate VALUES (?,?,?,?,?,?)",
-                            (base, quote, day, str(mid), as_of.isoformat(), source))
+        from .store import ImmutableViolation
+        try:
+            self.store.add_fx(FxRate(base, quote, Decimal(str(mid)), as_of, source))
+        except ImmutableViolation:
+            pass   # same source and time already stored with another value: keep the first
+
+    def _on_day(self, base: str, quote: str, day: str):
+        return self.db.execute("SELECT as_of, mid, source FROM fx_rate WHERE base=? AND quote=? AND substr(as_of,1,10)<=?"
+                               " ORDER BY as_of DESC LIMIT 1", (base, quote, day)).fetchone()
 
     def sync_latest(self, base: str, quotes: tuple[str, ...]) -> int:
         d = self.get_json(LATEST.format(base=base))
@@ -47,7 +54,8 @@ class FxStore:
 
     def backfill(self, base: str, quote: str, day: date) -> bool:
         iso = day.isoformat()
-        if self.db.execute("SELECT 1 FROM fx_rate WHERE base=? AND quote=? AND day=?", (base, quote, iso)).fetchone():
+        if self.db.execute("SELECT 1 FROM fx_rate WHERE base=? AND quote=? AND substr(as_of,1,10)=?",
+                           (base, quote, iso)).fetchone():
             return True
         try:
             d = self.get_json(HISTORY.format(day=iso, base=base.lower()))
@@ -67,10 +75,9 @@ class FxStore:
             for m in moments:
                 d = m.astimezone(timezone.utc).date()
                 self.backfill(base, quote, d)
-                row = self.db.execute("SELECT day, mid, as_of, source FROM fx_rate WHERE base=? AND quote=? AND day<=? ORDER BY day DESC LIMIT 1",
-                                      (base, quote, d.isoformat())).fetchone()
+                row = self._on_day(base, quote, d.isoformat())
                 if row:
-                    out[(base, quote, row[0])] = FxRate(base, quote, Decimal(row[1]), datetime.fromisoformat(row[2]), row[3])
+                    out[(base, quote, row[0][:10])] = FxRate(base, quote, Decimal(row[1]), datetime.fromisoformat(row[0]), row[2])
         return list(out.values())
 
     def table(self, pairs: list[tuple[str, str]], moments: list[datetime]) -> FxTable:

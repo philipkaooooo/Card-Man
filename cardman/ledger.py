@@ -5,12 +5,11 @@ above what the sales show, and a few results move it only a little.
 """
 from __future__ import annotations
 
-import json
-import sqlite3
 import statistics
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 
 KINDS = ("NEGOTIATION", "REJECTED", "PURCHASE", "GRADING_RESULT", "SALE", "MISTAKE")
@@ -33,11 +32,24 @@ class Calibration:
     mistakes: dict[str, int]
 
 
+LEDGER_TO_OUTCOME = {"NEGOTIATION": "OFFER", "REJECTED": "PASSED", "PURCHASE": "PURCHASE", "GRADING_RESULT": "GRADED",
+                     "SALE": "SOLD", "MISTAKE": "MISTAKE"}
+_AMOUNT = {"PURCHASE": "price_home", "SALE": "gross_home", "GRADING_RESULT": "cost_home", "NEGOTIATION": "asked_home"}
+
+
+def _plain(d: dict) -> dict:
+    return {k: (str(v) if isinstance(v, float) else v) for k, v in d.items()}
+
+
 class Ledger:
-    def __init__(self, path: Path | str):
-        self.db = sqlite3.connect(str(path))
-        self.db.execute("""CREATE TABLE IF NOT EXISTS ledger_event (id TEXT PRIMARY KEY, kind TEXT NOT NULL, at TEXT NOT NULL,
-                           listing_key TEXT, printing_id TEXT, data_json TEXT NOT NULL, recorded_at TEXT NOT NULL)""")
+    """The engine's view of your outcomes. Events live in the store's `outcome` table, the same rows the Results page
+    writes, so a purchase recorded in either place counts in both. Amounts here are in `home` currency."""
+
+    def __init__(self, path: Path | str, home: str = "TWD"):
+        from .store import Store
+        self.store = Store(path)
+        self.db = self.store.db
+        self.home = home
 
     def add(self, kind: str, data: dict, *, at: datetime, listing_key: str | None = None, now: datetime | None = None) -> str:
         if kind not in KINDS:
@@ -51,29 +63,71 @@ class Ledger:
             if ref in REQUIRED[kind] and not self.get(data[ref]):
                 raise ValueError(f"no purchase {data[ref]}")
         eid = f"{kind.lower()}-{uuid.uuid4().hex[:10]}"
-        with self.db:
-            self.db.execute("INSERT INTO ledger_event VALUES (?,?,?,?,?,?,?)",
-                            (eid, kind, at.isoformat(), listing_key, data.get("printing_id"),
-                             json.dumps(data, ensure_ascii=False, sort_keys=True), (now or at).isoformat()))
+        position = data.get("purchase_id") or (eid if kind == "PURCHASE" else (listing_key or eid))
+        amt = data.get(_AMOUNT.get(kind, ""))
+        body = {**data, "ledger_kind": kind, "ledger_id": eid, "listing_key": listing_key}
+        if kind == "SALE":      # so the Results page computes the same net
+            body["fees"] = str(Decimal(str(data["gross_home"])) - Decimal(str(data["net_home"])))
+        if kind == "MISTAKE":
+            body.setdefault("text", f"{data['tag']}: {data['what']}")
+        if kind == "REJECTED":
+            body.setdefault("text", data["reason"])
+        self.store.add_outcome(position, LEDGER_TO_OUTCOME[kind], at,
+                               amount=Decimal(str(amt)) if amt not in (None, "") else None,
+                               currency=self.home if amt not in (None, "") else None,
+                               printing_id=data.get("printing_id"), data=_plain(body), now=now or at)
         return eid
 
     def get(self, eid: str) -> dict | None:
-        r = self.db.execute("SELECT id, kind, at, listing_key, printing_id, data_json FROM ledger_event WHERE id=?", (eid,)).fetchone()
-        return self._row(r) if r else None
-
-    @staticmethod
-    def _row(r) -> dict:
-        return {"id": r[0], "kind": r[1], "at": r[2], "listing_key": r[3], "printing_id": r[4], **json.loads(r[5])}
+        return next((e for e in self.events() if e["id"] == eid), None)
 
     def events(self, kind: str | None = None, as_of: datetime | None = None, limit: int = 1000) -> list[dict]:
-        q = "SELECT id, kind, at, listing_key, printing_id, data_json FROM ledger_event"
-        cond, args = [], []
+        out = []
+        native_positions = set()
+        for r in self.store.outcomes():
+            d = r["data"]
+            if "ledger_kind" not in d:
+                continue
+            native_positions.add(r["position"])
+            ev = {k: v for k, v in d.items() if k not in ("ledger_kind", "ledger_id", "listing_key", "fees", "text")}
+            out.append({"id": d["ledger_id"], "kind": d["ledger_kind"], "at": r["at"].isoformat(),
+                        "listing_key": d.get("listing_key"), "printing_id": r["printing_id"], **ev})
+        out += self._from_results_page(native_positions, as_of)
         if kind:
-            cond.append("kind=?"); args.append(kind)
+            out = [e for e in out if e["kind"] == kind]
         if as_of:
-            cond.append("at<=?"); args.append(as_of.isoformat())
-        q += (" WHERE " + " AND ".join(cond) if cond else "") + " ORDER BY at DESC LIMIT ?"
-        return [self._row(r) for r in self.db.execute(q, (*args, limit))]
+            out = [e for e in out if datetime.fromisoformat(e["at"]) <= as_of]
+        return sorted(out, key=lambda e: e["at"], reverse=True)[:limit]
+
+    def _from_results_page(self, skip: set, as_of: datetime | None) -> list[dict]:
+        """Positions entered on the Results page, in home currency with stored FX."""
+        from .outcomes import build_positions
+        from datetime import timezone
+        out = []
+        for p in build_positions(self.store, home=self.home, now=as_of or datetime.now(timezone.utc)):
+            if p.name in skip or p.bought_at is None or p.fx_problems:
+                continue
+            listing = None
+            if p.snapshot_id:
+                try:
+                    listing = self.store.snapshot_meta(p.snapshot_id)["listing_ref"]
+                except KeyError:
+                    pass
+            buy = {"id": p.name, "kind": "PURCHASE", "at": p.bought_at.isoformat(), "listing_key": listing,
+                   "printing_id": p.printing_id, "price_home": float(p.cost), "all_in_home": float(p.cost)}
+            if p.predicted_mid is not None:
+                buy["predicted_resale_home"] = float(p.predicted_mid)
+            out.append(buy)
+            if p.sold_at and p.sale_gross is not None:
+                out.append({"id": f"{p.name}:sale", "kind": "SALE", "at": p.sold_at.isoformat(), "listing_key": listing,
+                            "printing_id": p.printing_id, "purchase_id": p.name, "gross_home": float(p.sale_gross),
+                            "net_home": float(p.proceeds)})
+            if p.grade:
+                co, _, gr = p.grade.partition(" ")
+                out.append({"id": f"{p.name}:grade", "kind": "GRADING_RESULT", "at": p.bought_at.isoformat(),
+                            "listing_key": listing, "printing_id": p.printing_id, "purchase_id": p.name,
+                            "company": co, "grade": gr, "cost_home": 0.0})   # cost already in the position's cost
+        return out
 
     def calibration(self, as_of: datetime | None = None, *, route: str | None = None) -> Calibration:
         buys = {e["id"]: e for e in self.events("PURCHASE", as_of)}
