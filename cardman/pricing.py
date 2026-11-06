@@ -83,8 +83,12 @@ def estimate(sales: list[Sale], as_of: datetime, *, bias: float = 1.0) -> PriceE
         low, high, method = min(s.price for s in usable), mid, "sparse: lowest sale / recency median"
     else:
         low, high, method = _wq(pairs, 0.2), _wq(pairs, 0.75), "recency-weighted p20 / p50 / p75"
-    # A falling market is priced where it is heading over the next two months; a rising one is not paid for.
-    drift = math.exp(min(0.0, slope or 0.0) * 2)
+    recent_n = sum(1 for s in usable if age(s) <= LIQUIDITY_WINDOW_DAYS)
+    pace = recent_n * 30.0 / min(LIQUIDITY_WINDOW_DAYS, max(30.0, max(age(s) for s in usable)))
+    # A falling market is priced where it is heading by the time this copy sells (expected wait at the observed pace,
+    # at least a week, at most two months); a rising one is not paid for. A fast seller is barely exposed to the trend.
+    horizon = min(2.0, max(0.25, 1.0 / pace)) if pace > 0 else 2.0
+    drift = math.exp(min(0.0, slope or 0.0) * horizon)
 
     seed = int(hashlib.sha256(repr(sorted((s.when.isoformat(), s.price) for s in usable)).encode()).hexdigest()[:12], 16)
     rng = random.Random(seed)

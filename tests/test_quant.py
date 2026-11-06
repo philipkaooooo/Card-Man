@@ -1,4 +1,5 @@
 """Verification, pricing, grading and private learning. All data here is made up to exercise behavior."""
+import statistics
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal as D
 
@@ -165,3 +166,15 @@ def test_grade_counts_and_mistakes(tmp_path):
     L.add("MISTAKE", {"tag": "reprint_trap", "what": "bought the 25th"}, at=ago(1))
     assert L.grade_counts(printing_id="p") == {"9": 1} and L.grade_counts(printing_id="q") == {}
     assert L.calibration().mistakes == {"reprint_trap": 1}
+
+
+def test_falling_trend_is_charged_for_the_time_it_takes_to_sell():
+    from datetime import timedelta as td
+    from cardman.pricing import Sale, estimate
+    # Same 30%-a-month slide; one card sells weekly, the other monthly.
+    fast = [Sale(NOW - td(days=d), 1000 * 0.7 ** (-d / 30)) for d in range(3, 60, 4)]
+    slow = [Sale(NOW - td(days=d), 1000 * 0.7 ** (-d / 30)) for d in (5, 40, 75, 110, 145, 175)]
+    f, s = estimate(fast, NOW), estimate(slow, NOW)
+    lowest_fast = min(x.price for x in fast)
+    assert f.low > 0.85 * lowest_fast * 0.9          # a fast seller is barely exposed to the slide
+    assert (f.mid / statistics.median(x.price for x in fast)) > (s.mid / statistics.median(x.price for x in slow))

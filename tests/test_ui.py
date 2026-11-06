@@ -214,3 +214,8 @@ def test_results_and_recording_outcomes(app2):
     url, h = app2.post("/outcome", {"position": "x", "kind": "PURCHASE", "amount": "1", "currency": "USD",
                                     "snapshot_id": "missing"})
     assert "Not recorded" in h
+
+
+def test_opportunities_page_runs_the_engine(app2, tmp_path, monkeypatch):
+    h = app2.get("/opportunities")
+    assert "Nothing collected yet" in h and "data/inbox" in h

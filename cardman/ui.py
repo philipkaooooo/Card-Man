@@ -272,7 +272,8 @@ CURRENCIES = ("USD", "TWD")
 
 
 ON = ' class="on" aria-current="page"'
-NAV = (("Decide", (("deals", "Deals", "/"), ("scan", "Scan a listing", "/scan"))),
+NAV = (("Decide", (("opportunities", "Opportunities", "/opportunities"), ("deals", "Deals", "/"),
+                   ("scan", "Scan a listing", "/scan"))),
        ("Evidence", (("evidence", "Evidence", "/evidence"), ("import", "Import sales", "/import"))),
        ("Learn", (("results", "Results", "/results"),)))
 
@@ -1274,6 +1275,179 @@ def record_outcome(st: Store, form: dict, now: datetime) -> str:
     return f"Recorded: {name}, {kind.lower().replace('_', ' ')}."
 
 
+# -- opportunities from the continuous engine ----------------------------------------------------
+
+KIND_LABEL = {"UNDERPRICED": "Under max buy", "MISIDENTIFIED": "Misidentified", "HIDDEN_VARIANT": "Hidden variant",
+              "SELLER_UNSURE": "Seller unsure", "REFERENCE_GAP": "Under reference price", "LOT_UNDERPRICED": "Lot worth more",
+              "LOT": "Lot", "GRADING": "Grading upside"}
+SEV_ICON = {"BLOCK": ("no", "✕"), "WARN": ("warnic", "!"), "UPSIDE": ("ok", "↑"), "INFO": ("na", "i")}
+STATUS_ORDER = {"ESCALATED": 0, "OPEN": 1, "SHELVED": 2, "REJECTED": 3}
+
+
+def _engine_ready(st: Store) -> bool:
+    return bool(st.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='opportunity'").fetchone())
+
+
+class EngineMoney:
+    """Engine amounts are in the cost profile's home currency; shown in the display currency at the latest stored rate."""
+
+    def __init__(self, st: Store, home: str, want: str, now: datetime):
+        from datetime import timedelta
+        self.cur, self.k = home, Decimal(1)
+        if want != home:
+            try:
+                self.k = FxTable(st.fx_rates(), max_age=timedelta(days=7)).convert(Decimal(1), home, want, now)
+                self.cur = want
+            except ValueError:
+                pass
+
+    def __call__(self, v, sign: bool = False) -> str:
+        if v is None:
+            return "—"
+        d = Decimal(str(v)) * self.k
+        return signed(d, self.cur) if sign else money(d, self.cur)
+
+
+def _engine_home(st: Store) -> str:
+    try:
+        from .engine import load_profile
+        return load_profile()["home_currency"]
+    except Exception:
+        return "TWD"
+
+
+def view_opportunities(st: Store, now: datetime, token: str, cur: str, show: str) -> str:
+    head = ('<h1>Opportunities</h1><p class="sub">What the engine found in everything it has collected: ranked by money at '
+            'stake, how soon it ends, and what a quick check could settle. Only listings with defensible evidence get escalated '
+            'to a deal.</p>')
+    tick = (f'<form method="post" action="/engine/tick" class="inline"><input type="hidden" name="t" value="{e(token)}">'
+            '<button>Check for new listings now</button><span class="muted small">Reads new files in data/inbox (CSV, JSONL, '
+            'saved pages) and eBay once its keys exist, then re-analyzes only what changed.</span></form>')
+    if not _engine_ready(st):
+        return head + ('<section><h2>Nothing collected yet</h2><p>Drop exports or saved listing pages into '
+                       '<code>data/inbox/</code>, then press the button, or run <code>python -m cardman.engine run</code> to '
+                       'keep checking every 15 minutes.</p>' + tick + '</section>')
+    M = EngineMoney(st, _engine_home(st), cur, now)
+    rows = st.db.execute("SELECT key, stage, status, priority, expected, evpi, kinds, payload_json, updated_at FROM opportunity").fetchall()
+    import json as _json
+    items = []
+    for key, stage, status, pr, exp, evpi, kinds, pj, upd in rows:
+        d = _json.loads(pj)
+        items.append((key, stage, status, pr or 0, exp, evpi or 0, _json.loads(kinds or "[]"), d, upd))
+    counts = {s: sum(1 for i in items if i[2] == s) for s in STATUS_ORDER}
+    shown = [i for i in items if show == "all" or i[2] in ("ESCALATED", "OPEN")]
+    shown.sort(key=lambda i: (STATUS_ORDER.get(i[2], 9), -i[3]))
+    last = st.db.execute("SELECT at, data_json FROM engine_run ORDER BY at DESC LIMIT 1").fetchone()
+    lastrun = ""
+    if last:
+        r = _json.loads(last[1])
+        errs = r.get("errors") or []
+        lastrun = (f'<p class="muted small">Last check {when(last[0])}: {r.get("new_listings", 0)} new, '
+                   f'{r.get("analyzed", 0)} analyzed, {r.get("skipped_unchanged", 0)} unchanged skipped, '
+                   f'{r.get("signals", 0)} market signals, {r.get("seconds", 0)} s.'
+                   + (f' <span class="bad">{len(errs)} problem{"s" if len(errs) != 1 else ""}:</span> {e("; ".join(errs[:3]))}' if errs else "")
+                   + '</p>')
+    tiles = ('<div class="tiles">' + "".join(
+        f'<div class="tile"><small>{lab}</small><span>{counts.get(k, 0)}</span><em>{sub}</em></div>' for k, lab, sub in (
+            ("ESCALATED", "Escalated", "valued as a deal"), ("OPEN", "Open", "worth a check"),
+            ("SHELVED", "Shelved", "until something changes"), ("REJECTED", "Rejected", "fake, out of scope, not a card")))
+        + '</div>')
+    trs = []
+    for key, stage, status, pr, exp, evpi, kinds, d, upd in shown[:200]:
+        chips = " ".join(f'<span class="tag">{e(KIND_LABEL.get(k, k))}</span>' for k in kinds)
+        act = (d.get("research") or [{}])[0].get("what", "") if d.get("research") else ""
+        trs.append(f'<tr><td><a href="/opp/{quote(key)}">{e(d.get("title") or key)}</a><br>'
+                   f'<span class="muted">{e(d.get("market"))} · {e(key)}</span></td>'
+                   f'<td>{e(status.title())}<br><span class="muted">{e(stage.title())}</span></td><td>{chips}</td>'
+                   f'<td class="n">{M(d.get("ask_home"))}</td><td class="n">{M(exp, True)}</td>'
+                   f'<td class="n">{M(d.get("best_profit"), True)}</td><td class="n">{M(evpi)}</td>'
+                   f'<td class="fg2">{e(act)}</td></tr>')
+    table = ('<section><div class="wrap"><table><thead><tr><th>Listing</th><th>Status</th><th>Why</th><th class="n">Ask</th>'
+             '<th class="n">Expected profit</th><th class="n">Best case</th><th class="n">A check is worth</th><th>Next step</th>'
+             f'</tr></thead><tbody>{"".join(trs) or "<tr><td colspan=8 class=muted>Nothing open right now.</td></tr>"}</tbody></table></div>'
+             f'<p class="muted small"><a href="/opportunities?show={"open" if show == "all" else "all"}">'
+             f'{"Show only open" if show == "all" else "Show shelved and rejected too"}</a>. "A check is worth" is how much '
+             'knowing the exact print would change the expected result.</p></section>')
+    sig = st.db.execute("SELECT kind, printing_id, at, detail_json FROM market_signal ORDER BY at DESC LIMIT 30").fetchall()
+    sig_sec = ""
+    if sig:
+        li = "".join(f'<li><span class="ic {"ok" if k.startswith("REGIONAL") else "na"}">{"↑" if k.startswith("REGIONAL") else "i"}</span>'
+                     f'<div><b>{e(k.replace("_", " ").title())}</b> <span class="muted">{e(p)} · {day(a)}</span><br>'
+                     f'<span class="fg2">{e(_json.loads(dj).get("text", ""))}</span></div></li>' for k, p, a, dj in sig)
+        sig_sec = f'<section><h2>Market signals</h2><ul class="flags">{li}</ul></section>'
+    note = f'<div class="note">Amounts in {e(M.cur)}' + ("" if M.cur == cur else f' (no {e(cur)} rate stored yet)') + \
+        '. Costs come from the cost profile; until <code>data/profile.json</code> exists they are the ASSUMED defaults.</div>'
+    return head + '<section>' + tick + lastrun + '</section>' + tiles + note + table + sig_sec
+
+
+def months_txt(v) -> str:
+    return "—" if v is None else f"{v:.1f}"
+
+
+def view_opportunity(st: Store, key: str, now: datetime, token: str, cur: str) -> str:
+    import json as _json
+    if not _engine_ready(st):
+        raise KeyError(key)
+    row = st.db.execute("SELECT stage, status, payload_json, snapshot_id FROM opportunity WHERE key=?", (key,)).fetchone()
+    if not row:
+        raise KeyError(key)
+    stage, status, pj, sid = row
+    d = _json.loads(pj)
+    M = EngineMoney(st, _engine_home(st), cur, now)
+    cls = {"ESCALATED": "good", "OPEN": "warn", "SHELVED": "muted", "REJECTED": "crit"}.get(status, "muted")
+    kinds = " ".join(f'<span class="tag">{e(KIND_LABEL.get(k, k))}</span>' for k in d.get("kinds") or [])
+    reasons = "".join(f"<li>{e(r)}</li>" for r in d.get("reasons") or [])
+    deal = f'<p><a href="/deal/{e(sid)}">Open the deal valuation</a></p>' if sid else ""
+    card = (f'<section class="callcard {cls}"><span class="call {cls} big"><span class="ci">'
+            f'{"✓" if cls == "good" else "!" if cls == "warn" else "✕" if cls == "crit" else "…"}</span>{e(status.title())}</span> '
+            f'<span class="muted">stage {e(stage.title())}</span> {kinds}<p class="headline">{e(d.get("title"))}</p>'
+            f'<ul class="because">{reasons}</ul>{deal}<p class="conf">{e(d.get("market"))} · {link(d.get("url"), "listing")} · '
+            f'ends {e(d.get("ends_at") or "—")}</p></section>')
+    tiles = ('<div class="tiles">'
+             f'<div class="tile"><small>Ask</small><span>{M(d.get("ask_home"))}</span><em>all-in {M(d.get("all_in_home"))}</em></div>'
+             f'<div class="tile"><small>Expected profit</small><span>{M(d.get("expected_profit"), True)}</span><em>weighted over what it could be</em></div>'
+             f'<div class="tile"><small>Best case</small><span>{M(d.get("best_profit"), True)}</span><em>most valuable possibility</em></div>'
+             f'<div class="tile"><small>A check is worth</small><span>{M(d.get("evpi"))}</span><em>value of knowing the exact print</em></div>'
+             f'<div class="tile"><small>Priced</small><span>{pct((d.get("priced_share") or 0) * 100)}</span><em>of the possibilities have prices</em></div></div>')
+    sc = [s for s in d.get("scenarios") or [] if s.get("profit_mid") is not None]
+    chart = ""
+    if sc:
+        chart = ('<section><h2>Profit at the ask, by what it turns out to be</h2><p class="why">Mid resale estimate per '
+                 'possibility; the weight is how likely the engine thinks each one is from the text and photos.</p>'
+                 + charts.hbars([(s["label"][:40], float(Decimal(str(s["profit_mid"])) * M.k),
+                                  f'{s["weight"] * 100:.0f}% · {s["basis"]}') for s in sc[:12]], M.cur) + '</section>')
+    trs = "".join(
+        f'<tr><td>{e(s["label"])}</td><td class="n">{s["weight"] * 100:.0f}%</td><td>{e(s["basis"])}</td><td class="n">{s.get("n_sales", 0)}</td>'
+        f'<td class="n">{M(s.get("resale_low"))}</td><td class="n">{M(s.get("resale_mid"))}</td><td class="n">{M(s.get("max_buy"))}</td>'
+        f'<td class="n">{"—" if s.get("p_loss") is None else pct(s["p_loss"] * 100)}</td>'
+        f'<td class="n">{months_txt(s.get("months_to_sell"))}</td></tr>'
+        for s in (d.get("scenarios") or [])[:40])
+    table = ('<section><h2>Every possibility</h2><div class="wrap"><table><thead><tr><th>Printing</th><th class="n">Weight</th>'
+             '<th>Price basis</th><th class="n">Sales</th><th class="n">Low resale</th><th class="n">Mid resale</th>'
+             '<th class="n">Max buy</th><th class="n">Chance of loss</th><th class="n">Months to sell</th></tr></thead>'
+             f'<tbody>{trs}</tbody></table></div></section>') if d.get("scenarios") else ""
+    fl = "".join(f'<li><span class="ic {SEV_ICON.get(f["severity"], ("na", "i"))[0]}">{SEV_ICON.get(f["severity"], ("na", "i"))[1]}</span>'
+                 f'<div><b>{e(f["kind"].replace("_", " ").title())}</b><br><span class="fg2">{e(f["text"])}</span></div></li>'
+                 for f in d.get("findings") or [])
+    res = "".join(f'<li>{e(a["what"])} <span class="muted">({a["minutes"]:g} min)</span></li>' for a in d.get("research") or [])
+    side = (f'<section><h2>What stands out</h2><ul class="flags">{fl or "<li class=muted>Nothing unusual in the text.</li>"}</ul>'
+            + (f'<div class="next"><b>Worth doing next</b><ol>{res}</ol></div>' if res else "") + '</section>')
+    form = (f'<section><h2>Confirm from the card itself</h2><p class="why">Only what you saw on the card or a clear photo. '
+            'This is what lets the exact print resolve and the listing move to a valued deal.</p>'
+            f'<form method="post" action="/opp/{quote(key)}/confirm" class="scanform"><input type="hidden" name="t" value="{e(token)}">'
+            '<div class="row"><label>Printed set code<input id="c_code" name="printed_set_code" size="12"></label>'
+            '<label>Rarity (from the foil)<input id="c_rar" name="verified_rarity" size="16"></label>'
+            '<label>Edition stamp<select id="c_ed" name="verified_edition"><option value=""></option><option>1st</option>'
+            '<option>Unlimited</option><option>Limited</option></select></label>'
+            '<label>Card language<select id="c_lang" name="card_language"><option value=""></option><option value="ja">Japanese</option>'
+            '<option value="en">English</option></select></label>'
+            '<label>Authentic?<select id="c_auth" name="authenticity_ok"><option value=""></option><option value="yes">Looks genuine</option>'
+            '<option value="no">Fake or doubtful</option></select></label></div>'
+            '<label class="wide">Product (only if confirmed)<input id="c_prod" name="verified_product"></label>'
+            '<div class="row"><button>Confirm and re-analyze on the next check</button></div></form></section>')
+    return f'<h1>{e(d.get("title") or key)}</h1>' + card + tiles + '<div class="cols">' + side + chart + '</div>' + table + form
+
+
 # -- actions ----------------------------------------------------------------------------------
 
 def import_bytes(st: Store, name: str, data: bytes, now: datetime) -> tuple[str, str]:
@@ -1384,6 +1558,12 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     self._page("evidence", oid, view_obs(st, oid, now, token), qs)
                 elif parts == ["import"]:
                     self._page("import", "Import", view_import(token), qs)
+                elif parts == ["opportunities"]:
+                    self._page("opportunities", "Opportunities",
+                               view_opportunities(st, now, token, self._cur(), qs.get("show", ["open"])[0]), qs)
+                elif parts[0] == "opp" and len(parts) == 2:
+                    k = unquote(parts[1])
+                    self._page("opportunities", k, view_opportunity(st, k, now, token, self._cur()), qs)
                 elif parts == ["scan"]:
                     self._page("scan", "Scan", view_scan(st, now, qs, catalog, self._cur()), qs)
                 elif parts == ["results"]:
@@ -1447,6 +1627,30 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                         self._redirect(f"/obs/{quote(oid)}", msg=f"Recorded {status}.")
                     except (ValueError, KeyError) as x:
                         self._redirect(f"/obs/{quote(oid)}", err=str(x))
+                elif parts == ["engine", "tick"]:
+                    try:
+                        from .engine import Engine
+                        eng = Engine(store_path, catalog=catalog() if catalog else None)
+                        rep = eng.tick(now)
+                        eng.db.close()
+                        self._redirect("/opportunities", msg=f"Checked: {rep.new_listings} new, {rep.analyzed} analyzed, "
+                                       f"{rep.open_opportunities} open.", err="; ".join(rep.errors[:3]))
+                    except Exception as x:
+                        self._redirect("/opportunities", err=f"Check failed: {type(x).__name__}: {x}")
+                elif len(parts) == 3 and parts[0] == "opp" and parts[2] == "confirm":
+                    k = unquote(parts[1])
+                    try:
+                        from .engine import Engine
+                        eng = Engine(store_path, catalog=catalog() if catalog else None)
+                        auth = {"yes": True, "no": False}.get(form.get("authenticity_ok", ""))
+                        eng.confirm(k, {**{f: form.get(f, "").strip() for f in ("printed_set_code", "verified_rarity",
+                                        "verified_edition", "verified_product", "card_language")}, "authenticity_ok": auth},
+                                    actor="ui", now=now)
+                        eng.tick(now)
+                        eng.db.close()
+                        self._redirect(f"/opp/{quote(k)}", msg="Confirmed and re-analyzed.")
+                    except (Exception, SystemExit) as x:
+                        self._redirect(f"/opp/{quote(k)}", err=f"Not confirmed: {x}")
                 elif parts == ["outcome"]:
                     try:
                         self._redirect("/results", msg=record_outcome(st, form, now))

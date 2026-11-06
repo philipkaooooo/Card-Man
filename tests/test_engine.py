@@ -244,3 +244,19 @@ def test_real_outcome_beats_counterfactual_and_verdict_appears_at_threshold(tmp_
     res = run_backtest(e, NOW + timedelta(days=60))
     assert res["has_verdict"] and res["strategies"]["engine"]["real_outcomes"] == 20
     assert res["strategies"]["engine"]["net_profit"] == pytest.approx(140000)
+
+
+def test_opportunity_pages_render_the_engine_queue(tmp_path):
+    from cardman.store import Store
+    from cardman.ui import view_opportunities, view_opportunity
+    e = make(tmp_path)
+    drop(tmp_path, "sales.jsonl", SALES)
+    e.tick(NOW)
+    drop(tmp_path, "ask.jsonl", [ask("BUY", 400)])
+    e.tick(NOW + timedelta(minutes=1))
+    st = Store(str(tmp_path / "s.sqlite"))
+    h = view_opportunities(st, NOW + timedelta(minutes=2), "tok", "USD", "open")
+    assert "ebay:BUY" in h and "Last check" in h and "Expected profit" in h
+    d = view_opportunity(st, "ebay:BUY", NOW + timedelta(minutes=2), "tok", "USD")
+    assert "Every possibility" in d and "Confirm from the card itself" in d and "LOB-EN001" in d
+    assert "$" in d                     # engine TWD amounts shown in USD at the stored rate
