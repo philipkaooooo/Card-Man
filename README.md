@@ -66,15 +66,42 @@ may pay round down while resale thresholds round up, so the display never flatte
 - **Deals** ranks listings by call, then room under pay-up-to; **Evidence** shows coverage per printing and
   why each record is or is not used; **Import** uploads a manual CSV.
 
+### Scan a listing (`cardman/listing_text.py`, `cardman/scan.py`, page **Scan a listing**)
+Paste a title and description as the seller wrote them (English or Japanese) with the ask.
+- Reads the seller's claims: set code, rarity (EN names and JP slang such as レリーフ, クオシク, ウルパラ, シク),
+  edition, grade (PSA / BGS / CGC / SGC / ARS), condition (NM...DMG, 美品, 傷あり), lots and quantities,
+  binders and collections, and risk wording (proxy / orica / custom, Asian-English, Korean, stock photo,
+  no returns, damage, reprint, slab only, mystery packs). These stay seller claims; they never resolve identity.
+- Lists every printing the listing could be, each priced from the store's clean sales (same rules as the deal
+  page), with pay-up-to and profit at the ask.
+- Finds what the seller may have missed: a code that was also printed in a pricier rarity, a rarity the code
+  was never printed in, a title with no code across prints of very different value, an ask far under every
+  sale (misdescribed, damaged or fake), a price gap between marketplaces, an old newest sale.
+- Verdict: worth a look (profitable even as the cheapest plausible print), only if it's the right print
+  (with the photo that settles it and how much money that photo decides), pass, need data, or skip (not a
+  genuine in-scope single). A priority number (expected profit plus a quarter of the swing) orders the queue.
+
+### Results (`cardman/outcomes.py`, `cardman/backtest.py`, page **Results**)
+- Outcome ledger: offers, counters, purchase, extra costs, grade, listed, sold (fees, shipping), returned,
+  written off, passed, notes and mistakes. Append-only in the store; amounts converted with stored FX.
+- Each closed position is compared with the snapshot it was bought on: predicted vs realized profit, whether
+  the low-end resale was actually reached, days to sell vs the holding period priced in. Lessons are shown
+  with their evidence (estimate too optimistic, selling slower than assumed, positions past plan, losses).
+- CardMan vs a price tracker: the same listings decided by the engine and by a "20% under the 90-day median of
+  everything sold-looking" rule, scored on the real resale when recorded or on later clean sales of that exact
+  print otherwise: buys, profit, return on capital, money-losing buys, missed winners, unknown outcomes.
+- FX rates used by any run are now kept in the store, so old sales can be converted later (inverse pairs work).
+
 ### Run
 ```
-pip install pytest && python -m pytest -q                      # 104 pass
+pip install pytest && python -m pytest -q                      # 127 pass
 python -m cardman.sources                                       # re-probe every source
 python -m cardman.identity_cache sync                           # clone/update YAML Yugi, sync cache
 python -m cardman.slice examples/identity_only_LB-01.json examples/manual_import_TEMPLATE.csv
 python -m cardman.store --store data/store/evidence.sqlite import my_sales.csv   # accumulate comps
 python -m cardman.slice listing.json --store data/store/evidence.sqlite          # value from the store
 python -m cardman.ui --store data/store/evidence.sqlite                          # http://127.0.0.1:8765
+# the Scan page needs the identity cache: python -m cardman.identity_cache sync
 ```
 
 ### Remaining gaps

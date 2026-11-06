@@ -157,3 +157,60 @@ def test_evidence_overview_and_script(app):
     assert "Not a sale (asks, bids, estimates)" in page and "Records over time (USD)" in page
     js = app.get("/static/ui.js")
     assert "textContent" in js and "innerHTML" not in js
+
+
+@pytest.fixture
+def app2(tmp_path):
+    from tests.fixtures import CATALOG
+    db = str(tmp_path / "s.sqlite")
+    first = run(listing(), DEMO, NOW, allow_synthetic=True, store_path=db)
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(db, TOKEN, clock=lambda: LATER, catalog=lambda: CATALOG))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+
+    def get(path):
+        with urllib.request.urlopen(base + path) as r:
+            return r.read().decode()
+
+    def post(path, data):
+        req = urllib.request.Request(base + path, data=urlencode({**data, "t": TOKEN}).encode(), method="POST")
+        with urllib.request.urlopen(req) as r:
+            return r.geturl(), r.read().decode()
+
+    yield type("App", (), {"get": staticmethod(get), "post": staticmethod(post),
+                           "sid": first["status"]["stored_snapshot_id"]})
+    srv.shutdown()
+
+
+def test_left_menu_and_currency_next_to_logo(app2):
+    h = app2.get("/")
+    assert h.index('class="logo"') < h.index('class="curs"') < h.index("<aside>")
+    for path in ("/scan", "/results", "/evidence", "/import"):
+        assert f'href="{path}"' in h
+    assert 'aria-current="page">Deals' in h
+
+
+def test_scan_page(app2):
+    h = app2.get("/scan")
+    assert "Paste any listing" in h and "Every printing" not in h
+    h = app2.get("/scan?" + urlencode({"title": "Blue-Eyes White Dragon LOB-EN001 Ultra Rare 1st Edition",
+                                       "ask": "480", "cur": "USD", "syn": "1"}))
+    assert "Every printing it could be" in h and "LOB-EN001" in h
+    assert "Edition claim (1st) is unverified" not in h      # fixture catalog documents editions
+    h = app2.get("/scan?" + urlencode({"title": "Blue-Eyes White Dragon orica", "ask": "5"}))
+    assert "Not a genuine in-scope single" in h
+    h = app2.get("/scan?" + urlencode({"title": "Blue-Eyes", "ask": "abc"}))
+    assert "is not a number" in h
+
+
+def test_results_and_recording_outcomes(app2):
+    h = app2.get("/results?syn=1")
+    assert "CardMan vs a price tracker" in h and "Record what happened" in h
+    url, h = app2.post("/outcome", {"position": "BEWD #1", "kind": "PURCHASE", "at": "2026-11-04",
+                                    "amount": "480", "currency": "USD", "snapshot_id": app2.sid})
+    assert "Recorded: BEWD #1" in h and "BEWD #1" in h and "Holding" in h
+    url, h = app2.post("/outcome", {"position": "BEWD #1", "kind": "NOPE"})
+    assert "Not recorded" in h
+    url, h = app2.post("/outcome", {"position": "x", "kind": "PURCHASE", "amount": "1", "currency": "USD",
+                                    "snapshot_id": "missing"})
+    assert "Not recorded" in h

@@ -136,7 +136,7 @@ main{padding:16px 20px;min-width:0}
 @media(max-width:800px){.shell{grid-template-columns:1fr}
 aside{position:static;border-right:0;border-bottom:1px solid var(--line);padding:6px 12px;max-height:none}
 aside .menu>summary{display:list-item;cursor:pointer;font-weight:600;padding:6px 4px}
-aside .menu:not([open])>details{display:none}}
+aside .menu:not([open])>details{display:none}header .store{display:none}}
 h1{font-size:20px;margin:6px 0 2px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 h2{font-size:15px;margin:0 0 4px}
 .sub{color:var(--fg2);margin:0 0 14px}
@@ -236,6 +236,20 @@ button{cursor:pointer;background:var(--soft)}button:hover{border-color:var(--fg2
 details summary{cursor:pointer;color:var(--fg2)}
 ul{margin:4px 0;padding-left:18px}
 code{font-size:12px}
+.small{font-size:12px}
+.scanform{display:flex;flex-direction:column;gap:10px}
+.scanform .row{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
+.scanform label.wide{width:100%}.scanform label.wide input{width:100%}
+.scanform label.check{flex-direction:row;align-items:center;gap:6px;font-size:13px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 10px}
+.chip{display:inline-flex;flex-direction:column;border:1px solid var(--line);border-radius:6px;padding:3px 9px;
+background:var(--soft);font-weight:600;font-size:13px}.chip small{font-weight:400;color:var(--muted);font-size:11px}
+tr.claimed td{background:var(--soft)}
+.scores{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin:0 0 12px}
+.score{border:1px solid var(--line);border-radius:8px;padding:10px 14px}
+.score h3{margin:0 0 6px;font-size:14px}
+.score dl{display:grid;grid-template-columns:1fr auto;gap:3px 12px;margin:0}
+.score dt{color:var(--fg2)}.score dd{margin:0;text-align:right;font-weight:600;font-variant-numeric:tabular-nums}
 """
 
 JS = r"""
@@ -978,6 +992,288 @@ def view_import(token: str) -> str:
 
 
 
+# -- scan a listing -----------------------------------------------------------------------------
+
+SCAN_STYLE = {"LOOK": ("good", "✓", "Worth a look"), "LOTTERY": ("warn", "?", "Only if it's the right print"),
+              "PASS": ("crit", "✕", "Pass"), "BLOCKED": ("crit", "✕", "Skip"), "NEED_DATA": ("muted", "…", "Need data")}
+FINDING_STYLE = {"upside": ("ok", "↑", "Upside"), "risk": ("no", "!", "Risk"), "mismatch": ("warnic", "?", "Doesn't add up"),
+                 "info": ("na", "i", "Note")}
+SCAN_EXAMPLES = (("青眼の白龍 QCCP-JP001 ウルトラ 美品", "30", "USD"),
+                 ("Blue-Eyes White Dragon LOB-EN001 1st Edition Ultra Rare", "480", "USD"),
+                 ("Ash Blossom & Joyous Spring Asian English", "20", "USD"))
+
+
+CLAIMED_TR = ' class="claimed"'
+AS_DESCRIBED = ' <span class="tag">as described</span>'
+NEED3 = ' <span class="muted">(need 3)</span>'
+OPTION = '<option value="{}">'
+
+
+def muted_br(v) -> str:
+    return f'<br><span class="muted">{e(v)}</span>' if v else ""
+
+
+def up_money(f, m) -> str:
+    return f' <span class="good">+{m(f.money)} at resale</span>' if f.money and f.kind == "upside" else ""
+
+
+def scan_badge(verdict: str, big: bool = False) -> str:
+    cls, ic, label = SCAN_STYLE.get(verdict, ("muted", "–", verdict))
+    return f'<span class="call {cls}{" big" if big else ""}"><span class="ci">{ic}</span>{e(label)}</span>'
+
+
+def view_scan(st: Store, now: datetime, qs: dict, catalog_fn, cur: str) -> str:
+    title = qs.get("title", [""])[0].strip()
+    body = qs.get("body", [""])[0]
+    ask_s = qs.get("ask", [""])[0].strip()
+    ask_cur = (qs.get("cur", [cur])[0] or cur).upper()
+    syn = qs.get("syn", [""])[0] == "1"
+    opts = "".join(f'<option{" selected" if c == ask_cur else ""}>{c}</option>' for c in ("USD", "TWD", "JPY"))
+    form = (f'<section><form method="get" action="/scan" class="scanform">'
+            f'<label class="wide">Listing title<input id="title" name="title" value="{e(title)}" required '
+            f'placeholder="Paste the title as the seller wrote it (English or Japanese)"></label>'
+            f'<label class="wide">Description (optional)<textarea id="body" name="body" '
+            f'placeholder="Paste the description: it often says stock photo, no returns, reprint...">{e(body)}</textarea></label>'
+            f'<div class="row"><label>Ask<input id="ask" name="ask" value="{e(ask_s)}" inputmode="decimal" size="10"></label>'
+            f'<label>Currency<select id="cur" name="cur">{opts}</select></label>'
+            f'<label class="check"><input type="checkbox" name="syn" value="1"{" checked" if syn else ""}> '
+            f'use synthetic test sales</label><button>Scan</button></div></form>'
+            '<p class="muted small">Try: ' + " · ".join(
+                f'<a href="/scan?{urlencode({"title": t, "ask": a, "cur": c, "syn": 1})}">{e(t)}</a>'
+                for t, a, c in SCAN_EXAMPLES) + '</p></section>')
+    head = ('<h1>Scan a listing</h1><p class="sub">Paste any listing. It reads what the seller claims, lists every '
+            'printing it could be with what each resells for, and points out what the seller may have missed.</p>')
+    if not title:
+        return head + form
+    catalog = catalog_fn() if catalog_fn else None
+    if catalog is None:
+        return head + form + ('<div class="note bad">No card catalog loaded. Run <code>python -m cardman.identity_cache '
+                              'sync</code>, then restart the app.</div>')
+    from .scan import scan
+    try:
+        ask = Decimal(ask_s.replace(",", "")) if ask_s else None
+    except InvalidOperation:
+        return head + form + f'<div class="note bad">Ask "{e(ask_s)}" is not a number.</div>'
+    r = scan(title=title, body=body, ask=ask, ask_currency=ask_cur if ask is not None else None, store=st,
+             catalog=catalog, now=now, home=cur, include_synthetic=syn)
+    m = lambda v, rnd="near": money(v.quantize(Decimal("1"), rounding=ROUND_FLOOR if rnd == "down" else ROUND_CEILING)
+                                    if v is not None and rnd != "near" and abs(v) >= 100 else v, cur)
+    cls = SCAN_STYLE.get(r.verdict, ("muted",))[0]
+    tiles = ""
+    if r.ask_home is not None:
+        tgt = Decimal(str(r.costs["target_return"]))
+        tiles = ('<div class="tiles">'
+                 f'<div class="tile"><small>Ask</small><span>{m(r.ask_home)}</span><em>all-in {m(r.all_in)} with buying costs</em></div>'
+                 f'<div class="tile"><small>If it is what it says</small><span class="{"good" if (r.worst or 0) > 0 else "bad"}">{signed(r.worst, cur)}</span>'
+                 f'<em>profit at the low-end resale</em></div>'
+                 f'<div class="tile"><small>Best case</small><span class="{"good" if (r.best or 0) > 0 else "bad"}">{signed(r.best, cur)}</span>'
+                 f'<em>if it is the most valuable print it could be</em></div>'
+                 f'<div class="tile"><small>A photo settles</small><span>{m(r.swing)}</span><em>difference between best and as described</em></div>'
+                 f'<div class="tile"><small>Target</small><span>{m(r.all_in * tgt if r.all_in else None)}</span>'
+                 f'<em>{int(tgt * 100)}% on the all-in cost</em></div></div>')
+    p = r.parsed
+    said = [("Set code", p.signals.seller_set_code), ("Rarity", " / ".join(p.rarity_claims) or None),
+            ("Edition", p.edition_claim), ("Grade", f"{p.grade_company} {p.grade}" if p.grade_company else None),
+            ("Condition", p.condition), ("Quantity", str(p.quantity) if p.is_lot else None),
+            ("Language in text", ", ".join({"ja": "Japanese", "en": "English"}[x] for x in p.language_claims) or None)]
+    chips = "".join(f'<span class="chip"><small>{e(k)}</small>{e(v)}</span>' for k, v in said if v) or \
+        '<span class="muted">No set code, rarity or edition in the text.</span>'
+    order = {"upside": 0, "mismatch": 1, "risk": 2, "info": 3}
+    fl = "".join(
+        f'<li><span class="ic {FINDING_STYLE[f.kind][0]}">{FINDING_STYLE[f.kind][1]}</span><div><b>{e(f.title)}</b>'
+        f'{up_money(f, m)}'
+        f'<br><span class="fg2">{e(f.detail)}</span></div></li>'
+        for f in sorted(r.findings, key=lambda f: order[f.kind]))
+    nxt = ("<div class=\"next\"><b>Ask the seller for</b><ol>" + "".join(f"<li>{e(x)}</li>" for x in r.next_evidence)
+           + "</ol></div>") if r.next_evidence and r.verdict not in ("BLOCKED", "PASS") else ""
+    verdict = (f'<section class="callcard {cls}">{scan_badge(r.verdict, True)}<p class="headline">{e(r.headline)}</p>'
+               f'<div class="chips">{chips}</div>{nxt}<p class="conf">Identity: {e(r.identity.status.value.lower())}'
+               f' · {len(r.candidates)} possible printing{"s" if len(r.candidates) != 1 else ""}'
+               f' · prices from clean sales in the store{" including synthetic test data" if syn else ""}</p></section>')
+    sect_f = f'<section><h2>What stands out</h2><ul class="flags">{fl}</ul></section>' if fl else ""
+    priced = [c for c in r.candidates if c.profit_at_ask is not None]
+    chart = ""
+    if priced:
+        rows = [(f"{c.printing.set_code or c.printing.product_name or ''} {short_rarity(c.printing.rarity)}"
+                 + (" ★" if c.claimed else ""), float(c.profit_at_ask), f"{c.sales} sales") for c in priced[:12]]
+        tgt = Decimal(str(r.costs["target_return"])) * r.all_in if r.all_in else None
+        chart = ('<section><h2>Profit at the ask, by what it turns out to be</h2>'
+                 '<p class="why">Each bar assumes it resells at the low end of that print\'s recent sales. '
+                 '★ marks what the seller says it is. The line is your target.</p>'
+                 + charts.hbars(rows, cur, target=("target", float(tgt)) if tgt else None) + '</section>')
+    trs = []
+    for c in r.candidates[:40]:
+        pp = c.printing
+        trs.append(f'<tr{CLAIMED_TR if c.claimed else ""}><td><code>{e(pp.set_code or "no code")}</code>'
+                   f'{AS_DESCRIBED if c.claimed else ""}<br>'
+                   f'<span class="fg2">{e(pp.rarity)} · {e(pp.product_name or pp.product_id)}</span></td>'
+                   f'<td>{e({"JP_OCG": "Japanese", "EN_TCG": "English"}.get(pp.region.value, pp.region.value))}</td>'
+                   f'<td class="n">{c.sales}{"" if c.sales >= 3 else NEED3}</td>'
+                   f'<td class="n">{m(c.low, "down")}</td><td class="n">{m(c.mid)}</td>'
+                   f'<td class="n">{"—" if c.per_month is None else f"{c.per_month:g}/mo"}</td>'
+                   f'<td class="n">{m(c.ceiling, "down")}</td><td class="n">{signed(c.profit_at_ask, cur)}</td></tr>')
+    more = f'<p class="muted">{len(r.candidates) - 40} more not shown.</p>' if len(r.candidates) > 40 else ""
+    table = ('<section><h2>Every printing it could be</h2><div class="wrap"><table><thead><tr><th>Printing</th><th>Language</th>'
+             '<th class="n">Clean sales</th><th class="n">Low-end resale</th><th class="n">Median</th><th class="n">Pace</th>'
+             '<th class="n">Pay up to</th><th class="n">Profit at ask</th></tr></thead><tbody>'
+             + "".join(trs) + f'</tbody></table></div>{more}</section>') if r.candidates else ""
+    acq, ex = r.costs["acquisition"], r.costs["exit"]
+    assum = ('<section><details><summary>Assumptions used</summary><table class="compact"><tbody>'
+             f'<tr><td>Target return on all-in cost</td><td class="n">{pct(float(r.costs["target_return"]) * 100)}</td></tr>'
+             f'<tr><td>Holding period / capital cost</td><td class="n">{e(r.costs["holding_months"])} months at '
+             f'{pct(float(r.costs["capital_cost_monthly"]) * 100)} a month</td></tr>'
+             f'<tr><td>Inbound shipping</td><td class="n">{money(acq.get("inbound_shipping"), cur)}</td></tr>'
+             f'<tr><td>Selling fee</td><td class="n">{pct(float(ex.get("platform_fee_pct", 0)) * 100)}</td></tr>'
+             f'<tr><td>Outbound shipping</td><td class="n">{money(ex.get("outbound_shipping"), cur)}</td></tr>'
+             f'<tr><td>Returns reserve</td><td class="n">{pct(float(ex.get("returns_reserve_pct", 0)) * 100)}</td></tr>'
+             '</tbody></table><p class="muted">Triage uses these defaults in the display currency. The deal page uses '
+             'the listing\'s own costs.</p></details></section>')
+    return head + form + verdict + tiles + sect_f + chart + table + assum
+
+
+def signed(v, cur: str) -> str:
+    if v is None:
+        return "—"
+    s = money(abs(v), cur)
+    return ("+" if v > 0 else "−" if v < 0 else "") + s
+
+
+def short_rarity(r: str) -> str:
+    return {"Quarter Century Secret Rare": "QCSR", "Platinum Secret Rare": "Plat. Secret", "Prismatic Secret Rare":
+            "Prismatic SR", "Ultimate Rare": "Ultimate", "Secret Rare": "Secret", "Ultra Rare": "Ultra",
+            "Super Rare": "Super", "Collector's Rare": "Collector's", "Starlight Rare": "Starlight"}.get(r, r)
+
+
+# -- results: outcomes, learning, engine vs tracker ----------------------------------------------
+
+STATE_LABEL = {"HOLDING": "Holding", "NEGOTIATING": "Negotiating", "SOLD": "Sold", "CLOSED_LOSS": "Closed",
+               "PASSED": "Passed"}
+
+
+def view_results(st: Store, now: datetime, token: str, cur: str, syn: bool) -> str:
+    from .backtest import run_backtest
+    from .outcomes import KIND_LABEL, KINDS, build_positions, learn
+    pos = build_positions(st, home=cur, now=now)
+    L = learn(pos)
+    bt = run_backtest(st, home=cur, now=now, include_synthetic=syn)
+    head = ('<h1>Results</h1><p class="sub">What actually happened, what the engine should learn from it, and whether '
+            'it beats a plain price tracker.</p>')
+    # scoreboard
+    def col(s):
+        roc = "—" if s.return_on_capital is None else pct(s.return_on_capital * 100, signed=True)
+        return (f'<div class="score"><h3>{e(s.name)}</h3><dl>'
+                f'<dt>Buys</dt><dd>{s.buys}</dd><dt>Profit on known outcomes</dt><dd>{signed(s.profit, cur)}</dd>'
+                f'<dt>Return on capital</dt><dd>{roc}</dd>'
+                f'<dt>Lost money</dt><dd class="{"bad" if s.false_positives else ""}">{s.false_positives}</dd>'
+                f'<dt>Missed winners</dt><dd class="{"warnt" if s.missed else ""}">{s.missed}</dd>'
+                f'<dt>Outcome unknown</dt><dd>{s.unverifiable}</dd></dl></div>')
+    if bt.rows:
+        rows = [("CardMan", float(bt.engine.profit), f"{bt.engine.buys} buys"),
+                (bt.tracker.name.split(" (")[0], float(bt.tracker.profit), f"{bt.tracker.buys} buys")]
+        trs = "".join(
+            f'<tr><td>{e(r.listing_ref)}</td><td class="d">{day(r.at)}</td><td class="n">{money(r.ask, cur)}</td>'
+            f'<td>{"<b>buy</b>" if r.engine_buy else "pass"}<br><span class="muted">{e(r.engine_why)}</span></td>'
+            f'<td>{"<b>buy</b>" if r.tracker_buy else "pass"}<br><span class="muted">{e(r.tracker_why)}</span></td>'
+            f'<td class="n">{money(r.resale, cur)}<br><span class="muted">{e(r.resale_kind)}</span></td>'
+            f'<td class="n">{signed(r.profit, cur)}</td></tr>' for r in bt.rows)
+        board = (f'<div class="scores">{col(bt.engine)}{col(bt.tracker)}</div>'
+                 + charts.hbars(rows, cur, label="Profit on known outcomes")
+                 + '<details><summary>Every listing</summary><div class="wrap"><table><thead><tr><th>Listing</th><th>Valued</th>'
+                 '<th class="n">Ask</th><th>CardMan</th><th>Tracker</th><th class="n">Resold for</th><th class="n">Profit if bought</th>'
+                 f'</tr></thead><tbody>{trs}</tbody></table></div></details>')
+    else:
+        board = '<p class="muted">' + e(" ".join(bt.notes) or "Nothing to compare yet.") + '</p>'
+    bt_sec = ('<section><h2>CardMan vs a price tracker</h2><p class="why">Same listings, same costs. The tracker buys '
+              f'when the ask is {int(bt.discount * 100)}% under the 90-day median of every sold-looking record for the '
+              'card, with no identity check or cleaning. "Resold for" is the real sale when you recorded one, otherwise '
+              'the median of later clean sales of that exact print within the holding period.</p>'
+              f'{board}<p class="muted small"><a href="/results?{urlencode({"syn": 0 if syn else 1})}">'
+              f'{"Hide" if syn else "Include"} synthetic test listings</a></p></section>')
+    # learning
+    if L.closed or L.holding:
+        les = "".join(f'<li><span class="ic {"no" if l.severity == "act" else "warnic" if l.severity == "watch" else "ok"}">'
+                      f'{"!" if l.severity != "ok" else "✓"}</span><div><b>{e(l.title)}</b><br><span class="fg2">'
+                      f'{e(l.evidence)} {e(l.suggestion)}</span></div></li>' for l in L.lessons)
+        learn_sec = ('<section><h2>What the results say</h2><div class="tiles">'
+                     f'<div class="tile"><small>Realized profit</small><span>{signed(L.realized, cur)}</span><em>{L.closed} closed</em></div>'
+                     f'<div class="tile"><small>Win rate</small><span>{"—" if L.win_rate is None else pct(L.win_rate * 100)}</span><em>closed at a profit</em></div>'
+                     f'<div class="tile"><small>Capital in stock</small><span>{money(L.capital_out, cur)}</span><em>{L.holding} holding</em></div>'
+                     f'<div class="tile"><small>Days to sell</small><span>{"—" if L.median_days is None else f"{L.median_days:g}"}</span><em>median, closed</em></div>'
+                     f'<div class="tile"><small>Low end beaten</small><span>{L.beat_low}/{L.with_prediction}</span>'
+                     f'<em>sales at or above the predicted low end</em></div></div>'
+                     f'<ul class="flags">{les}</ul></section>')
+    else:
+        learn_sec = ('<section><h2>What the results say</h2><p class="muted">Record your first purchase below. Once '
+                     'positions close, this compares each sale with what was predicted and suggests fixes.</p></section>')
+    # positions
+    if pos:
+        trs = "".join(
+            f'<tr><td><b>{e(p.name)}</b>{muted_br(p.grade)}</td>'
+            f'<td>{STATE_LABEL[p.state]}</td><td class="d">{day(p.bought_at) if p.bought_at else "—"}</td>'
+            f'<td class="n">{money(p.cost, cur) if p.cost else "—"}</td>'
+            f'<td class="n">{signed(p.predicted_profit, cur)}</td><td class="n">{signed(p.realized, cur)}</td>'
+            f'<td class="n">{"—" if p.return_pct is None else pct(float(p.return_pct) * 100, signed=True)}</td>'
+            f'<td class="n">{"—" if p.days_held is None else p.days_held}</td></tr>'
+            + (f'<tr><td colspan="8" class="bad small">{e("; ".join(p.fx_problems))}</td></tr>' if p.fx_problems else "")
+            for p in pos)
+        pos_sec = ('<section><h2>Positions</h2><div class="wrap"><table><thead><tr><th>Position</th><th>State</th><th>Bought</th>'
+                   '<th class="n">Cost all-in</th><th class="n">Predicted profit</th><th class="n">Realized</th><th class="n">Return</th>'
+                   f'<th class="n">Days</th></tr></thead><tbody>{trs}</tbody></table></div></section>')
+    else:
+        pos_sec = ""
+    names = sorted({p.name for p in pos})
+    kopts = "".join(f'<option value="{k}">{e(KIND_LABEL[k])}</option>' for k in KINDS)
+    form = (f'<section><h2>Record what happened</h2><form method="post" action="/outcome" class="scanform">'
+            f'<input type="hidden" name="t" value="{e(token)}"><div class="row">'
+            f'<label>Position<input id="o_pos" name="position" list="positions" required placeholder="e.g. BEWD LOB 1st #1"></label>'
+            f'<datalist id="positions">{"".join(OPTION.format(e(n)) for n in names)}</datalist>'
+            f'<label>What happened<select id="o_kind" name="kind">{kopts}</select></label>'
+            f'<label>When<input id="o_at" name="at" type="date" value="{now.date().isoformat()}" required></label>'
+            f'<label>Amount<input id="o_amt" name="amount" inputmode="decimal" size="9"></label>'
+            f'<label>Currency<select id="o_cur" name="currency"><option>USD</option><option>TWD</option><option>JPY</option></select></label>'
+            f'</div><div class="row"><label>Fees (sales)<input id="o_fees" name="fees" inputmode="decimal" size="8"></label>'
+            f'<label>Shipping (sales)<input id="o_ship" name="shipping" inputmode="decimal" size="8"></label>'
+            f'<label>Grader<input id="o_gco" name="company" size="6" placeholder="PSA"></label>'
+            f'<label>Grade<input id="o_gr" name="grade" size="4"></label>'
+            f'<label>Deal snapshot<input id="o_sid" name="snapshot_id" size="26" placeholder="from the deal page"></label></div>'
+            f'<label class="wide">Note<input id="o_note" name="text" placeholder="what you learned, why you passed, what went wrong"></label>'
+            '<div class="row"><button>Record</button></div></form>'
+            '<p class="muted small">Events are never edited. To correct one, record another (a COST with a negative amount, a NOTE).</p></section>')
+    return head + bt_sec + learn_sec + pos_sec + form
+
+
+def record_outcome(st: Store, form: dict, now: datetime) -> str:
+    from .outcomes import KINDS
+    name = form.get("position", "").strip()
+    kind = form.get("kind", "")
+    if not name or kind not in KINDS:
+        raise ValueError("give a position name and what happened")
+    at = datetime.fromisoformat(form.get("at") or now.date().isoformat())
+    at = at.replace(tzinfo=timezone.utc) if at.tzinfo is None else at
+    if at.date() == now.date():
+        at = now
+    elif at > now:
+        raise ValueError("that date is in the future")
+    amt = form.get("amount", "").strip().replace(",", "")
+    try:
+        amount = Decimal(amt) if amt else None
+        data = {k: str(Decimal(form[k].replace(",", ""))) for k in ("fees", "shipping") if form.get(k, "").strip()}
+    except InvalidOperation:
+        raise ValueError("amounts must be numbers")
+    for k in ("company", "grade", "text"):
+        if form.get(k, "").strip():
+            data[k] = form[k].strip()
+    sid = form.get("snapshot_id", "").strip() or None
+    pid = None
+    if sid:
+        meta = st.snapshot(sid)
+        cands = meta["report"]["identity"]["candidates"]
+        pid = cands[0] if len(cands) == 1 else None
+    st.add_outcome(name, kind, at, amount=amount, currency=form.get("currency") if amount is not None else None,
+                   snapshot_id=sid, printing_id=pid, data=data, now=now)
+    return f"Recorded: {name}, {kind.lower().replace('_', ' ')}."
+
+
 # -- actions ----------------------------------------------------------------------------------
 
 def import_bytes(st: Store, name: str, data: bytes, now: datetime) -> tuple[str, str]:
@@ -1013,7 +1309,8 @@ def reevaluate(st: Store, store_path: str, sid: str, now: datetime) -> str:
 
 # -- server -----------------------------------------------------------------------------------
 
-def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezone.utc)):
+def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezone.utc), catalog=None):
+    """catalog: a zero-argument callable returning the identity Catalog (loaded once), or None."""
     class H(BaseHTTPRequestHandler):
         server_version = "CardMan"
 
@@ -1087,6 +1384,11 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     self._page("evidence", oid, view_obs(st, oid, now, token), qs)
                 elif parts == ["import"]:
                     self._page("import", "Import", view_import(token), qs)
+                elif parts == ["scan"]:
+                    self._page("scan", "Scan", view_scan(st, now, qs, catalog, self._cur()), qs)
+                elif parts == ["results"]:
+                    self._page("results", "Results", view_results(st, now, token, self._cur(),
+                                                                  qs.get("syn", [""])[0] == "1"), qs)
                 else:
                     self._send(404, page("Not found", "<h1>Not found</h1>", nav="", store=store_path))
             except KeyError as x:
@@ -1145,6 +1447,11 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                         self._redirect(f"/obs/{quote(oid)}", msg=f"Recorded {status}.")
                     except (ValueError, KeyError) as x:
                         self._redirect(f"/obs/{quote(oid)}", err=str(x))
+                elif parts == ["outcome"]:
+                    try:
+                        self._redirect("/results", msg=record_outcome(st, form, now))
+                    except (ValueError, KeyError) as x:
+                        self._redirect("/results", err=f"Not recorded: {x}")
                 elif parts == ["import"]:
                     if "csv" not in files:
                         return self._redirect("/import", err="choose a CSV file")
@@ -1161,13 +1468,30 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
     return H
 
 
+def catalog_loader(path: str):
+    """Load the identity cache's catalog on first use and keep it; None if the cache was never synced."""
+    box: dict = {}
+
+    def get():
+        if "c" not in box:
+            box["c"] = None
+            if Path(path).exists():
+                from .identity_cache import IdentityCache
+                cache = IdentityCache(path)
+                box["c"] = cache.catalog() if cache.revision() else None
+        return box["c"]
+    return get
+
+
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(prog="python -m cardman.ui")
     ap.add_argument("--store", default="data/store/evidence.sqlite")
     ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--catalog", default="data/cache/identity.sqlite", help="identity cache for the Scan page")
     a = ap.parse_args(argv)
     Store(a.store).db.close()          # create the file and schema up front
-    srv = ThreadingHTTPServer(("127.0.0.1", a.port), make_handler(a.store, secrets.token_urlsafe(24)))
+    srv = ThreadingHTTPServer(("127.0.0.1", a.port), make_handler(a.store, secrets.token_urlsafe(24),
+                                                                  catalog=catalog_loader(a.catalog)))
     print(f"CardMan UI on http://127.0.0.1:{a.port}  (store {a.store}; Ctrl+C to stop)")
     try:
         srv.serve_forever()
