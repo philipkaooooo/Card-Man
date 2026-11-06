@@ -9,7 +9,7 @@ from __future__ import annotations
 import difflib
 import re
 import unicodedata
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from .models import CardFamily, GameFormat, IdentityStatus, Printing, Region
 
@@ -112,8 +112,11 @@ def _strip_ruby(s: str) -> tuple[str, str | None]:
 
 
 class Catalog:
-    def __init__(self, families: list[CardFamily], printings: list[Printing]):
+    def __init__(self, families: list[CardFamily], printings: list[Printing],
+                 edition_rules: dict[str, list[str]] | None = None):
         self.families = {f.id: f for f in families}
+        # product name -> editions its English run exists in. Empty keeps the strict default: abstain.
+        self.edition_rules = edition_rules or {}
         self.printings = printings
         self.by_family: dict[str, list[Printing]] = {}
         self.by_code: dict[str, list[Printing]] = {}
@@ -270,6 +273,14 @@ def resolve(signals: ListingSignals, catalog: Catalog) -> IdentityResult:
             return IdentityResult(IdentityStatus.CANDIDATES, cands, ev,
                                   block + [f"catalog printing is {p.identity_status}: {'; '.join(p.variant_evidence)}"],
                                   ["identity source record with complete rarity/product data"])
+        allowed = catalog.edition_rules.get(p.product_name or "", ())
+        if (p.region == Region.EN_TCG and p.edition is None and signals.verified_edition
+                and signals.verified_edition in allowed):
+            # The stamp was verified on the card and this product is known to have that edition.
+            refined = replace(p, id=f"{p.id}|ed:{signals.verified_edition}", edition=signals.verified_edition,
+                              variant_evidence=p.variant_evidence + ("edition from verified stamp photo + edition rule",))
+            return IdentityResult(IdentityStatus.RESOLVED, [refined], ev + ["edition rule allows this stamp on this product"],
+                                  block, [])
         if p.region == Region.EN_TCG and p.edition is None:
             # English prints differ by 1st / Unlimited / Limited; the loaded source does not say which exist.
             return IdentityResult(IdentityStatus.CANDIDATES, cands, ev,

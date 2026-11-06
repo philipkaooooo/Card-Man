@@ -240,7 +240,7 @@ class IdentityCache:
             fams[f.id] = f
         prints = [_printing_from_json(r[0]) for r in
                   self.db.execute("SELECT data_json FROM printing WHERE retired_rev IS NULL ORDER BY id")]
-        return Catalog(list(fams.values()), prints)
+        return Catalog(list(fams.values()), prints, edition_rules=load_edition_rules())
 
     def stats(self) -> dict:
         one = lambda q: self.db.execute(q).fetchone()[0]  # noqa: E731
@@ -253,6 +253,13 @@ class IdentityCache:
                                               " GROUP BY region").fetchall()),
             "last_sync": self.db.execute("SELECT * FROM sync_log ORDER BY rowid DESC LIMIT 1").fetchone(),
         }
+
+
+def load_edition_rules(path: Path | None = None) -> dict[str, list[str]]:
+    path = path or Path(__file__).resolve().parent.parent / "data" / "edition_rules.json"
+    if not Path(path).exists():
+        return {}
+    return {k: v for k, v in json.loads(Path(path).read_text(encoding="utf-8")).items() if not k.startswith("_")}
 
 
 def update_checkout(repo: Path) -> None:
