@@ -111,6 +111,8 @@ def run(db: Path, raw: Path, max_pages: int, queries: list[str], registry: Path 
 
 
 def main() -> int:
+    from .settings import load_env
+    load_env()                       # keys from the git-ignored .env
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", type=Path, default=ROOT / "data" / "cache" / "market.sqlite")
     ap.add_argument("--raw", type=Path, default=ROOT / "data" / "raw")
