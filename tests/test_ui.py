@@ -219,3 +219,25 @@ def test_results_and_recording_outcomes(app2):
 def test_opportunities_page_runs_the_engine(app2, tmp_path, monkeypatch):
     h = app2.get("/opportunities")
     assert "Nothing collected yet" in h and "data/inbox" in h
+
+
+def test_costs_page_saves_your_numbers(app2, tmp_path, monkeypatch):
+    import json as _json
+    import cardman.ui as ui
+    monkeypatch.setattr(ui, "PROFILE_PATH", tmp_path / "profile.json")
+    h = app2.get("/costs")
+    assert "assumed" in h and "Selling fee" in h and 'name="INTL.inbound_shipping"' in h
+    form = {"home_currency": "USD", "target_return": "25", "capital_cost_monthly": "1", "research_value_per_hour": "20",
+            "exit.platform_fee_pct": "13.25", "exit.returns_reserve_pct": "2", "exit.payout_fx_spread_pct": "0",
+            "exit.outbound_shipping": "5", "grading.company": "psa", "grading.cost_home": "40", "grading.months_added": "3",
+            "ebay_queries": "yugioh LOB 1st\n\n遊戯王 レリーフ\n"}
+    for r in ("INTL", "JP", "TW"):
+        form.update({f"{r}.proxy_fee_pct": "0", f"{r}.payment_fx_spread_pct": "1.5", f"{r}.import_duty_pct": "0",
+                     f"{r}.inbound_shipping": "4"})
+    url, h = app2.post("/costs", form)
+    assert "Saved" in h and "Your own numbers" in h
+    d = _json.loads((tmp_path / "profile.json").read_text())
+    assert d["target_return"] == "0.25" and d["exit"]["platform_fee_pct"] == "0.1325" and d["grading"]["company"] == "PSA"
+    assert d["ebay_queries"] == ["yugioh LOB 1st", "遊戯王 レリーフ"] and "_assumed" not in d
+    url, h = app2.post("/costs", {**form, "target_return": "abc"})
+    assert "Not saved" in h

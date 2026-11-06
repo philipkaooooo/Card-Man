@@ -239,6 +239,7 @@ code{font-size:12px}
 .small{font-size:12px}
 .scanform{display:flex;flex-direction:column;gap:10px}
 .scanform .row{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
+.scanform h2{margin:8px 0 0}.scanform h3{margin:4px 0 0;font-size:13px;color:var(--fg2)}
 .scanform label.wide{width:100%}.scanform label.wide input{width:100%}
 .scanform label.check{flex-direction:row;align-items:center;gap:6px;font-size:13px}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 10px}
@@ -275,7 +276,8 @@ ON = ' class="on" aria-current="page"'
 NAV = (("Decide", (("opportunities", "Opportunities", "/opportunities"), ("deals", "Deals", "/"),
                    ("scan", "Scan a listing", "/scan"))),
        ("Evidence", (("evidence", "Evidence", "/evidence"), ("import", "Import sales", "/import"))),
-       ("Learn", (("results", "Results", "/results"),)))
+       ("Learn", (("results", "Results", "/results"),)),
+       ("Setup", (("costs", "Your costs", "/costs"),)))
 
 
 def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str = "", cur: str = "USD",
@@ -1056,7 +1058,7 @@ def view_scan(st: Store, now: datetime, qs: dict, catalog_fn, cur: str) -> str:
     except InvalidOperation:
         return head + form + f'<div class="note bad">Ask "{e(ask_s)}" is not a number.</div>'
     r = scan(title=title, body=body, ask=ask, ask_currency=ask_cur if ask is not None else None, store=st,
-             catalog=catalog, now=now, home=cur, include_synthetic=syn)
+             catalog=catalog, now=now, home=cur, include_synthetic=syn, costs=scan_costs(st, cur, now))
     m = lambda v, rnd="near": money(v.quantize(Decimal("1"), rounding=ROUND_FLOOR if rnd == "down" else ROUND_CEILING)
                                     if v is not None and rnd != "near" and abs(v) >= 100 else v, cur)
     cls = SCAN_STYLE.get(r.verdict, ("muted",))[0]
@@ -1127,8 +1129,8 @@ def view_scan(st: Store, now: datetime, qs: dict, catalog_fn, cur: str) -> str:
              f'<tr><td>Selling fee</td><td class="n">{pct(float(ex.get("platform_fee_pct", 0)) * 100)}</td></tr>'
              f'<tr><td>Outbound shipping</td><td class="n">{money(ex.get("outbound_shipping"), cur)}</td></tr>'
              f'<tr><td>Returns reserve</td><td class="n">{pct(float(ex.get("returns_reserve_pct", 0)) * 100)}</td></tr>'
-             '</tbody></table><p class="muted">Triage uses these defaults in the display currency. The deal page uses '
-             'the listing\'s own costs.</p></details></section>')
+             '</tbody></table><p class="muted">From <a href="/costs">Your costs</a> once saved (buying elsewhere route), otherwise defaults, in the display '
+             'currency. The deal page uses the listing\'s own costs.</p></details></section>')
     return head + form + verdict + tiles + sect_f + chart + table + assum
 
 
@@ -1450,6 +1452,132 @@ def view_opportunity(st: Store, key: str, now: datetime, token: str, cur: str) -
     return f'<h1>{e(d.get("title") or key)}</h1>' + card + tiles + '<div class="cols">' + side + chart + '</div>' + table + form
 
 
+# -- your costs (data/profile.json) -------------------------------------------------------------
+
+PROFILE_PATH = Path(__file__).resolve().parent.parent / "data" / "profile.json"
+ROUTE_LABEL = {"JP": "Buying from Japan (proxy)", "TW": "Buying in Taiwan", "INTL": "Buying elsewhere (eBay etc.)"}
+PCT_FIELDS = {"proxy_fee_pct": "Proxy / service fee", "payment_fx_spread_pct": "Card / PayPal FX spread",
+              "import_duty_pct": "Import duty"}
+AMT_FIELDS = {"inbound_shipping": "Shipping to you, per card"}
+EXIT_PCT = {"platform_fee_pct": "Selling fee", "returns_reserve_pct": "Returns reserve", "payout_fx_spread_pct": "Payout FX spread"}
+EXIT_AMT = {"outbound_shipping": "Shipping to the buyer"}
+
+
+def _pct_in(v) -> str:
+    return f"{Decimal(str(v or 0)) * 100:g}"
+
+
+def scan_costs(st: Store, cur: str, now: datetime) -> dict | None:
+    """Your saved costs (eBay-style route) in the display currency; None falls back to the scanner's defaults."""
+    if not PROFILE_PATH.exists():
+        return None
+    from datetime import timedelta
+    from .engine import load_profile
+    p = load_profile(PROFILE_PATH)
+    try:
+        k = FxTable(st.fx_rates(), max_age=timedelta(days=7)).convert(Decimal(1), p["home_currency"], cur, now)
+    except ValueError:
+        return None
+    route, ex = dict(p["routes"]["INTL"]), dict(p["exit"])
+    for d, key in ((route, "inbound_shipping"), (ex, "outbound_shipping")):
+        if key in d:
+            d[key] = str(Decimal(str(d[key])) * k)
+    return {"target_return": p["target_return"], "holding_months": "2", "capital_cost_monthly": p["capital_cost_monthly"],
+            "acquisition": route, "exit": ex}
+
+
+def view_costs(token: str) -> str:
+    from .engine import load_profile
+    p = load_profile(PROFILE_PATH if PROFILE_PATH.exists() else None)
+    assumed = p.get("_assumed", False)
+    cur = p.get("home_currency", "TWD")
+    note = ('<div class="note bad">These are <b>assumed</b> starting numbers, not yours. Every max-buy price depends on them: '
+            'correct them and save.</div>' if assumed else
+            '<div class="note ok">Your own numbers, saved in <code>data/profile.json</code> (kept on this computer only).</div>')
+
+    def num(name, val, unit, step="any"):
+        return (f'<input id="{e(name)}" name="{e(name)}" value="{e(val)}" inputmode="decimal" size="7" required>'
+                f'<span class="muted small"> {e(unit)}</span>')
+    rows = []
+    for r in ("INTL", "JP", "TW"):
+        route = (p.get("routes") or {}).get(r, {})
+        cells = "".join(f'<label>{e(lab)}{num(f"{r}.{k}", _pct_in(route.get(k)), "%")}</label>' for k, lab in PCT_FIELDS.items())
+        cells += "".join(f'<label>{e(lab)}{num(f"{r}.{k}", route.get(k, "0"), cur)}</label>' for k, lab in AMT_FIELDS.items())
+        rows.append(f'<h3>{e(ROUTE_LABEL[r])}</h3><div class="row">{cells}</div>')
+    ex = p.get("exit") or {}
+    exit_cells = "".join(f'<label>{e(lab)}{num(f"exit.{k}", _pct_in(ex.get(k)), "%")}</label>' for k, lab in EXIT_PCT.items())
+    exit_cells += "".join(f'<label>{e(lab)}{num(f"exit.{k}", ex.get(k, "0"), cur)}</label>' for k, lab in EXIT_AMT.items())
+    g = p.get("grading") or {}
+    opts = "".join(f'<option{" selected" if c == cur else ""}>{c}</option>' for c in ("TWD", "USD", "JPY"))
+    queries = "\n".join(p.get("ebay_queries") or [])
+    return ('<h1>Your costs</h1><p class="sub">What it really costs you to buy, hold and sell a card. The pay-up-to and '
+            'max-buy prices are only as good as these numbers.</p>' + note +
+            f'<section><form method="post" action="/costs" class="scanform"><input type="hidden" name="t" value="{e(token)}">'
+            f'<h2>Money</h2><div class="row"><label>Amounts below are in<select id="home_currency" name="home_currency">{opts}</select></label>'
+            f'<label>Target return{num("target_return", _pct_in(p.get("target_return")), "% on all-in cost")}</label>'
+            f'<label>Cost of money{num("capital_cost_monthly", _pct_in(p.get("capital_cost_monthly")), "% a month")}</label>'
+            f'<label>Your time is worth{num("research_value_per_hour", p.get("research_value_per_hour", "600"), cur + " / hour")}</label></div>'
+            '<h2>Buying</h2>' + "".join(rows) +
+            f'<h2>Selling</h2><div class="row">{exit_cells}</div>'
+            f'<h2>Grading</h2><div class="row"><label>Company<input id="grading.company" name="grading.company" value="{e(g.get("company", "PSA"))}" size="6"></label>'
+            f'<label>All-in cost per card{num("grading.cost_home", g.get("cost_home", "0"), cur + " (fee + shipping both ways)")}</label>'
+            f'<label>Adds{num("grading.months_added", g.get("months_added", 3), "months")}</label></div>'
+            f'<h2>eBay searches</h2><label class="wide">One search per line<textarea id="ebay_queries" name="ebay_queries" rows="6">{e(queries)}</textarea></label>'
+            '<div class="row"><button>Save my costs</button></div></form></section>')
+
+
+def save_costs(form: dict) -> str:
+    import json as _json
+    from .engine import load_profile
+    base = load_profile(PROFILE_PATH if PROFILE_PATH.exists() else None)
+    base.pop("_assumed", None)
+    base.pop("_note", None)
+
+    def pct(k):
+        v = Decimal(form[k].replace(",", "").strip())
+        if not (Decimal(-1) < v < Decimal(100)):
+            raise ValueError(f"{k}: {v}% is out of range")
+        return str(v / 100)
+
+    def amt(k):
+        v = Decimal(form[k].replace(",", "").strip())
+        if v < 0:
+            raise ValueError(f"{k} cannot be negative")
+        return str(v)
+    try:
+        cur = form.get("home_currency", "TWD")
+        if cur not in ("TWD", "USD", "JPY"):
+            raise ValueError("unknown currency")
+        base["home_currency"] = cur
+        base["target_return"] = pct("target_return")
+        base["capital_cost_monthly"] = pct("capital_cost_monthly")
+        base["research_value_per_hour"] = amt("research_value_per_hour")
+        routes = base.setdefault("routes", {})
+        for r in ("INTL", "JP", "TW"):
+            rt = routes.setdefault(r, {})
+            for k in PCT_FIELDS:
+                rt[k] = pct(f"{r}.{k}")
+            for k in AMT_FIELDS:
+                rt[k] = amt(f"{r}.{k}")
+        ex = base.setdefault("exit", {})
+        for k in EXIT_PCT:
+            ex[k] = pct(f"exit.{k}")
+        for k in EXIT_AMT:
+            ex[k] = amt(f"exit.{k}")
+        g = base.setdefault("grading", {})
+        g["company"] = form.get("grading.company", "PSA").strip().upper() or "PSA"
+        g["cost_home"] = amt("grading.cost_home")
+        g["months_added"] = int(Decimal(form.get("grading.months_added", "3")))
+        base["ebay_queries"] = [q.strip() for q in form.get("ebay_queries", "").splitlines() if q.strip()][:50]
+    except (KeyError, InvalidOperation) as x:
+        raise ValueError(f"every field needs a number ({x})")
+    PROFILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = PROFILE_PATH.with_suffix(".tmp")
+    tmp.write_text(_json.dumps(base, indent=1, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(PROFILE_PATH)
+    return "Saved. New valuations and the next engine check use these numbers."
+
+
 # -- actions ----------------------------------------------------------------------------------
 
 def import_bytes(st: Store, name: str, data: bytes, now: datetime) -> tuple[str, str]:
@@ -1566,6 +1694,8 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                 elif parts[0] == "opp" and len(parts) == 2:
                     k = unquote(parts[1])
                     self._page("opportunities", k, view_opportunity(st, k, now, token, self._cur()), qs)
+                elif parts == ["costs"]:
+                    self._page("costs", "Your costs", view_costs(token), qs)
                 elif parts == ["scan"]:
                     self._page("scan", "Scan", view_scan(st, now, qs, catalog, self._cur()), qs)
                 elif parts == ["results"]:
@@ -1653,6 +1783,11 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                         self._redirect(f"/opp/{quote(k)}", msg="Confirmed and re-analyzed.")
                     except (Exception, SystemExit) as x:
                         self._redirect(f"/opp/{quote(k)}", err=f"Not confirmed: {x}")
+                elif parts == ["costs"]:
+                    try:
+                        self._redirect("/costs", msg=save_costs(form))
+                    except ValueError as x:
+                        self._redirect("/costs", err=f"Not saved: {x}")
                 elif parts == ["outcome"]:
                     try:
                         self._redirect("/results", msg=record_outcome(st, form, now))

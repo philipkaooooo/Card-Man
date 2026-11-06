@@ -4,3 +4,4 @@ __pycache__/
 data/cache/
 data/raw/
 data/store/
+data/profile.json
