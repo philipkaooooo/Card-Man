@@ -20,7 +20,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -48,6 +48,7 @@ class SearchResult:
     raw_refs: list[str]
     total: int | None
     pages: int
+    titles: dict[str, str] = field(default_factory=dict)   # observation id -> seller's title
 
 
 def _ts(s: str | None) -> datetime | None:
@@ -164,6 +165,7 @@ class EbayBrowse:
         url = f"{SEARCH_URL}?{urllib.parse.urlencode(params)}"
         obs, refs, total, pages = [], [], None, 0
         seen: set[str] = set()
+        titles: dict[str, str] = {}
         while url and pages < max_pages:
             req = urllib.request.Request(url, headers={"Authorization": f"Bearer {tok}",
                                                        "X-EBAY-C-MARKETPLACE-ID": self.marketplace})
@@ -179,6 +181,7 @@ class EbayBrowse:
                 seen.add(item.get("itemId"))
                 obs.append(map_item(item, captured_at=now, raw_ref=ref, catalog=catalog,
                                     marketplace=self.marketplace, synthetic=synthetic))
+                titles[obs[-1].id] = item.get("title") or ""
             url = page.get("next")
             pages += 1
-        return SearchResult(obs, refs, total, pages)
+        return SearchResult(obs, refs, total, pages, titles)

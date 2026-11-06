@@ -20,11 +20,15 @@ from .economics import AcquisitionCosts, CeilingInputs, ExitCosts, buy_ceiling, 
 from .evidence import import_manual_csv, select_comps
 from .fx import FxRate, FxTable
 from .identity import ListingSignals, resolve
+from .verify import filter_comps
 from .workflow import evaluate
 
 
-def run(listing: dict, obs_csv: Path | None, now: datetime, allow_synthetic: bool = False, store_path: str | None = None) -> dict:
-    if listing.get("catalog_db"):
+def run(listing: dict, obs_csv: Path | None, now: datetime, allow_synthetic: bool = False, store_path: str | None = None,
+        catalog=None) -> dict:
+    if catalog is not None:
+        pass        # a long-running caller already holds the catalog in memory
+    elif listing.get("catalog_db"):
         from .identity_cache import IdentityCache
         cache = IdentityCache(listing["catalog_db"])
         if not cache.revision():
@@ -64,6 +68,8 @@ def run(listing: dict, obs_csv: Path | None, now: datetime, allow_synthetic: boo
         report["comp_pool"] = {"source": "store" if st is not None else "csv", "observations": len(pool)}
         comps, rejected = select_comps(pool, ident.printing.id, as_of=now, include_synthetic=allow_synthetic,
                                        grade_company=listing.get("grade_company"), grade=listing.get("grade"))
+        comps, failed = filter_comps(comps, pool, now)
+        rejected = rejected + failed
         for c in comps:
             prices.append(fx.convert(c.original_amount, c.currency, home, c.event_time))
     report["comps"] = [{"id": c.id, "date": c.event_time.isoformat(), "source": c.source, "type": c.evidence_type.value,
