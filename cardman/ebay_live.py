@@ -90,6 +90,7 @@ def run(db: Path, raw: Path, max_pages: int, queries: list[str], registry: Path 
     catalog = regression_catalog()
     store = Store(db)
     totals: Counter = Counter()
+    seen: set[str] = set()      # one item can match several searches in the same pass; store it once
     for q in queries:
         try:
             res = browse.search(q, catalog=catalog, category_ids=YGO_CCG_CATEGORY, max_pages=max_pages, now=now)
@@ -98,7 +99,9 @@ def run(db: Path, raw: Path, max_pages: int, queries: list[str], registry: Path 
                             authenticated=True)
             print(f"FAIL: search {q!r}: {e}", file=sys.stderr)
             return 4
-        new = sum(store.add_observation(o, now=now) for o in res.observations)
+        fresh = [o for o in res.observations if o.id not in seen]
+        seen.update(o.id for o in fresh)
+        new = sum(store.add_observation(o, now=now) for o in fresh)
         kinds = Counter(o.evidence_type.value for o in res.observations)
         totals.update(kinds)
         prices = sorted(float(o.original_amount) for o in res.observations if o.currency == "USD")

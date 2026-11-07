@@ -277,7 +277,7 @@ class EbayAdapter:
             return [], []
         from .ebay_browse import EbayBrowse, SourceUnavailable
         client = EbayBrowse(self.raw)
-        out, errors = [], []
+        out, errors, seen = [], [], set()
         for q in self.queries:
             try:
                 res = client.search(q, catalog=self.catalog, now=now)
@@ -285,6 +285,9 @@ class EbayAdapter:
                 errors.append(f"ebay '{q}': {x}")
                 continue
             for o in res.observations:
+                if o.id in seen:      # the same item matched an earlier search this pass
+                    continue
+                seen.add(o.id)
                 out.append(RawListing(source=o.source, listing_id=o.listing_id or o.id, title=res.titles.get(o.id) or q,
                                       price=o.original_amount, currency=o.currency,
                                       kind="bid" if o.evidence_type == EvidenceType.OBSERVED_BID else "ask", url=o.source_url,
