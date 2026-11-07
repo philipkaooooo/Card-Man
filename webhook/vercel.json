@@ -1,0 +1,5 @@
+{
+  "rewrites": [
+    { "source": "/api/marketplace/notifications", "destination": "/api/ebay/notifications" }
+  ]
+}

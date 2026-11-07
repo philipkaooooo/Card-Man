@@ -50,3 +50,27 @@ def test_rejected_keys_recorded(tmp_path):
                    opener=FakeOpener([], fail=[err]), sleep=lambda s: None)
     assert run(tmp_path / "m.sqlite", tmp_path / "raw", 1, ["q"], registry=reg, browse=b) == 3
     assert "401" in _row(reg)["failure_reason"]
+
+
+def test_item_matching_two_searches_in_one_run_is_one_observation(tmp_path):
+    from datetime import datetime, timezone
+    from decimal import Decimal
+    from cardman.ebay_browse import SearchResult
+    from cardman.ebay_live import run
+    from cardman.models import EvidenceType, MarketObservation
+    from cardman.store import Store
+
+    class Browse:
+        def token(self):
+            return "t"
+
+        def search(self, q, **kw):
+            t = kw["now"]
+            o = MarketObservation(id="same", evidence_type=EvidenceType.ACTIVE_ASKING, source="ebay_browse:EBAY_US", original_amount=Decimal(5), currency="USD",
+                                  event_time=t, capture_time=t, source_url="https://example.test/1", printing_candidates=(), raw_ref=f"page-for-{q}")
+            return SearchResult([o], [o.raw_ref], 1, 1)
+    reg = tmp_path / "r.json"
+    reg.write_text(json.dumps([{"source": "ebay_browse"}]))
+    db = tmp_path / "m.sqlite"
+    assert run(db, tmp_path / "raw", 1, ["a", "b"], registry=reg, browse=Browse()) == 0
+    assert Store(db).db.execute("SELECT COUNT(*) FROM observation").fetchone()[0] == 1

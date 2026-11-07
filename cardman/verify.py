@@ -102,7 +102,7 @@ def assess(observations: list[MarketObservation], as_of: datetime) -> dict[str, 
                     and all(a.original_amount < b.original_amount for a, b in zip(w, w[1:]))):
                 for o in w:
                     if SELLER_CHURN not in out[o.id].flags:
-                        flag(o, SELLER_CHURN, f"{seller} shows 3 rising sales inside 30 days: could be price painting.")
+                        flag(o, SELLER_CHURN, "One seller shows 3 rising sales inside 30 days: could be price painting.")
 
     for o in kept:
         later = [a for a in known if a.evidence_type in (EvidenceType.ACTIVE_ASKING, EvidenceType.OBSERVED_BID)

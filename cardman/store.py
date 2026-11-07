@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS snapshot (
     stage TEXT, payload_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS snapshot_printing (snapshot_id TEXT NOT NULL, printing_id TEXT NOT NULL,
     PRIMARY KEY (snapshot_id, printing_id));
+CREATE TABLE IF NOT EXISTS snapshot_redaction (snapshot_id TEXT PRIMARY KEY, redacted_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS invalidation (
     printing_id TEXT NOT NULL, reason TEXT NOT NULL, recorded_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS alert (
@@ -230,7 +231,8 @@ class Store:
         if not row:
             raise KeyError(sid)
         payload = _dec(json.loads(row[1]))
-        if content_hash({"listing_ref": row[0], "payload": payload})[:24] != sid:
+        redacted = self.db.execute("SELECT 1 FROM snapshot_redaction WHERE snapshot_id=?", (sid,)).fetchone()
+        if not redacted and content_hash({"listing_ref": row[0], "payload": payload})[:24] != sid:
             raise ImmutableViolation(f"snapshot {sid} content does not match its id")
         return payload
 

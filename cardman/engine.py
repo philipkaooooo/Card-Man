@@ -331,6 +331,11 @@ class Engine:
                     self.fx.sync_latest(base, (home,))
                 except Exception as x:
                     rep.errors.append(f"FX {base}/{home}: {x}")
+        try:
+            from .ebay_deletion import sync as sync_deletions
+            sync_deletions(databases=[Path(self.store_path), ROOT / "data" / "cache" / "market.sqlite"], raw=self.raw.root)
+        except Exception as x:   # stays queued online and is retried next pass
+            rep.errors.append(f"eBay deletions: {type(x).__name__}")
         new: list[RawListing] = []
         for route in (self.inbox, self.ebay):
             rep.routes.append(asdict(route.status()))
