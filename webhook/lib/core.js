@@ -123,7 +123,64 @@ export class Queue {
   remove(ids) { return ids.length ? this.cmd("HDEL", QUEUE, ...ids) : 0; }
 }
 
+// Firestore (Native mode) over REST with the service's own identity from the metadata server: no keys, no SDK.
+const METADATA = "http://metadata.google.internal/computeMetadata/v1";
+const FIRESTORE = "https://firestore.googleapis.com/v1";
+export const COLLECTION = "ebay_deletions";
+
+export class FirestoreQueue {
+  constructor({ project, database = "(default)", fetch: f = globalThis.fetch, now = Date.now }) {
+    Object.assign(this, { project, database, fetch: f, now, token: null, tokenUntil: 0 });
+  }
+  async auth() {
+    if (this.token && this.tokenUntil > this.now() + 60_000) return this.token;
+    const r = await this.fetch(`${METADATA}/instance/service-accounts/default/token`, { headers: { "Metadata-Flavor": "Google" } });
+    if (!r.ok) throw new UpstreamError(`metadata token: HTTP ${r.status}`);
+    const d = await r.json();
+    this.token = d.access_token;
+    this.tokenUntil = this.now() + Number(d.expires_in || 300) * 1000;
+    return this.token;
+  }
+  async projectId() {
+    if (this.project) return this.project;
+    const r = await this.fetch(`${METADATA}/project/project-id`, { headers: { "Metadata-Flavor": "Google" } });
+    if (!r.ok) throw new UpstreamError(`metadata project: HTTP ${r.status}`);
+    this.project = (await r.text()).trim();
+    return this.project;
+  }
+  async base() {
+    return `${FIRESTORE}/projects/${await this.projectId()}/databases/${this.database}/documents/${COLLECTION}`;
+  }
+  async call(url, init = {}) {
+    const r = await this.fetch(url, { ...init, headers: { Authorization: `Bearer ${await this.auth()}`, "Content-Type": "application/json", ...(init.headers || {}) } });
+    if (r.status === 404 && init.method === "DELETE") return null;
+    if (!r.ok) throw new UpstreamError(`firestore: HTTP ${r.status}`);
+    return r.status === 204 ? null : r.json();
+  }
+  static docId(id) { return createHash("sha256").update(String(id)).digest("hex"); }
+  async put(id, value) {
+    await this.call(`${await this.base()}/${FirestoreQueue.docId(id)}`, { method: "PATCH", body: JSON.stringify({ fields: { data: { stringValue: JSON.stringify(value) } } }) });
+  }
+  async list(limit) {
+    const d = await this.call(`${await this.base()}?pageSize=${Math.min(limit, 500)}`, { method: "GET" });
+    return (d?.documents || []).map((doc) => JSON.parse(doc.fields.data.stringValue));
+  }
+  async remove(ids) {
+    let n = 0;
+    for (const id of ids) {
+      await this.call(`${await this.base()}/${FirestoreQueue.docId(id)}`, { method: "DELETE" });
+      n += 1;
+    }
+    return n;
+  }
+}
+
+export function hasQueue(env) {
+  return env.QUEUE_BACKEND === "firestore" || Boolean(env.KV_REST_API_URL || env.UPSTASH_REDIS_REST_URL);
+}
+
 export function queueFromEnv(env, f) {
+  if (env.QUEUE_BACKEND === "firestore") return new FirestoreQueue({ project: env.FIRESTORE_PROJECT || null, database: env.FIRESTORE_DATABASE || "(default)", fetch: f });
   return new Queue({ url: env.KV_REST_API_URL || env.UPSTASH_REDIS_REST_URL, token: env.KV_REST_API_TOKEN || env.UPSTASH_REDIS_REST_TOKEN, fetch: f });
 }
 
@@ -171,7 +228,7 @@ export function notificationsHandler({ env = process.env, fetch: f = globalThis.
       if (req.method !== "POST") { res.setHeader("Allow", "GET, POST"); return send(res, 405, { error: "method not allowed" }); }
 
       const bad = validateConfig(env, POST_NEEDS);
-      if (bad || !(env.KV_REST_API_URL || env.UPSTASH_REDIS_REST_URL)) {
+      if (bad || !hasQueue(env)) {
         log.error(`config: ${bad || "no queue configured"}`);
         return send(res, 503, { error: "server not configured" });   // eBay retries; nothing is falsely acknowledged
       }

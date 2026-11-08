@@ -1,0 +1,7 @@
+test
+deploy.sh
+deploy-gcp.sh
+README.md
+.vercel
+node_modules
+.env*

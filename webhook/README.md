@@ -12,3 +12,11 @@ UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN, EBAY_DELETIONS_SECRET, NODEJS_
 
 Deploy: `./deploy.sh` (needs a Vercel login and an Upstash database). It ends with a live self-check and prints the URL.
 Tests: `npm test`.
+
+## Google Cloud (Cloud Run + Firestore)
+
+`server.js` serves the three routes on Cloud Run. With `QUEUE_BACKEND=firestore` the queue is the Firestore collection `ebay_deletions`
+(document id = SHA-256 of the notification id), reached with the service's own identity, so no key is stored for it.
+`./deploy-gcp.sh PROJECT [REGION]` enables the APIs, creates the database if missing, stores the four secrets in Secret Manager,
+deploys twice (the second time with EBAY_ENDPOINT_URL set to the real URL), then checks the challenge, a bad signature (412) and
+the locked deletions route (401) live before printing the URL.
