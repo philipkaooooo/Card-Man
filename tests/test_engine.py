@@ -260,3 +260,28 @@ def test_opportunity_pages_render_the_engine_queue(tmp_path):
     d = view_opportunity(st, "ebay:BUY", NOW + timedelta(minutes=2), "tok", "USD")
     assert "Every possibility" in d and "Confirm from the card itself" in d and "LOB-EN001" in d
     assert "$" in d                     # engine TWD amounts shown in USD at the stored rate
+
+
+def test_reference_prices_are_reused_for_a_week_and_failures_for_a_day(tmp_path):
+    import sqlite3
+    from cardman.market_sources import YgoprodeckReference
+    calls = []
+
+    def ok(url):
+        calls.append(url)
+        return {"set_price": "10", "set_rarity": "Ultra Rare"}
+    r = YgoprodeckReference(sqlite3.connect(":memory:"), get=ok)
+    r.price("LOB-EN001", NOW)
+    r.price("LOB-EN001", NOW + timedelta(days=6))
+    assert len(calls) == 1
+    r.price("LOB-EN001", NOW + timedelta(days=8))
+    assert len(calls) == 2
+
+    def down(url):
+        calls.append(url)
+        raise OSError("offline")
+    r2 = YgoprodeckReference(sqlite3.connect(":memory:"), get=down)
+    assert r2.price("X-EN001", NOW) is None and r2.price("X-EN001", NOW) is None
+    assert len(calls) == 3                                 # one failed lookup per day, not one per listing
+    r2.price("X-EN001", NOW + timedelta(days=1))
+    assert len(calls) == 4

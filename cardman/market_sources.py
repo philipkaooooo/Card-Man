@@ -19,7 +19,7 @@ import re
 import urllib.parse
 import urllib.request
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
 from pathlib import Path
@@ -313,15 +313,22 @@ class YgoprodeckReference:
             return json.loads(r.read())
 
     def status(self) -> RouteStatus:
-        return RouteStatus(self.name, True, "on, one lookup per code per day", self.capability)
+        return RouteStatus(self.name, True, "on, prices reused for a week per code", self.capability)
+
+    FRESH_DAYS = 7      # an aggregate guide price moves slowly; a lead does not need a daily refresh
 
     def price(self, code: str, now: datetime) -> tuple[Decimal, str] | None:
         day = now.date().isoformat()
-        row = self.db.execute("SELECT usd, rarity FROM reference_price WHERE code=? AND day=?", (code, day)).fetchone()
+        since = (now - timedelta(days=self.FRESH_DAYS)).date().isoformat()
+        # A price is reused for a week; an empty answer (or a failed lookup) only for the day it was asked.
+        row = self.db.execute("SELECT usd, rarity FROM reference_price WHERE code=? AND ((usd<>'' AND day>=?) OR day=?) "
+                              "ORDER BY day DESC LIMIT 1", (code, since, day)).fetchone()
         if row is None:
             try:
                 d = self.get(self.URL.format(code=urllib.parse.quote(code)))
             except Exception:
+                with self.db:
+                    self.db.execute("INSERT OR REPLACE INTO reference_price VALUES (?,?,?,?,?)", (code, day, "", "", ""))
                 return None
             usd = d.get("set_price") if isinstance(d, dict) else None
             row = (str(usd) if usd else "", d.get("set_rarity") or "" if isinstance(d, dict) else "")
