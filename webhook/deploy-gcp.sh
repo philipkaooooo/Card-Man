@@ -19,7 +19,11 @@ for k in EBAY_CLIENT_ID EBAY_CLIENT_SECRET EBAY_VERIFICATION_TOKEN EBAY_DELETION
   printf '%s' "$(get $k)" | $G secrets versions add "$k" --data-file=- >/dev/null
   $G secrets add-iam-policy-binding "$k" --member="serviceAccount:$SA" --role=roles/secretmanager.secretAccessor >/dev/null
 done
-$G projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$SA" --role=roles/datastore.user --condition=None >/dev/null
+# New projects no longer give the default compute account broad rights; Cloud Build runs as it and needs run.builder
+# (logs, source bucket, image registry). Firestore access for the running service is datastore.user.
+for role in roles/run.builder roles/datastore.user; do
+  $G projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$SA" --role="$role" --condition=None >/dev/null
+done
 
 SECRETS="EBAY_CLIENT_ID=EBAY_CLIENT_ID:latest,EBAY_CLIENT_SECRET=EBAY_CLIENT_SECRET:latest,EBAY_VERIFICATION_TOKEN=EBAY_VERIFICATION_TOKEN:latest,EBAY_DELETIONS_SECRET=EBAY_DELETIONS_SECRET:latest"
 deploy() {
