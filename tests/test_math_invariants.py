@@ -146,3 +146,17 @@ def test_lots_rank_by_what_they_name_not_one_flat_score(tmp_path):
     e.tick(ENGINE_NOW)
     pr = {k: _opp(e, f"ebay:{k}")["priority"] for k in ("L1", "L2", "L3")}
     assert pr["L2"] > pr["L1"] and pr["L3"] > pr["L1"]
+
+
+def test_max_buy_does_not_move_with_the_ask():
+    from datetime import datetime, timedelta, timezone
+    from decimal import Decimal as D
+    from cardman import pricing
+    from cardman.economics import AcquisitionCosts, ExitCosts
+    now = datetime(2026, 11, 1, tzinfo=timezone.utc)
+    sales = [pricing.Sale(now - timedelta(days=5 + 9 * i), 1000 + 37 * (i % 5)) for i in range(10)]
+    est = pricing.estimate(sales, now)
+    acq, ex = AcquisitionCosts(inbound_shipping=D(60)), ExitCosts(platform_fee_pct=D("0.13"), outbound_shipping=D(60))
+    caps = {pricing.risk_view(sales, est, D(ask), acq, ex, target_return=D("0.2"), capital_cost_monthly=D("0.01"), as_of=now).max_buy
+            for ask in (300, 500, 700, 900)}
+    assert len(caps) == 1
