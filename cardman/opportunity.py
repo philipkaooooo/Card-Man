@@ -21,6 +21,10 @@ from .models import IdentityStatus, MarketObservation
 from .verify import assess, filter_comps
 
 MAX_SCENARIOS = 40
+UNDERPRICED_SHARE = 0.8
+MIN_PRICED_SHARE = 0.5        # below this, a priced minority of the possibilities does not speak for the listing
+COMPETING_WINDOW_DAYS = 3      # share of identity probability that must be under max buy to call a listing underpriced
+COLLECTION_CUES = ("引退", "コレクション", "バインダー", "binder", "collection", "retired", "attic", "estate")
 OBSERVE, SPECTATE, QUALIFIED = "OBSERVE", "SPECTATE", "QUALIFIED"
 OPEN, SHELVED, REJECTED, ESCALATED = "OPEN", "SHELVED", "REJECTED", "ESCALATED"
 
@@ -32,6 +36,7 @@ class Valuation:
     comps: list[MarketObservation]
     estimate: pricing.PriceEstimate | None
     competing: int = 0
+    competing_ids: frozenset = frozenset()
 
 
 class PriceBook:
@@ -64,9 +69,27 @@ class PriceBook:
                                           trust[c.id].trust if c.id in trust else 1.0))
             except StaleRateError as x:
                 self.notes.append(f"no FX for {c.id}: {x}")
-        v = Valuation(printing_id, sales, comps, pricing.estimate(sales, self.now, bias=self.bias))
+        est = pricing.estimate(sales, self.now, bias=self.bias)
+        ids = self._competing(pool, est) if est else frozenset()
+        v = Valuation(printing_id, sales, comps, est, len(ids), ids)
         self.cache[k] = v
         return v
+
+
+    def _competing(self, pool: list[MarketObservation], est: pricing.PriceEstimate) -> frozenset:
+        """Live asks for exactly this printing, seen in the last few days, at or under the price we would resell at.
+        Buyers take the cheapest copy first, so each of these sells before ours does (the queue in months_to_sell)."""
+        from .models import EvidenceType
+        out = set()
+        for o in pool:
+            if (o.evidence_type == EvidenceType.ACTIVE_ASKING and len(o.printing_candidates) == 1 and o.listing_id
+                    and (self.now - o.capture_time).days <= COMPETING_WINDOW_DAYS and not o.synthetic_fixture):
+                try:
+                    if float(self.to_home(o.original_amount, o.currency, o.capture_time)) <= est.mid:
+                        out.add(o.listing_id)
+                except StaleRateError:
+                    pass
+        return frozenset(out)
 
 
 @dataclass
@@ -189,6 +212,11 @@ def evaluate_listing(raw: RawListing, an: ListingAnalysis, book: PriceBook, cata
                 share = 1 / len(variants)
             weights[v.id] = base_w.get(c.id, 1 / max(1, len(an.identity.candidates))) * share
     ranked = sorted(by_id, key=lambda i: -weights.get(i, 0))[:MAX_SCENARIOS]
+    all_w = sum(weights.values()) or 1.0
+    low_all = f"{raw.title} {raw.description}".lower()
+    graded = bool(raw.grade_company or getattr(an.parsed, "grade_company", None))
+    japanese = (getattr(an.parsed, "language", None) == "ja" or raw.market == "JP" or "japan" in low_all
+                or any("\u3040" <= ch <= "\u30ff" for ch in raw.title))
     scenarios: list[Scenario] = []
     for pid in ranked:
         p = by_id[pid]
@@ -196,12 +224,18 @@ def evaluate_listing(raw: RawListing, an: ListingAnalysis, book: PriceBook, cata
         sc = Scenario(pid, _label(p), weights.get(pid, 1 / max(1, len(by_id))), "none", n_sales=len(v.sales))
         if v.estimate:
             rv = pricing.risk_view(v.sales, v.estimate, ask_home, acq, ex, target_return=tgt, capital_cost_monthly=cap,
-                                   competing_listings=v.competing, confidence=float(P.get("confidence", 0.8)))
+                                   # the listing being valued is the copy we would buy, not a competitor
+                                   competing_listings=len(v.competing_ids - {raw.listing_id}), confidence=float(P.get("confidence", 0.8)),
+                                   as_of=book.now)
             sc.basis, sc.resale_low, sc.resale_mid = "sales", v.estimate.low, v.estimate.mid
-            sc.profit_low = float(ex.net(Decimal(str(round(v.estimate.low, 2))))) - all_in
-            sc.profit_mid = float(ex.net(Decimal(str(round(v.estimate.mid, 2))))) - all_in
+            # Money tied up until the card sells is a cost, the same one the max-buy price already charges.
+            carry = all_in * float(cap) * rv.months_held
+            sc.profit_low = float(ex.net(Decimal(str(round(v.estimate.low, 2))))) - all_in - carry
+            sc.profit_mid = float(ex.net(Decimal(str(round(v.estimate.mid, 2))))) - all_in - carry
             sc.max_buy, sc.p_loss, sc.risk_adjusted, sc.months_to_sell = (float(rv.max_buy) if rv.max_buy else None), rv.p_loss, rv.risk_adjusted_profit, rv.months_held
-        elif book.reference and p.set_code and p.region.value == "EN_TCG" and len(scenarios) < 5:
+        elif (book.reference and p.set_code and p.region.value == "EN_TCG" and len(scenarios) < 5 and not graded
+              and not japanese):
+            # A guide price is for an ungraded English card: never for a slab or a Japanese listing.
             ref = book.reference.price(p.set_code, now)
             if ref and ref[1].lower() == p.rarity.lower():
                 try:
@@ -213,27 +247,39 @@ def evaluate_listing(raw: RawListing, an: ListingAnalysis, book: PriceBook, cata
                     pass
         scenarios.append(sc)
 
-    priced = [s for s in scenarios if s.profit_mid is not None]
-    share = sum(s.weight for s in priced)
-    expected, best, evpi = None, None, 0.0
+    # Money figures come from sold evidence only. A guide price is a lead (below), never an expected profit.
+    priced = [s for s in scenarios if s.profit_mid is not None and s.basis == "sales"]
+    leads = [s for s in scenarios if s.profit_mid is not None and s.basis == "reference"]
+    share = sum(s.weight for s in priced) / all_w
+    expected, best, evpi, cond = None, None, 0.0, 0.0
     if priced:
-        norm = share or 1.0
-        expected = sum(s.weight * s.profit_mid for s in priced) / norm
+        # Conditional on being one of the priced prints, and only stated when they are most of the probability:
+        # a 4% priced slice must not stand for the whole listing.
+        cond = sum(s.weight * s.profit_mid for s in priced) / (share * all_w)
+        expected = cond if share >= MIN_PRICED_SHARE else None
         best = max(s.profit_mid for s in priced)
-        evpi = (sum(s.weight * max(0.0, s.profit_mid) for s in priced) / norm - max(0.0, expected)) * share
+        # Value of knowing which print it is, over absolute weights: unpriced possibilities add nothing to it.
+        evpi = (sum(s.weight * max(0.0, s.profit_mid) for s in priced) - max(0.0, sum(s.weight * s.profit_mid for s in priced))) / all_w
 
     # -- what kind of edge is this? -------------------------------------------------------------------------------
     sold_backed = [s for s in priced if s.basis == "sales"]
-    if any(s.max_buy is not None and float(ask_home) <= s.max_buy for s in sold_backed):
+    total_w = sum(s.weight for s in scenarios) or 1.0
+    cheap_w = sum(s.weight for s in sold_backed if s.max_buy is not None and float(ask_home) <= s.max_buy) / total_w
+    if cheap_w >= UNDERPRICED_SHARE:
         kinds.append("UNDERPRICED")
-        reasons.append("Ask is under the max-buy price for a printing it could be, on verified sales.")
+        reasons.append(f"Ask is under the max-buy price for {cheap_w:.0%} of what this listing could be, on verified sales.")
+    elif cheap_w > 0:
+        # Cheap only if it is one particular print: a bet on identity, which the check below can settle.
+        kinds.append("RIGHT_PRINT_ONLY")
+        reasons.append(f"Under max buy only if it is the right print ({cheap_w:.0%} of the probability). Confirm before buying.")
     if an.has("CODE_NAME_MISMATCH", "RARITY_NOT_ON_CODE", "PHOTO_CONTRADICTS_SELLER"):
         kinds.append("MISIDENTIFIED")
     if an.has("RARITY_UNSTATED", "PHOTO_ADDS_CODE") and best is not None and best > 0:
         kinds.append("HIDDEN_VARIANT")
     if an.has("SELLER_UNSURE"):
         kinds.append("SELLER_UNSURE")
-    if any(s.basis == "reference" and (s.profit_low or 0) > 0 for s in priced) and not sold_backed:
+    lead = max((s.profit_low / all_in for s in leads if (s.profit_low or 0) > 0), default=0.0)
+    if lead > 0 and not sold_backed:
         kinds.append("REFERENCE_GAP")
         reasons.append("Ask is well under a public aggregate price. An aggregate is a lead only: no sale backs it yet.")
 
@@ -241,15 +287,22 @@ def evaluate_listing(raw: RawListing, an: ListingAnalysis, book: PriceBook, cata
     if an.parsed.is_lot:
         lot_rows = lot_contents(f"{raw.title}\n{raw.description}", catalog)
         total = 0.0
+        net_total = 0.0
         for row in lot_rows:
             vals = [book.value(c) for c in row["candidates"][:MAX_SCENARIOS]]
             est = [v.estimate.low for v in vals if v.estimate]
-            row["value_low"] = min(est) if est else None
-            row["priced"] = bool(est)
-            total += row["value_low"] or 0.0
-        if total and float(ex.net(Decimal(str(round(total, 2))))) > all_in:
+            # A row is only worth its cheapest possible print, so every print it could be needs a price. Pricing it
+            # from the one print that happens to have sales would value "Blue-Eyes" at the LOB price.
+            complete = bool(est) and len(est) == len(vals) and len(row["candidates"]) <= MAX_SCENARIOS
+            row["value_low"] = min(est) if complete else None
+            row["priced"] = complete
+            if complete:
+                total += row["value_low"]
+                # Each card is sold on its own: its own fixed fee and postage, not one fee for the whole lot.
+                net_total += float(ex.net(Decimal(str(round(row["value_low"], 2)))))
+        if total and net_total > all_in:
             kinds.append("LOT_UNDERPRICED")
-            expected = float(ex.net(Decimal(str(round(total, 2))))) - all_in
+            expected = net_total - all_in
             best = max(best or 0.0, expected)
             reasons.append(f"Itemized cards resell above the whole lot's cost, on {sum(r['priced'] for r in lot_rows)} priced card(s).")
         else:
@@ -294,24 +347,45 @@ def evaluate_listing(raw: RawListing, an: ListingAnalysis, book: PriceBook, cata
         reasons.append("Listing already ended.")
         return result(OBSERVE, SHELVED, ask_home=float(ask_home), all_in_home=all_in, scenarios=scenarios, kinds=kinds)
     urgency = 1 + 3 * math.exp(-hours / 24) if hours is not None else 1.0
-    upside = max(0.0, expected or 0.0) + evpi
-    if not priced and kinds:
-        # Unpriced, but something looks off: worth one cheap look, no more.
-        upside = 60 * rate * 0.25
+    # Expected value of acting, scaled by how much of the listing the sold evidence covers.
+    # The priced part counts for exactly its probability; what is unpriced adds nothing until it has sales.
+    upside = share * max(0.0, cond) + evpi
+    # "It is a lot" is a format, not an edge. An unpriced lot is worth a look only when something says it is
+    # underpriced bulk: a collection or binder being cleared out, or early-era cards.
+    low_text = f"{raw.title} {raw.description}".lower()
+    if "LOT" in kinds and (getattr(an.parsed, "vintage_cues", ()) or any(c in low_text for c in COLLECTION_CUES)):
+        kinds.append("COLLECTION")
+    edge = [k for k in kinds if k != "LOT"]
+    look = 60 * rate * 0.25          # what one quick look is worth when something is off but nothing is priced
+    if not priced and edge:
+        upside = look
+    if "REFERENCE_GAP" in kinds:
+        # A lead ranks by how far under the guide it is, capped: a guide price can be wildly wrong (prize cards, typos).
+        upside = max(upside, look * min(2.0, lead))
+    if "LOT" in kinds and not priced and edge:
+        # Triage, not value: more named cards, a seller who does not know what they have, early-era cards and a
+        # low ask per card make a lot more worth opening.
+        named = len(lot_rows)
+        per_card = (float(ask_home) / an.parsed.lot_size) if getattr(an.parsed, "lot_size", None) else None
+        # Vintage bulk resells around TWD 5-10 a card: a lot near or under that per card is cheap, far above it is not.
+        cheap = min(3.0, max(0.5, 10.0 / per_card)) if per_card else 1.0
+        upside = look * (0.5 + 0.3 * min(named, 10) + (1.0 if an.has("SELLER_UNSURE") else 0)
+                         + (0.5 if getattr(an.parsed, "vintage_cues", ()) else 0)) * cheap
     cheapest = min((a.cost_home for a in actions), default=0.0)
     priority = max(0.0, urgency * upside * (0.5 + 0.5 * share) - cheapest)
 
     # -- stage ---------------------------------------------------------------------------------------------------
     stage, status = OBSERVE, SHELVED
-    if kinds or (best is not None and best > 0):
+    if edge or (best is not None and best > 0):
         stage, status = SPECTATE, OPEN
     if status == OPEN and upside < cheapest:
         status = SHELVED
         reasons.append("Further checks would cost more than they could change the outcome.")
-    if not kinds and best is not None and best <= 0:
+    if not edge and best is not None and best <= 0:
         reasons.append("Even the best priced scenario loses money at this ask.")
-    if not priced and not kinds:
-        reasons.append("No sales or reference for any printing it could be; nothing here says it is special.")
+    if not priced and not edge:
+        reasons.append("No sales or reference for any printing it could be; nothing here says it is special."
+                       if "LOT" not in kinds else "Lot with no priced cards and no sign of underpriced bulk: shelved until a card list arrives.")
     return result(stage, status, ask_home=float(ask_home), all_in_home=all_in, scenarios=scenarios, expected_profit=expected, best_profit=best,
                   evpi=evpi, priority=priority, priced_share=share, research=actions if status == OPEN else [],
                   printing_id=resolved.id if resolved else None, lot=lot_rows, grading=gr)

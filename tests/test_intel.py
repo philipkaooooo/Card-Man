@@ -100,3 +100,16 @@ def test_print_dates_separate_original_from_reprint(tmp_path):
     assert d.describe(4007, "SDK-E001")["is_original"] is False
     assert d.describe(4007, "XXX-EN001")["is_original"] is None
     assert len(calls) == 1      # cached, as the API asks
+
+
+def test_old_printed_names_and_honest_rarity_wording_are_not_misidentifications():
+    from cardman.intel import claim_fits
+    from cardman.listing_parser import parse_listing_text
+    assert claim_fits("Common", "Short Print") and claim_fits("Secret Rare", "Prismatic Secret Rare")
+    assert not claim_fits("Ultra Rare", "Secret Rare")
+    assert parse_listing_text("Mystical Space Typhoon HL2-EN002 Parallel Ultra Rare").rarities == ("Ultra Parallel Rare",)
+
+
+def test_a_fuzzy_name_never_accuses_the_seller_of_a_wrong_code():
+    a = analyze("Blue-Eyes Whte Dragn LOB-EN005", CATALOG)     # typo name; LOB-EN005 is Dark Magician
+    assert not a.has("CODE_NAME_MISMATCH")

@@ -22,7 +22,7 @@ RARITY_TERMS: list[tuple[str, str]] = [
     ("Extra Secret Rare", r"extra secret(?: rare)?|エクストラシークレット(?:レア)?|エクシク"),
     ("20th Secret Rare", r"20th secret(?: rare)?|20thシークレット(?:レア)?|20thシク"),
     ("Secret Parallel Rare", r"secret parallel(?: rare)?|シークレットパラレル(?:レア)?|シクパラ"),
-    ("Ultra Parallel Rare", r"ultra parallel(?: rare)?|ウルトラパラレル(?:レア)?|ウルパラ"),
+    ("Ultra Parallel Rare", r"ultra parallel(?: rare)?|parallel ultra(?: rare)?|ウルトラパラレル(?:レア)?|ウルパラ"),
     ("Super Parallel Rare", r"super parallel(?: rare)?|スーパーパラレル(?:レア)?|スーパラ"),
     ("Normal Parallel Rare", r"normal parallel(?: rare)?|ノーマルパラレル(?:レア)?|ノーパラ"),
     ("Starlight Rare", r"starlight(?: rare)?|\bstr\b|スターライト(?:レア)?|スタレ"),

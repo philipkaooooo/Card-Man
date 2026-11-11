@@ -6,13 +6,24 @@ expensive printing sharing a code, counterfeit language, photo text that disagre
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import re
+from dataclasses import dataclass, field, replace
 
 from .identity import Catalog, IdentityResult, ListingSignals, normalize_name, parse_set_code, resolve
 from .listing_parser import ParsedListing, parse_listing_text
 from .models import IdentityStatus, Printing, Region
 
 BLOCK, WARN, UPSIDE, INFO = "BLOCK", "WARN", "UPSIDE", "INFO"
+
+# What a careful seller may truthfully call a printing's rarity. Short Prints are Commons on the card; older
+# Prismatic Secret Rares were sold as "Secret Rare"; Parallel versions are still that rarity underneath.
+CLAIM_COMPATIBLE = {"Common": {"Short Print", "Super Short Print"}, "Secret Rare": {"Prismatic Secret Rare"},
+                    "Ultra Rare": {"Ultra Parallel Rare"}, "Super Rare": {"Super Parallel Rare"},
+                    "Rare": {"Rare Parallel Rare"}}
+
+
+def claim_fits(claim: str, rarity: str) -> bool:
+    return claim == rarity or rarity in CLAIM_COMPATIBLE.get(claim, ())
 
 
 @dataclass(frozen=True)
@@ -46,7 +57,7 @@ def _weights(cands: list[Printing], parsed: ParsedListing) -> dict[str, float]:
     for p in cands:
         w = 1.0
         if parsed.rarities:
-            w *= 3.0 if p.rarity in parsed.rarities else 0.5
+            w *= 3.0 if any(claim_fits(c, p.rarity) for c in parsed.rarities) else 0.5
         if parsed.editions and p.edition:
             w *= 3.0 if p.edition in parsed.editions else 0.5
         if parsed.language == "ja":
@@ -58,6 +69,32 @@ def _weights(cands: list[Printing], parsed: ParsedListing) -> dict[str, float]:
     return {k: v / t for k, v in raw.items()}
 
 
+_JOINER = re.compile(r"\s(?:&|\+|and|w/|with|×|x)\s|[&+＆＋、]")
+
+
+def _names_several_cards(title: str, catalog: Catalog) -> bool:
+    """"Raigeki + Change of Heart & Monster Reborn" is three cards. Needs two different exact card names AND a joiner,
+    so a single card whose name contains another ("Dark Magician Girl") or a title naming a character stays single."""
+    if not _JOINER.search(title):
+        return False
+    fams, notes = catalog.family_matches(title)
+    return len(fams) >= 2 and not notes
+
+
+def _lot_only_from_product_name(text: str, parsed: ParsedListing, catalog: Catalog) -> bool:
+    """"Original Artwork Collection" or "Legendary Collection" is a product, not a lot of cards."""
+    from .listing_parser import LOT_CUES, _cues
+    low = f" {text.lower()} "
+    cues = set(_cues(low, LOT_CUES))
+    if cues - {"collection"} or (parsed.lot_size or 0) >= 2 or len(parsed.set_codes) >= 3:
+        return False
+    names = catalog.__dict__.get("_collection_products")
+    if names is None:
+        names = {(p.product_name or "").lower() for p in catalog.printings if "collection" in (p.product_name or "").lower()}
+        catalog.__dict__["_collection_products"] = names
+    return any(n and n in low for n in names)
+
+
 def analyze(title: str, catalog: Catalog, *, description: str = "", verified: dict | None = None,
             ocr_codes: tuple[str, ...] = ()) -> ListingAnalysis:
     """`verified` holds ListingSignals fields a person or the photos confirmed (printed_set_code, verified_*).
@@ -65,6 +102,10 @@ def analyze(title: str, catalog: Catalog, *, description: str = "", verified: di
     verified = dict(verified or {})
     parsed = parse_listing_text(f"{title}\n{description}" if description else title)
     title_codes = parse_listing_text(title).set_codes
+    if parsed.is_lot and _lot_only_from_product_name(f"{title} {description}", parsed, catalog):
+        parsed = replace(parsed, is_lot=False)
+    if not parsed.is_lot and _names_several_cards(title, catalog):
+        parsed = replace(parsed, is_lot=True)
     findings: list[Finding] = []
 
     if parsed.counterfeit_cues:
@@ -89,11 +130,12 @@ def analyze(title: str, catalog: Catalog, *, description: str = "", verified: di
         findings.append(Finding("SEVERAL_CODES", WARN, f"Several set codes in one listing: {', '.join(known)}."))
 
     sig_title = title
-    fam_ids, _ = catalog.family_matches(title)
+    fam_ids, fuzzy = catalog.family_matches(title)
     # Named card vs the code's real owner: the classic misidentification, in either direction.
     if seller_code:
         owners = {p.family_id for p in catalog.by_code[seller_code]}
-        if fam_ids and not (fam_ids & owners):
+        # A typo-matched name ("B. Dragon" ~ "Baby Dragon") is too weak to accuse the seller of a wrong code.
+        if fam_ids and not fuzzy and not (fam_ids & owners):
             owner_names = ", ".join(sorted(catalog.families[f].names.get("en") or catalog.families[f].names.get("ja", f)
                                            for f in owners if f in catalog.families))
             findings.append(Finding("CODE_NAME_MISMATCH", WARN,
@@ -127,8 +169,8 @@ def analyze(title: str, catalog: Catalog, *, description: str = "", verified: di
     if code_cands and not parsed.is_lot:
         if parsed.rarities:
             have = {p.rarity for p in code_cands}
-            missing = [r for r in parsed.rarities if r not in have]
-            if missing and not (set(parsed.rarities) & have):
+            missing = [r for r in parsed.rarities if not any(claim_fits(r, h) for h in have)]
+            if missing and len(missing) == len(parsed.rarities):
                 findings.append(Finding("RARITY_NOT_ON_CODE", WARN,
                                         f"{code_cands[0].set_code} was printed as {', '.join(sorted(have))}, "
                                         f"never as {', '.join(missing)}. Rarity is wrong, or the code is."))
@@ -160,7 +202,7 @@ def lot_contents(text: str, catalog: Catalog) -> list[dict]:
     """Best-effort itemization of a lot, line by line or comma by comma. Each row stays a claim."""
     import re
     rows = []
-    for seg in re.split(r"[\n,、，/;；・]+", text):
+    for seg in re.split(r"[\n,、，/;；・&＆+＋]+", text):
         seg = seg.strip()
         if len(seg) < 3:
             continue
