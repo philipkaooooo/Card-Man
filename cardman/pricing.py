@@ -133,7 +133,9 @@ def risk_view(sales: list[Sale], est: PriceEstimate, ask: Decimal, acquisition: 
     # Recentre on the estimate so learned bias and trend carry into every draw.
     base = statistics.median(s.price for s in sales) or 1.0
     scale = est.mid / base
-    seed = int(hashlib.sha256(f"{est.mid}{ask}{len(sales)}".encode()).hexdigest()[:12], 16)
+    # The seed depends on the sales, not the ask: the same resale draws price every ask, so max buy is one number for a
+    # card instead of moving with whatever the seller happens to ask.
+    seed = int(hashlib.sha256(repr((est.mid, sorted((s.when.isoformat(), s.price, s.trust) for s in sales))).encode()).hexdigest()[:12], 16)
     rng = random.Random(seed)
     # Same weights as the estimate: trust, and recency when the decision time is known.
     if as_of is not None:
