@@ -93,3 +93,14 @@ def test_catalog_from_cache_resolves_like_source(tmp_path):
     res = resolve(ListingSignals(title="青眼の白龍", printed_set_code="LB-01", card_language="ja"), cache.catalog())
     assert res.status == IdentityStatus.RESOLVED
     assert res.printing.source_refs[0].startswith("yaml_yugi@")
+
+
+def test_opening_the_cache_leaves_no_write_lock_behind(tmp_path):
+    import sqlite3
+    from cardman.identity_cache import IdentityCache
+    p = tmp_path / "c.sqlite"
+    first = IdentityCache(p)                 # stays open, as a long-running UI keeps it
+    other = sqlite3.connect(p, timeout=0.2)
+    with other:
+        other.execute("CREATE TABLE IF NOT EXISTS probe (x)")   # would raise "database is locked" before the fix
+    assert first.revision() is None

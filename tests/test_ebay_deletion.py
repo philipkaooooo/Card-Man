@@ -139,3 +139,13 @@ def test_stored_hash_of_a_seller_is_erased_too(tmp_path):
     purge([{"notificationId": "n", "username": "hashed_user"}], databases=[p], raw=tmp_path / "none", log_db=p)
     st = Store(p)
     assert st.original("o1").seller_ref is None and st.original("o2").seller_ref == seller_token("someone_else")
+
+
+def test_engine_forgets_decoded_records_after_a_deletion_sync(tmp_path, monkeypatch):
+    from tests.test_engine import make, NOW as ENOW
+    import cardman.ebay_deletion as m
+    e = make(tmp_path)
+    e.store.__dict__["_original_memo"] = {"x": object()}
+    monkeypatch.setattr(m, "sync", lambda **kw: {"configured": True, "processed": 1, "rows": 1, "files": 0})
+    e.tick(ENOW)
+    assert "x" not in e.store.__dict__.get("_original_memo", {})

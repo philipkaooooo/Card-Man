@@ -99,9 +99,13 @@ class IdentityCache:
     def __init__(self, db_path: Path | str):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(self.db_path)
+        self.db = sqlite3.connect(self.db_path, timeout=30)
         self.db.executescript(_SCHEMA)
-        self._meta_set("cache_schema_version", str(CACHE_SCHEMA_VERSION), only_if_missing=True)
+        # Write only when missing, and commit: an open write here used to hold the file's lock for the life of the
+        # process (a long-running UI blocked every sync and every other reader that tried to open the cache).
+        if self._meta_get("cache_schema_version") is None:
+            with self.db:
+                self._meta_set("cache_schema_version", str(CACHE_SCHEMA_VERSION), only_if_missing=True)
 
     # -- meta ----------------------------------------------------------------------------------
     def _meta_get(self, key: str) -> str | None:

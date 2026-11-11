@@ -113,6 +113,10 @@ def analyze(title: str, catalog: Catalog, *, description: str = "", verified: di
                                 + ", ".join(parsed.counterfeit_cues)))
     if parsed.not_a_card_cues and not parsed.set_codes:
         findings.append(Finding("NOT_A_CARD", BLOCK, "Looks like an accessory, not a card: " + ", ".join(parsed.not_a_card_cues)))
+    # Rush Duel is a different game: its codes carry "RD/" and its foils are "Rush Rare". Never a Duel Monsters lead,
+    # whatever card name the title also matches.
+    if any(c.upper().startswith("RD/") for c in parsed.set_codes) or re.search(r"rush\s*(?:duel|rare)|ラッシュ", parsed.text, re.I):
+        findings.append(Finding("OUT_OF_SCOPE", BLOCK, "Rush Duel card: a separate game, not Duel Monsters."))
     if parsed.language in ("ko", "zh"):
         findings.append(Finding("OUT_OF_SCOPE", BLOCK, f"Language '{parsed.language}' is outside JP OCG / EN TCG."))
     if parsed.language == "asian_en":

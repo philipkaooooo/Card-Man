@@ -113,3 +113,9 @@ def test_old_printed_names_and_honest_rarity_wording_are_not_misidentifications(
 def test_a_fuzzy_name_never_accuses_the_seller_of_a_wrong_code():
     a = analyze("Blue-Eyes Whte Dragn LOB-EN005", CATALOG)     # typo name; LOB-EN005 is Dark Magician
     assert not a.has("CODE_NAME_MISMATCH")
+
+
+def test_rush_duel_is_blocked_even_when_a_duel_monsters_name_matches():
+    for t in ("Harpie Lady Rush Rare RD/KP01-JP001", "Blue-Eyes White Dragon ラッシュデュエル", "Dark Magician Rush Duel promo"):
+        a = analyze(t, CATALOG)
+        assert a.blocked and a.has("OUT_OF_SCOPE")

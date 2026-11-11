@@ -273,7 +273,8 @@ CURRENCIES = ("USD", "TWD")
 
 
 ON = ' class="on" aria-current="page"'
-NAV = (("Decide", (("opportunities", "Opportunities", "/opportunities"), ("deals", "Deals", "/"),
+NAV = (("Browse", (("home", "Home", "/"), ("search", "Card search", "/search"))),
+       ("Decide", (("opportunities", "Opportunities", "/opportunities"), ("deals", "Deals", "/deals"),
                    ("scan", "Scan a listing", "/scan"))),
        ("Evidence", (("evidence", "Evidence", "/evidence"), ("import", "Import sales", "/import"))),
        ("Learn", (("results", "Results", "/results"),)),
@@ -281,7 +282,13 @@ NAV = (("Decide", (("opportunities", "Opportunities", "/opportunities"), ("deals
 
 
 def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str = "", cur: str = "USD",
-         path: str = "/") -> bytes:
+         path: str = "/", theme: str = "market", q: str = "") -> bytes:
+    from .ui_home import HOME_CSS, THEMES, header_search
+    theme = theme if theme in THEMES else "market"
+    themes = ('<span class="themes" role="group" aria-label="Look">' + "".join(
+        f'<a href="/theme?{urlencode({"t": t, "back": path})}" class="{"on" if t == theme else ""}">{t.title()}</a>'
+        for t in THEMES) + '</span>')
+    hsearch = "" if nav == "home" else f'<div class="hsearch">{header_search(q)}</div>'
     groups = []
     for label, items in NAV:
         links = "".join(f'<a href="{h}"{ON if k == nav else ""}>{e(t)}</a>' for k, t, h in items)
@@ -292,9 +299,9 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     here = next((t for _, items in NAV for k, t, _h in items if k == nav), "Menu")
     flash = (f'<div class="note ok">{e(msg)}</div>' if msg else "") + (f'<div class="note bad">{e(err)}</div>' if err else "")
     tz = datetime.now().astimezone().strftime("UTC%z")
-    return (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
+    return (f'<!doctype html><html lang="en" data-theme="{"vault" if theme == "vault" else "light"}"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)} · CardMan</title>'
-            f'<style>{CSS}</style></head><body><header><b class="logo">CardMan</b>{curs}'
+            f'<style>{CSS}{HOME_CSS}</style></head><body><header><a class="logo" href="/"><b>CardMan</b></a>{curs}{themes}{hsearch}'
             f'<span class="store">{e(store)} · times {e(tz)}</span></header>'
             f'<div class="shell"><aside><details class="menu" open><summary>{e(here)}</summary>{"".join(groups)}</details></aside>'
             f'<main>{flash}{body}</main></div><script src="/static/ui.js"></script></body></html>').encode()
@@ -1614,8 +1621,22 @@ def reevaluate(st: Store, store_path: str, sid: str, now: datetime) -> str:
 
 # -- server -----------------------------------------------------------------------------------
 
-def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezone.utc), catalog=None):
+def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezone.utc), catalog=None, cards=None, images=None):
     """catalog: a zero-argument callable returning the identity Catalog (loaded once), or None."""
+    from .cardinfo import CardIndex, ImageCache
+    cards = cards or CardIndex(catalog=catalog)
+    images = images or ImageCache()
+
+    def _book(st, now):
+        """Sold-evidence pricing for card pages; None if costs or rates are not set up yet."""
+        try:
+            from .engine import load_profile
+            from .fx_store import FxStore
+            from .opportunity import PriceBook
+            return PriceBook(st, FxStore(store_path), load_profile(), now)
+        except Exception:
+            return None
+
     class H(BaseHTTPRequestHandler):
         server_version = "CardMan"
 
@@ -1628,7 +1649,9 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
             self.send_header("Content-Length", str(len(body)))
             self.send_header("X-Frame-Options", "DENY")
             self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; "
-                             "script-src 'self'; form-action 'self'")
+                             "script-src 'self'; img-src 'self' data:; connect-src 'self'; form-action 'self'")
+            if ctype.startswith("image/"):
+                self.send_header("Cache-Control", "public, max-age=604800")
             self.send_header("Referrer-Policy", "no-referrer")
             self.end_headers()
             self.wfile.write(body)
@@ -1648,12 +1671,20 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     return v
             return CURRENCIES[0]
 
+        def _theme(self) -> str:
+            for part in (self.headers.get("Cookie") or "").split(";"):
+                k, _, v = part.strip().partition("=")
+                if k == "theme" and v in ("market", "vault"):
+                    return v
+            return "market"
+
         def _page(self, nav, title, body, qs):
             u = urlsplit(self.path)
             back = u.path + ("?" + urlencode({k: v[0] for k, v in qs.items() if k not in ("msg", "err")})
                              if any(k not in ("msg", "err") for k in qs) else "")
             self._send(200, page(title, body, nav=nav, store=store_path, cur=self._cur(), path=back,
-                                 msg=qs.get("msg", [""])[0], err=qs.get("err", [""])[0]))
+                                 msg=qs.get("msg", [""])[0], err=qs.get("err", [""])[0], theme=self._theme(),
+                                 q=qs.get("q", [""])[0][:120] if nav == "search" else ""))
 
         def do_GET(self):
             u = urlsplit(self.path)
@@ -1663,7 +1694,33 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
             now = clock()
             if parts == ["static", "ui.js"]:
                 st.db.close()
-                return self._send(200, JS.encode(), "text/javascript; charset=utf-8")
+                from .ui_home import HOME_JS
+                return self._send(200, (JS + HOME_JS).encode(), "text/javascript; charset=utf-8")
+            if len(parts) == 3 and parts[:2] == ["img", "card"] and parts[2].endswith(".jpg"):
+                st.db.close()
+                body, ctype = images.artwork(parts[2][:-4], qs.get("size", [""])[0])
+                return self._send(200, body, ctype)
+            if len(parts) == 3 and parts[:2] == ["img", "scan"]:
+                st.db.close()
+                name = unquote(parts[2])
+                body, ctype = images.scan(name) if cards.known_scan(name) else images.scan("")
+                return self._send(200, body, ctype)
+            if parts == ["api", "suggest"]:
+                st.db.close()
+                from .ui_home import suggest_json
+                return self._send(200, suggest_json(cards, qs.get("q", [""])[0][:80]), "application/json; charset=utf-8")
+            if parts == ["theme"]:
+                st.db.close()
+                t = qs.get("t", [""])[0]
+                back = qs.get("back", ["/"])[0]
+                if not back.startswith("/") or back.startswith("//"):
+                    back = "/"
+                self.send_response(303)
+                if t in ("market", "vault"):
+                    self.send_header("Set-Cookie", f"theme={t}; Path=/; SameSite=Lax; Max-Age=31536000")
+                self.send_header("Location", back)
+                self.send_header("Content-Length", "0")
+                return self.end_headers()
             if parts == ["currency"]:
                 st.db.close()
                 c = qs.get("c", [""])[0]
@@ -1678,7 +1735,24 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                 return self.end_headers()
             try:
                 if not parts:
+                    from .ui_home import view_home
+                    self._page("home", "Home", view_home(st, cards, now, self._cur(), self._theme()), qs)
+                elif parts == ["deals"]:
                     self._page("deals", "Deals", view_deals(st, now, self._cur()), qs)
+                elif parts == ["search"]:
+                    from .ui_home import view_search
+                    q = qs.get("q", [""])[0][:120]
+                    hits = cards.search(q, 2) if q else []
+                    if len(hits) == 1 and hits[0].score >= 90 or (len(hits) == 2 and hits[0].score >= 95 > hits[1].score + 25):
+                        self.send_response(303)
+                        self.send_header("Location", f"/card/{hits[0].passcode}")
+                        self.send_header("Content-Length", "0")
+                        return self.end_headers()
+                    self._page("search", q or "Card search", view_search(cards, q), qs)
+                elif parts[0] == "card" and len(parts) == 2 and parts[1].isdigit():
+                    from .ui_home import view_card
+                    self._page("search", (cards.card(parts[1]) or {}).get("name_en") or parts[1],
+                               view_card(st, cards, parts[1], now, self._cur(), book=_book(st, now), catalog=catalog() if catalog else None), qs)
                 elif parts[0] == "deal" and len(parts) == 2:
                     self._page("deals", parts[1], view_deal(st, parts[1], now, token, self._cur()), qs)
                 elif parts == ["evidence"]:
