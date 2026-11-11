@@ -143,7 +143,8 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD") -
 
         recent = st.db.execute(
             "SELECT l.key, l.title, l.price, l.currency, o.payload_json FROM listing l LEFT JOIN opportunity o ON o.key=l.key "
-            "WHERE l.ended_at IS NULL AND l.kind IN ('ask','bid','auction') ORDER BY l.first_seen DESC, l.rowid DESC LIMIT 200").fetchall()
+            "WHERE l.ended_at IS NULL AND l.kind IN ('ask','bid','auction') AND COALESCE(o.status,'')<>'REJECTED' "
+            "ORDER BY l.first_seen DESC, l.rowid DESC LIMIT 200").fetchall()
         rt = []
         for key, title, price, currency, pj in recent:
             p = json.loads(pj) if pj else None
