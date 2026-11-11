@@ -181,6 +181,14 @@ class Store:
                             (obs_id, status, reason, actor, _ts(now or _now())))
 
     def original(self, obs_id: str) -> MarketObservation:
+        """The record as first written. Records are write-once, so each is decoded once per Store (a request or a pass);
+        the same ask is linked to many candidate printings and was decoded again for each one."""
+        memo = self.__dict__.setdefault("_original_memo", {})
+        if obs_id not in memo:
+            memo[obs_id] = self._original_uncached(obs_id)
+        return memo[obs_id]
+
+    def _original_uncached(self, obs_id: str) -> MarketObservation:
         row = self.db.execute("SELECT data_json FROM observation WHERE id=?", (obs_id,)).fetchone()
         if not row:
             raise KeyError(obs_id)

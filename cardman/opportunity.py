@@ -20,6 +20,8 @@ from .market_sources import RawListing
 from .models import IdentityStatus, MarketObservation
 from .verify import assess, filter_comps
 
+# Bump when the rules change, so the engine re-analyzes listings it would otherwise skip as unchanged.
+ANALYSIS_VERSION = "2026-11-12.1"
 MAX_SCENARIOS = 40
 UNDERPRICED_SHARE = 0.8
 MIN_PRICED_SHARE = 0.5        # below this, a priced minority of the possibilities does not speak for the listing

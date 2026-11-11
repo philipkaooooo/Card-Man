@@ -27,7 +27,7 @@ from .intel import analyze
 from .ledger import Ledger
 from .market_sources import EbayAdapter, InboxAdapter, RawListing, YgoprodeckReference, from_record, market_for
 from .models import COMP_ELIGIBLE, EvidenceType, IdentityStatus
-from .opportunity import ESCALATED, OBSERVE, OPEN, QUALIFIED, REJECTED, SHELVED, SPECTATE, Opportunity, PriceBook, costs_for, evaluate_listing
+from .opportunity import ANALYSIS_VERSION, ESCALATED, OBSERVE, OPEN, QUALIFIED, REJECTED, SHELVED, SPECTATE, Opportunity, PriceBook, costs_for, evaluate_listing
 from .slice import run as run_slice
 from .store import Store
 
@@ -210,7 +210,7 @@ class Engine:
         authenticity = verified.pop("authenticity_ok", None)
         an = analyze(r.title, self.catalog, description=r.description, verified=verified, ocr_codes=self._ocr(r))
         ids = [p.id for p in an.identity.candidates]
-        fp = hashlib.sha256(json.dumps([r.fingerprint(), verified, authenticity, ids[:500], self._evidence_version(ids),
+        fp = hashlib.sha256(json.dumps([ANALYSIS_VERSION, r.fingerprint(), verified, authenticity, ids[:500], self._evidence_version(ids),
                                         now.date().isoformat() if r.ends_at else ""], sort_keys=True, default=str).encode()).hexdigest()[:16]
         prev = self.db.execute("SELECT analysis_fp, created_at, snapshot_id FROM opportunity WHERE key=?", (key,)).fetchone()
         if prev and prev[0] == fp and not force:
@@ -334,6 +334,8 @@ class Engine:
         try:
             from .ebay_deletion import sync as sync_deletions
             sync_deletions(databases=[Path(self.store_path), ROOT / "data" / "cache" / "market.sqlite"], raw=self.raw.root)
+            # A long-running engine keeps decoded records in memory: drop them so an erased seller is gone there too.
+            self.store.__dict__.pop("_original_memo", None)
         except Exception as x:   # stays queued online and is retried next pass
             rep.errors.append(f"eBay deletions: {type(x).__name__}")
         new: list[RawListing] = []
