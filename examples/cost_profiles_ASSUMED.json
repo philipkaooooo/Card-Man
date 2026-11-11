@@ -1,0 +1,17 @@
+{
+ "_note": "ASSUMED starting costs in home currency, not your real numbers. Copy to data/profile.json and correct them: every max-buy price depends on these. Your recorded outcomes then show how far off they are.",
+ "home_currency": "TWD",
+ "target_return": "0.20",
+ "capital_cost_monthly": "0.01",
+ "research_value_per_hour": "600",
+ "min_comps": 3,
+ "confidence": 0.8,
+ "routes": {
+  "JP":   {"proxy_fee_pct": "0.05", "payment_fx_spread_pct": "0.02", "inbound_shipping": "400", "import_duty_pct": "0"},
+  "TW":   {"payment_fx_spread_pct": "0", "inbound_shipping": "60", "import_duty_pct": "0"},
+  "INTL": {"payment_fx_spread_pct": "0.015", "inbound_shipping": "600", "import_duty_pct": "0"}
+ },
+ "exit": {"platform_fee_pct": "0.1325", "outbound_shipping": "300", "returns_reserve_pct": "0.02", "payout_fx_spread_pct": "0.015"},
+ "grading": {"company": "PSA", "cost_home": "1500", "months_added": 3, "prior": null},
+ "ebay_queries": ["yugioh 1st edition ultra rare", "yugioh LOB 1st edition", "yugioh japanese ultimate rare", "yugioh quarter century secret rare", "yugioh psa 10", "yugioh lot vintage"]
+}

@@ -20,7 +20,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -48,6 +48,7 @@ class SearchResult:
     raw_refs: list[str]
     total: int | None
     pages: int
+    titles: dict[str, str] = field(default_factory=dict)   # observation id -> seller's title
 
 
 def _ts(s: str | None) -> datetime | None:
@@ -94,11 +95,15 @@ def map_item(item: dict, *, captured_at: datetime, raw_ref: str, catalog: Catalo
         event_time=captured_at,  # an asking price is a fact at observation time
         capture_time=captured_at, source_url=item.get("itemWebUrl") or "",
         printing_candidates=cands, listing_id=item.get("legacyItemId") or item.get("itemId"),
-        seller_ref=(item.get("seller") or {}).get("username"), shipping_amount=ship,
+        # Never the readable username: a keyed hash that still groups one seller's listings (see ebay_privacy).
+        seller_ref=seller_token((item.get("seller") or {}).get("username")), shipping_amount=ship,
         observed_condition=item.get("condition"), raw_ref=raw_ref, synthetic_fixture=synthetic,
         status="VALID", status_reason="; ".join(notes + [f"listed {created.isoformat()}",
                                                           f"bids={bids}" if "AUCTION" in options else ""]).strip("; "),
     )
+
+
+from .ebay_privacy import seller_token, strip_user_fields  # noqa: E402
 
 
 class EbayBrowse:
@@ -164,14 +169,16 @@ class EbayBrowse:
         url = f"{SEARCH_URL}?{urllib.parse.urlencode(params)}"
         obs, refs, total, pages = [], [], None, 0
         seen: set[str] = set()
+        titles: dict[str, str] = {}
         while url and pages < max_pages:
             req = urllib.request.Request(url, headers={"Authorization": f"Bearer {tok}",
                                                        "X-EBAY-C-MARKETPLACE-ID": self.marketplace})
             raw = self._request(req)
-            ref = self.store.put("ebay_browse", raw, {"url": url, "captured_at": now.isoformat(),
+            page = json.loads(raw)
+            # Keep the raw page as evidence, minus seller identity; mapping below reads the full page in memory.
+            ref = self.store.put("ebay_browse", json.dumps(strip_user_fields(page), ensure_ascii=False).encode(), {"url": url, "captured_at": now.isoformat(),
                                                      "adapter": ADAPTER_VERSION, "marketplace": self.marketplace})
             refs.append(ref)
-            page = json.loads(raw)
             total = page.get("total", total)
             for item in page.get("itemSummaries") or []:
                 if item.get("itemId") in seen:   # offsets can shift while paging
@@ -179,6 +186,7 @@ class EbayBrowse:
                 seen.add(item.get("itemId"))
                 obs.append(map_item(item, captured_at=now, raw_ref=ref, catalog=catalog,
                                     marketplace=self.marketplace, synthetic=synthetic))
+                titles[obs[-1].id] = item.get("title") or ""
             url = page.get("next")
             pages += 1
-        return SearchResult(obs, refs, total, pages)
+        return SearchResult(obs, refs, total, pages, titles)

@@ -9,7 +9,7 @@ from __future__ import annotations
 import difflib
 import re
 import unicodedata
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from .models import CardFamily, GameFormat, IdentityStatus, Printing, Region
 
@@ -112,8 +112,11 @@ def _strip_ruby(s: str) -> tuple[str, str | None]:
 
 
 class Catalog:
-    def __init__(self, families: list[CardFamily], printings: list[Printing]):
+    def __init__(self, families: list[CardFamily], printings: list[Printing],
+                 edition_rules: dict[str, list[str]] | None = None):
         self.families = {f.id: f for f in families}
+        # product name -> editions its English run exists in. Empty keeps the strict default: abstain.
+        self.edition_rules = edition_rules or {}
         self.printings = printings
         self.by_family: dict[str, list[Printing]] = {}
         self.by_code: dict[str, list[Printing]] = {}
@@ -134,7 +137,41 @@ class Catalog:
             self._by_len.setdefault(len(nn.split()), []).append(nn)
 
     def family_matches(self, title: str, cutoff: float = 0.85) -> tuple[set[str], list[str]]:
-        """Names contained in the title (longest wins), plus fuzzy matches for seller typos."""
+        """Names contained in the title (longest wins), plus fuzzy matches for seller typos. Memoized: one listing is
+        matched several times per analysis, and the same titles recur across passes."""
+        memo = self.__dict__.setdefault("_fm_memo", {})
+        key = (title, cutoff)
+        if key not in memo:
+            if len(memo) > 50_000:
+                memo.clear()
+            fams, notes = self._family_matches(title, cutoff)
+            memo[key] = (frozenset(fams), tuple(notes))
+        fams, notes = memo[key]
+        return set(fams), list(notes)
+
+    @staticmethod
+    def _tokens(nn: str) -> set[str]:
+        """Words for Latin names, character pairs for Japanese: a typo still leaves most of these intact."""
+        if nn.isascii():
+            return {w for w in nn.split() if len(w) >= 3}
+        compact = nn.replace(" ", "")
+        return {compact[i:i + 2] for i in range(len(compact) - 1)} or {compact}
+
+    def _fuzzy_pool(self, k: int, window: str) -> list[str]:
+        idx = self.__dict__.setdefault("_tok_index", {})
+        if k not in idx:
+            by_tok: dict[str, list[str]] = {}
+            for nn in self._by_len.get(k, []):
+                for t in self._tokens(nn):
+                    by_tok.setdefault(t, []).append(nn)
+            idx[k] = by_tok
+        pool: dict[str, None] = {}
+        for t in self._tokens(window):
+            for nn in idx[k].get(t, ()):
+                pool[nn] = None
+        return list(pool)
+
+    def _family_matches(self, title: str, cutoff: float = 0.85) -> tuple[set[str], list[str]]:
         t = normalize_name(title)
         spaced = f" {t} "
         hits = []
@@ -155,7 +192,8 @@ class Catalog:
                 continue  # one-word fuzzy hits ("dragon" ~ "dragong") are noise
             for i in range(max(1, len(words) - k + 1)):
                 window = " ".join(words[i:i + k])
-                for nn in difflib.get_close_matches(window, names, n=3, cutoff=cutoff):
+                # Only names sharing a word (or a kana/kanji pair) with the window can reach the cutoff in practice.
+                for nn in difflib.get_close_matches(window, self._fuzzy_pool(k, window), n=3, cutoff=cutoff):
                     scored.append((difflib.SequenceMatcher(None, nn, window).ratio(), window, nn))
         if scored:
             best = max(r for r, _, _ in scored)
@@ -165,6 +203,20 @@ class Catalog:
                     notes.append(f"fuzzy name match '{window}' ~ '{nn}' ({r:.2f}); treat as seller typo, "
                                  "needs image confirmation")
         return exact, notes
+
+
+def edition_variants(p: Printing, catalog: Catalog) -> list[Printing]:
+    """An English printing whose source has no edition data, split into the editions its product is known to have.
+
+    The ids match what resolve() gives a confirmed card (`<id>|ed:<edition>`), so sales recorded against a confirmed
+    edition price the unconfirmed candidates too. Printings with known editions, or no rule, come back unchanged.
+    """
+    allowed = catalog.edition_rules.get(p.product_name or "", ())
+    if p.region != Region.EN_TCG or p.edition is not None or not allowed:
+        return [p]
+    return [replace(p, id=f"{p.id}|ed:{ed}", edition=ed,
+                    variant_evidence=p.variant_evidence + ("edition scenario from edition rule; not confirmed",))
+            for ed in allowed]
 
 
 def resolve(signals: ListingSignals, catalog: Catalog) -> IdentityResult:
@@ -270,6 +322,14 @@ def resolve(signals: ListingSignals, catalog: Catalog) -> IdentityResult:
             return IdentityResult(IdentityStatus.CANDIDATES, cands, ev,
                                   block + [f"catalog printing is {p.identity_status}: {'; '.join(p.variant_evidence)}"],
                                   ["identity source record with complete rarity/product data"])
+        allowed = catalog.edition_rules.get(p.product_name or "", ())
+        if (p.region == Region.EN_TCG and p.edition is None and signals.verified_edition
+                and signals.verified_edition in allowed):
+            # The stamp was verified on the card and this product is known to have that edition.
+            refined = replace(p, id=f"{p.id}|ed:{signals.verified_edition}", edition=signals.verified_edition,
+                              variant_evidence=p.variant_evidence + ("edition from verified stamp photo + edition rule",))
+            return IdentityResult(IdentityStatus.RESOLVED, [refined], ev + ["edition rule allows this stamp on this product"],
+                                  block, [])
         if p.region == Region.EN_TCG and p.edition is None:
             # English prints differ by 1st / Unlimited / Limited; the loaded source does not say which exist.
             return IdentityResult(IdentityStatus.CANDIDATES, cands, ev,

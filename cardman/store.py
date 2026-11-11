@@ -47,11 +47,20 @@ CREATE TABLE IF NOT EXISTS snapshot (
     stage TEXT, payload_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS snapshot_printing (snapshot_id TEXT NOT NULL, printing_id TEXT NOT NULL,
     PRIMARY KEY (snapshot_id, printing_id));
+CREATE TABLE IF NOT EXISTS snapshot_redaction (snapshot_id TEXT PRIMARY KEY, redacted_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS invalidation (
     printing_id TEXT NOT NULL, reason TEXT NOT NULL, recorded_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS alert (
     listing_ref TEXT NOT NULL, snapshot_id TEXT NOT NULL, sent_at TEXT NOT NULL, expires_at TEXT NOT NULL,
     PRIMARY KEY (listing_ref, snapshot_id));
+CREATE TABLE IF NOT EXISTS fx_rate (
+    base TEXT NOT NULL, quote TEXT NOT NULL, mid TEXT NOT NULL, as_of TEXT NOT NULL, source TEXT NOT NULL,
+    spread_pct TEXT NOT NULL, recorded_at TEXT NOT NULL, PRIMARY KEY (base, quote, as_of, source));
+CREATE TABLE IF NOT EXISTS outcome (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, position TEXT NOT NULL, kind TEXT NOT NULL, at TEXT NOT NULL,
+    amount TEXT, currency TEXT, snapshot_id TEXT, printing_id TEXT, data_json TEXT NOT NULL,
+    recorded_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS outcome_position ON outcome(position);
 CREATE TABLE IF NOT EXISTS decision (
     snapshot_id TEXT NOT NULL REFERENCES snapshot(id), action TEXT NOT NULL, rationale TEXT NOT NULL,
     wait_trigger TEXT, decided_at TEXT NOT NULL);
@@ -98,6 +107,15 @@ def content_hash(obj) -> str:
     return hashlib.sha256(canonical(obj).encode()).hexdigest()
 
 
+# Fields that describe when/how we captured a record rather than the source fact itself.
+# Re-importing the same fact in a later run changes these, and that is not a rewrite.
+_CAPTURE_FIELDS = ("capture_time", "raw_ref")
+
+
+def _fact(d: dict) -> dict:
+    return {k: v for k, v in d.items() if k not in _CAPTURE_FIELDS}
+
+
 def _obs_to_dict(o: MarketObservation) -> dict:
     return asdict(o)
 
@@ -137,11 +155,12 @@ class Store:
         """Insert once. Returns False for an identical re-insert; raises if the content differs."""
         d = _obs_to_dict(o)
         h = content_hash(d)
-        row = self.db.execute("SELECT content_hash FROM observation WHERE id=?", (o.id,)).fetchone()
+        row = self.db.execute("SELECT content_hash, data_json FROM observation WHERE id=?", (o.id,)).fetchone()
         if row:
-            if row[0] != h:
+            if row[0] != h and _fact(json.loads(row[1])) != _fact(json.loads(canonical(d))):
                 raise ImmutableViolation(f"observation {o.id} already stored with different content; "
                                          "record a status event instead of rewriting the source fact")
+            # Same source fact seen again (possibly captured later): keep the first capture.
             return False
         with self.db:
             self.db.execute(
@@ -212,7 +231,8 @@ class Store:
         if not row:
             raise KeyError(sid)
         payload = _dec(json.loads(row[1]))
-        if content_hash({"listing_ref": row[0], "payload": payload})[:24] != sid:
+        redacted = self.db.execute("SELECT 1 FROM snapshot_redaction WHERE snapshot_id=?", (sid,)).fetchone()
+        if not redacted and content_hash({"listing_ref": row[0], "payload": payload})[:24] != sid:
             raise ImmutableViolation(f"snapshot {sid} content does not match its id")
         return payload
 
@@ -265,6 +285,92 @@ class Store:
             self.db.execute("INSERT INTO decision VALUES (?,?,?,?,?)",
                             (d.deal_snapshot_id, d.action.value, d.rationale, d.wait_trigger, _ts(d.timestamp)))
 
+    # -- listings for review -------------------------------------------------------------------
+    def snapshots(self, limit: int = 200) -> list[dict]:
+        """Newest first, with the latest human decision and whether an alert went out."""
+        rows = self.db.execute(
+            "SELECT s.id, s.listing_ref, s.created_at, s.expires_at, s.stage,"
+            " (SELECT action FROM decision d WHERE d.snapshot_id=s.id ORDER BY d.rowid DESC LIMIT 1),"
+            " EXISTS(SELECT 1 FROM alert a WHERE a.snapshot_id=s.id)"
+            " FROM snapshot s ORDER BY s.created_at DESC, s.rowid DESC LIMIT ?", (limit,)).fetchall()
+        keys = ("id", "listing_ref", "created_at", "expires_at", "stage", "decision", "alerted")
+        return [dict(zip(keys, r)) for r in rows]
+
+    def snapshot_meta(self, sid: str) -> dict:
+        row = self.db.execute("SELECT listing_ref, created_at, expires_at, stage FROM snapshot WHERE id=?",
+                              (sid,)).fetchone()
+        if not row:
+            raise KeyError(sid)
+        return dict(zip(("listing_ref", "created_at", "expires_at", "stage"), row))
+
+    def observation_list(self, printing_id: str | None = None, *, as_of: datetime | None = None,
+                         limit: int = 500) -> list[MarketObservation]:
+        """Stored observations (newest sale first), with status as known at `as_of`."""
+        if printing_id:
+            q = ("SELECT o.id FROM observation o JOIN observation_printing p ON p.obs_id=o.id"
+                 " WHERE p.printing_id=? ORDER BY o.event_time DESC LIMIT ?")
+            args: tuple = (printing_id, limit)
+        else:
+            q, args = "SELECT id FROM observation ORDER BY event_time DESC LIMIT ?", (limit,)
+        return [self.effective(r[0], as_of) for r in self.db.execute(q, args).fetchall()]
+
+    def printing_ids(self) -> list[str]:
+        return [r[0] for r in self.db.execute(
+            "SELECT DISTINCT printing_id FROM observation_printing ORDER BY printing_id")]
+
+    # -- FX rates shared by every run -----------------------------------------------------------
+    def add_fx(self, r, *, now: datetime | None = None) -> bool:
+        """Store a timestamped rate once (base, quote, as_of, source). A different mid for the same key is refused."""
+        row = self.db.execute("SELECT mid FROM fx_rate WHERE base=? AND quote=? AND as_of=? AND source=?",
+                              (r.base, r.quote, _ts(r.as_of), r.source)).fetchone()
+        if row:
+            if Decimal(row[0]) != r.mid:
+                raise ImmutableViolation(f"{r.base}/{r.quote} {r.source} at {r.as_of} already stored as {row[0]}")
+            return False
+        with self.db:
+            self.db.execute("INSERT INTO fx_rate VALUES (?,?,?,?,?,?,?)",
+                            (r.base, r.quote, str(r.mid), _ts(r.as_of), r.source, str(r.spread_pct), _ts(now or _now())))
+        return True
+
+    def fx_rates(self) -> list:
+        from .fx import FxRate
+        return [FxRate(b, q, Decimal(m), datetime.fromisoformat(a), src, Decimal(sp)) for b, q, m, a, src, sp in
+                self.db.execute("SELECT base, quote, mid, as_of, source, spread_pct FROM fx_rate ORDER BY as_of")]
+
+    # -- outcomes: what actually happened after a decision ---------------------------------------
+    def add_outcome(self, position: str, kind: str, at: datetime, *, amount: Decimal | None = None,
+                    currency: str | None = None, snapshot_id: str | None = None, printing_id: str | None = None,
+                    data: dict | None = None, now: datetime | None = None) -> int:
+        """Append one event to a position's history (never edited; a correction is another event)."""
+        from .outcomes import KINDS
+        if kind not in KINDS:
+            raise ValueError(f"unknown outcome kind {kind!r}; one of {', '.join(KINDS)}")
+        if amount is not None and not currency:
+            raise ValueError("an amount needs its currency")
+        if snapshot_id and not self.db.execute("SELECT 1 FROM snapshot WHERE id=?", (snapshot_id,)).fetchone():
+            raise KeyError(f"no snapshot {snapshot_id}")
+        with self.db:
+            cur = self.db.execute("INSERT INTO outcome (position, kind, at, amount, currency, snapshot_id, printing_id,"
+                                  " data_json, recorded_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                                  (position, kind, _ts(at), str(amount) if amount is not None else None,
+                                   currency.upper() if currency else None, snapshot_id, printing_id,
+                                   canonical(data or {}), _ts(now or _now())))
+        return cur.lastrowid
+
+    def outcomes(self, position: str | None = None) -> list[dict]:
+        q = "SELECT id, position, kind, at, amount, currency, snapshot_id, printing_id, data_json, recorded_at FROM outcome"
+        rows = self.db.execute(q + (" WHERE position=?" if position else "") + " ORDER BY at, id",
+                               (position,) if position else ()).fetchall()
+        keys = ("id", "position", "kind", "at", "amount", "currency", "snapshot_id", "printing_id", "data", "recorded_at")
+        out = []
+        for r in rows:
+            d = dict(zip(keys, r))
+            d["at"] = datetime.fromisoformat(d["at"])
+            d["amount"] = Decimal(d["amount"]) if d["amount"] is not None else None
+            d["data"] = _dec(json.loads(d["data"]))
+            out.append(d)
+        return out
+
     def decisions(self, sid: str) -> list[tuple]:
         return self.db.execute("SELECT action, rationale, wait_trigger, decided_at FROM decision WHERE snapshot_id=?"
                                " ORDER BY rowid", (sid,)).fetchall()
@@ -301,3 +407,67 @@ def replay(store: Store, sid: str) -> dict:
     valid, why = store.snapshot_validity(sid)
     return {"snapshot_id": sid, "matches": canonical(again) == canonical(recorded),
             "recorded": recorded, "recomputed": again, "identity_valid": valid, "invalidations": why}
+
+
+# -- command line -------------------------------------------------------------------------------
+
+def main(argv: list[str] | None = None) -> None:
+    """Maintain the evidence store between runs.
+
+    import  CSV                 record manual-import rows (same template as the slice)
+    status  OBS STATUS REASON   record a later finding: CANCELLED, REFUNDED, RELISTED, INVALID, DUPLICATE, VALID
+    comps   PRINTING            the comparables the store would give for a printing at --as-of
+    replay  SNAPSHOT            recompute a stored valuation and check it
+    decide  SNAPSHOT YES|WAIT|NO RATIONALE [--wait-trigger T]
+    """
+    import argparse
+
+    from .evidence import import_manual_csv, select_comps
+
+    ap = argparse.ArgumentParser(prog="python -m cardman.store", description=main.__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--store", default="data/store/evidence.sqlite")
+    ap.add_argument("--now", help="ISO time, default now (UTC)")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    p = sub.add_parser("import"); p.add_argument("csv")
+    p = sub.add_parser("status"); p.add_argument("obs_id"); p.add_argument("status"); p.add_argument("reason")
+    p.add_argument("--actor", default="manual")
+    p = sub.add_parser("comps"); p.add_argument("printing_id"); p.add_argument("--as-of")
+    p.add_argument("--grade-company"); p.add_argument("--grade"); p.add_argument("--condition")
+    p.add_argument("--include-synthetic", action="store_true")
+    p = sub.add_parser("replay"); p.add_argument("snapshot_id")
+    p = sub.add_parser("decide"); p.add_argument("snapshot_id"); p.add_argument("action", choices=[a.value for a in Action])
+    p.add_argument("rationale"); p.add_argument("--wait-trigger")
+    a = ap.parse_args(argv)
+    now = datetime.fromisoformat(a.now) if a.now else _now()
+    st = Store(a.store)
+    out: dict
+    if a.cmd == "import":
+        rows = import_manual_csv(Path(a.csv), now)
+        added = [o.id for o in rows if st.add_observation(o, now=now)]
+        out = {"rows": len(rows), "added": len(added), "already_stored": len(rows) - len(added),
+               "synthetic": sum(o.synthetic_fixture for o in rows)}
+    elif a.cmd == "status":
+        st.set_status(a.obs_id, a.status.upper(), a.reason, actor=a.actor, now=now)
+        out = {"obs_id": a.obs_id, "history": st.status_history(a.obs_id)}
+    elif a.cmd == "comps":
+        as_of = datetime.fromisoformat(a.as_of) if a.as_of else now
+        pool = st.observations_for(a.printing_id, as_of=as_of)
+        comps, rejected = select_comps(pool, a.printing_id, as_of=as_of, grade_company=a.grade_company,
+                                       grade=a.grade, raw_condition=a.condition,
+                                       include_synthetic=a.include_synthetic)
+        out = {"printing_id": a.printing_id, "as_of": as_of.isoformat(), "pool": len(pool),
+               "comps": [{"id": c.id, "date": c.event_time.isoformat(), "type": c.evidence_type.value,
+                          "amount": str(c.original_amount), "currency": c.currency, "url": c.source_url,
+                          "synthetic": c.synthetic_fixture} for c in comps],
+               "rejected": rejected}
+    elif a.cmd == "replay":
+        out = replay(st, a.snapshot_id)
+    else:
+        st.record_decision(Decision(a.snapshot_id, Action(a.action), a.rationale, now, a.wait_trigger))
+        out = {"snapshot_id": a.snapshot_id, "decisions": st.decisions(a.snapshot_id)}
+    print(json.dumps(_enc(out), indent=1, ensure_ascii=False, default=str))
+
+
+if __name__ == "__main__":
+    main()

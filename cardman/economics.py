@@ -24,11 +24,13 @@ class AcquisitionCosts:
     import_duty_pct: Decimal = D0        # on (item + premium + shipping)
     insurance: Decimal = D0
     grading: Decimal = D0                # fee + shipping both ways, if grading is part of the plan
+    shipping_fx_spread_pct: Decimal = D0  # FX spread on inbound shipping when it is paid in a foreign currency
 
     def linear(self) -> tuple[Decimal, Decimal]:
         """All-in cost = a * B + b."""
         a = (1 + self.buyer_premium_pct) * (1 + self.import_duty_pct) + self.proxy_fee_pct + self.payment_fx_spread_pct
-        b = self.proxy_fee_fixed + self.inbound_shipping * (1 + self.import_duty_pct) + self.insurance + self.grading
+        b = (self.proxy_fee_fixed + self.inbound_shipping * (1 + self.import_duty_pct + self.shipping_fx_spread_pct)
+             + self.insurance + self.grading)
         return a, b
 
     def all_in(self, price: Decimal) -> Decimal:
