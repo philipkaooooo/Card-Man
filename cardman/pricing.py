@@ -145,7 +145,8 @@ def risk_view(sales: list[Sale], est: PriceEstimate, ask: Decimal, acquisition: 
     p10, cvar = profits[k - 1], statistics.fmean(profits[:k])
     target = cost * float(target_return)
     ret = (mean / cost) if cost > 0 else None
-    ann = ((1 + ret) ** (12 / max(months, 1 / 12)) - 1) if ret is not None and ret > -1 else None
+    # Simple rate: compounding a two-week flip twenty-six times a year assumes a next deal that may not exist.
+    ann = ret * 12 / max(months, 1 / 12) if ret is not None else None
     q_price = _wq([(s.price * scale, s.trust) for s in sales], 1 - confidence)
     ceiling = buy_ceiling(CeilingInputs(Decimal(str(round(q_price, 2))), acquisition, exit_costs, target_return,
                                         Decimal(str(round(months, 2))), capital_cost_monthly)).buy_ceiling
