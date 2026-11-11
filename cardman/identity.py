@@ -111,6 +111,15 @@ def _strip_ruby(s: str) -> tuple[str, str | None]:
     return base, reading
 
 
+def load_name_aliases() -> dict[str, str]:
+    import json
+    from pathlib import Path
+    p = Path(__file__).resolve().parent.parent / "data" / "name_aliases.json"
+    if not p.exists():
+        return {}
+    return {k: v for k, v in json.loads(p.read_text(encoding="utf-8")).items() if not k.startswith("_")}
+
+
 class Catalog:
     def __init__(self, families: list[CardFamily], printings: list[Printing],
                  edition_rules: dict[str, list[str]] | None = None):
@@ -132,6 +141,11 @@ class Catalog:
                     nn = normalize_name(variant) if variant else ""
                     if nn:
                         self.name_index.setdefault(nn, set()).add(f.id)
+        # Printed names that differ from the official one ("Red-Eyes B. Dragon" on early English cards).
+        for printed, official in load_name_aliases().items():
+            fams = self.name_index.get(normalize_name(official))
+            if fams:
+                self.name_index.setdefault(normalize_name(printed), set()).update(fams)
         self._by_len: dict[int, list[str]] = {}
         for nn in self.name_index:
             self._by_len.setdefault(len(nn.split()), []).append(nn)
