@@ -233,3 +233,22 @@ def test_pages_dropped_in_the_inbox_folder_are_read_and_stored_without_people(tm
     assert rep.new_listings == 4
     blob = b"".join(p.read_bytes() for p in Path(tmp_path / "raw").rglob("*") if p.is_file())
     assert b"cardshop_99" not in blob and b"226000000001" in blob
+
+
+def test_one_pick_confirms_every_copy_of_the_same_sale(ui):
+    get, post, db = ui
+    url, body = post("/import/pages", files=[(n, (PAGES / n).read_bytes()) for n in ("ebay_sold_results.html", "130point_results.html")])
+    assert body.count(">Blue-Eyes White Dragon LOB-EN001 1st Edition Ultra Rare LP<") == 1 and "also on" in body
+    st = Store(db)
+    copies = [i for (i,) in st.db.execute("SELECT id FROM observation WHERE listing_id='226000000001'")]
+    assert len(copies) == 2
+    post(f"/obs/{urllib.parse.quote(copies[0], safe='')}/identify", {"printing": LOB_1ST, "back": "/import"})
+    assert all(Store(db).effective(i).printing_candidates == (LOB_1ST,) for i in copies)
+
+
+def test_japanese_titles_put_japanese_printings_first():
+    from cardman.intel import analyze
+    from cardman.models import Region
+    a = analyze("遊戯王 青眼の白龍 初期 ウルトラレア 美品", CAT)
+    top = max(a.identity.candidates, key=lambda p: a.weights[p.id])
+    assert top.region == Region.JP_OCG

@@ -73,9 +73,24 @@ def view_import(st, token: str, batch: str | None, catalog, csv_form: str) -> st
         return '<h1>Import</h1>' + drop + csv_form
     batch = batch or bl[0][0]
     rows = batch_rows(st, batch)
+    strength = {"INDEPENDENT_TRANSACTION": 0, "ACCEPTED_OFFER": 1, "MARKETPLACE_MARKED_SOLD": 2}
+    rows.sort(key=lambda r: strength.get(r["obs"].evidence_type.value, 9))      # the copy with the real price is the one shown
     need, ready, other = [], [], []
+    shown_lineage: dict[str, list[str]] = {}
+    for r in rows:
+        lin = r["obs"].upstream_lineage[0] if r["obs"].upstream_lineage else None
+        if lin:
+            shown_lineage.setdefault(lin, []).append(r["site"])
+    seen_lineage: set[str] = set()
     for r in rows:
         o = r["obs"]
+        lin = o.upstream_lineage[0] if o.upstream_lineage else None
+        # One sale, two sites: show it once (the stronger record first), and say where else it appeared.
+        if lin and lin in seen_lineage:
+            continue
+        if lin:
+            seen_lineage.add(lin)
+        also = [s for s in shown_lineage.get(lin, []) if s != r["site"]] if lin else []
         n = len(o.printing_candidates)
         cls, msg = _status(o, r["confirmed"], n)
         price = e(charts.fmt(float(o.original_amount), o.currency))
@@ -83,7 +98,7 @@ def view_import(st, token: str, batch: str | None, catalog, csv_form: str) -> st
         flags = "".join(f'<span class="chip">{e(x)}</span>' for x in
                         ([f"{o.grade_company} {o.grade}"] if o.grade_company else []) + (["lot"] if o.is_lot else []))
         head = (f'<td><a href="{e(o.source_url)}" target="_blank" rel="noreferrer noopener">{e(r["title"])}</a> {flags}'
-                f'<br><span class="muted small">{e(r["site"])} · {e(o.listing_id)}</span></td>'
+                f'<br><span class="muted small">{e(r["site"])} · {e(o.listing_id)}{" · also on " + e(", ".join(sorted(set(also)))) if also else ""}</span></td>'
                 f'<td class="n">{price}</td><td class="d">{e(when)}</td>')
         if cls == "warnt" and n > 1 and catalog is not None and o.evidence_type.value != "SELLER_CLAIM":
             opts = _options(r["title"], catalog)

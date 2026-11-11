@@ -1904,7 +1904,12 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                         return self._redirect(back, err="unknown printing")
                     try:
                         st.confirm_identity(oid, pid, actor="ui", now=now)
-                        self._redirect(back, msg="Confirmed. That sale now counts for this printing.")
+                        # The same sale seen on another site (eBay and 130point) is the same card: confirm every copy.
+                        twins = [i for i in st.same_sale(oid) if i != oid]
+                        for i in twins:
+                            st.confirm_identity(i, pid, actor="ui", now=now)
+                        self._redirect(back, msg="Confirmed. That sale now counts for this printing"
+                                       + (f" (and its {len(twins)} copy on another site)." if twins else "."))
                     except KeyError:
                         self._redirect(back, err="no such sale")
                 elif len(parts) == 3 and parts[0] == "card" and parts[2] == "sale" and parts[1].isdigit():

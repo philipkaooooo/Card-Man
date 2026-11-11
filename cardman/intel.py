@@ -49,6 +49,9 @@ class ListingAnalysis:
         return any(f.kind in kinds for f in self.findings)
 
 
+_KANA = re.compile(r"[\u3040-\u30ff]")
+
+
 def _weights(cands: list[Printing], parsed: ParsedListing) -> dict[str, float]:
     """Seller claims shift weight but never remove a candidate: sellers are wrong in both directions."""
     if not cands:
@@ -64,6 +67,9 @@ def _weights(cands: list[Printing], parsed: ParsedListing) -> dict[str, float]:
             w *= 2.0 if p.region == Region.JP_OCG else 0.25
         elif parsed.language == "en":
             w *= 2.0 if p.region == Region.EN_TCG else 0.25
+        elif _KANA.search(parsed.text):
+            # A title written in Japanese is usually a Japanese card, but sellers there also sell English ones: a tilt only.
+            w *= 2.0 if p.region == Region.JP_OCG else 0.5
         raw[p.id] = w
     t = sum(raw.values())
     return {k: v / t for k, v in raw.items()}

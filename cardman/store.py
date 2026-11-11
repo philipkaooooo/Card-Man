@@ -213,6 +213,17 @@ class Store:
             o = MarketObservation(**{**o.__dict__, "printing_candidates": (ident[0],)})
         return o
 
+    def same_sale(self, obs_id: str) -> list[str]:
+        """Records of the same sale from different sites, joined by their upstream id (e.g. ebay:<item>)."""
+        lin = self.original(obs_id).upstream_lineage
+        if not lin:
+            return [obs_id]
+        out = []
+        for oid, dj in self.db.execute("SELECT id, data_json FROM observation WHERE data_json LIKE ?", (f'%{lin[0]}%',)):
+            if set(json.loads(dj).get("upstream_lineage") or ()) & set(lin):
+                out.append(oid)
+        return out or [obs_id]
+
     def confirm_identity(self, obs_id: str, printing_id: str, *, actor: str, now: datetime | None = None) -> None:
         """A person says which exact printing a recorded sale was. Kept as an event, like a status: the sale record
         itself is never rewritten, and the confirmation only counts from the moment it was made."""
