@@ -33,6 +33,7 @@ from .workflow import Action, Decision
 
 STATUSES = ("CANCELLED", "REFUNDED", "RELISTED", "INVALID", "DUPLICATE", "VALID")
 MAX_UPLOAD = 5 * 1024 * 1024
+MAX_PAGES_UPLOAD = 80 * 1024 * 1024     # saved results pages are a few MB each, several at once
 MIN_COMPS = 3
 SYN = ' <span class="tag syn">synthetic</span>'
 
@@ -284,6 +285,7 @@ NAV = (("Browse", (("home", "Home", "/"), ("search", "Card search", "/search")))
 def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str = "", cur: str = "USD",
          path: str = "/", theme: str = "market", q: str = "") -> bytes:
     from .ui_home import HOME_CSS, THEMES, header_search
+    from .ui_import import IMPORT_CSS
     theme = theme if theme in THEMES else "market"
     themes = ('<span class="themes" role="group" aria-label="Look">' + "".join(
         f'<a href="/theme?{urlencode({"t": t, "back": path})}" class="{"on" if t == theme else ""}">{t.title()}</a>'
@@ -301,7 +303,7 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     tz = datetime.now().astimezone().strftime("UTC%z")
     return (f'<!doctype html><html lang="en" data-theme="{"vault" if theme == "vault" else "light"}"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)} · CardMan</title>'
-            f'<style>{CSS}{HOME_CSS}</style></head><body><header><a class="logo" href="/"><b>CardMan</b></a>{curs}{themes}{hsearch}'
+            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}</style></head><body><header><a class="logo" href="/"><b>CardMan</b></a>{curs}{themes}{hsearch}'
             f'<span class="store">{e(store)} · times {e(tz)}</span></header>'
             f'<div class="shell"><aside><details class="menu" open><summary>{e(here)}</summary>{"".join(groups)}</details></aside>'
             f'<main>{flash}{body}</main></div><script src="/static/ui.js"></script></body></html>').encode()
@@ -1695,7 +1697,8 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
             if parts == ["static", "ui.js"]:
                 st.db.close()
                 from .ui_home import HOME_JS
-                return self._send(200, (JS + HOME_JS).encode(), "text/javascript; charset=utf-8")
+                from .ui_import import IMPORT_JS
+                return self._send(200, (JS + HOME_JS + IMPORT_JS).encode(), "text/javascript; charset=utf-8")
             if len(parts) == 3 and parts[:2] == ["img", "card"] and parts[2].endswith(".jpg"):
                 st.db.close()
                 body, ctype = images.artwork(parts[2][:-4], qs.get("size", [""])[0])
@@ -1752,7 +1755,8 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                 elif parts[0] == "card" and len(parts) == 2 and parts[1].isdigit():
                     from .ui_home import view_card
                     self._page("search", (cards.card(parts[1]) or {}).get("name_en") or parts[1],
-                               view_card(st, cards, parts[1], now, self._cur(), book=_book(st, now), catalog=catalog() if catalog else None), qs)
+                               view_card(st, cards, parts[1], now, self._cur(), book=_book(st, now), catalog=catalog() if catalog else None,
+                                         token=token), qs)
                 elif parts[0] == "deal" and len(parts) == 2:
                     self._page("deals", parts[1], view_deal(st, parts[1], now, token, self._cur()), qs)
                 elif parts == ["evidence"]:
@@ -1762,7 +1766,10 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     oid = unquote(parts[1])
                     self._page("evidence", oid, view_obs(st, oid, now, token), qs)
                 elif parts == ["import"]:
-                    self._page("import", "Import", view_import(token), qs)
+                    from .ui_import import view_import as view_import_pages
+                    csv_form = view_import(token).replace("<h1>Import</h1>", "<h2>Or a CSV you prepared</h2>", 1)
+                    self._page("import", "Import", view_import_pages(st, token, qs.get("batch", [""])[0] or None,
+                                                                     catalog() if catalog else None, csv_form), qs)
                 elif parts == ["opportunities"]:
                     self._page("opportunities", "Opportunities",
                                view_opportunities(st, now, token, self._cur(), qs.get("show", ["open"])[0]), qs)
@@ -1787,11 +1794,12 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
             u = urlsplit(self.path)
             parts = [p for p in u.path.split("/") if p]
             n = int(self.headers.get("Content-Length") or 0)
-            if n > MAX_UPLOAD:
+            if n > (MAX_PAGES_UPLOAD if parts == ["import", "pages"] else MAX_UPLOAD):
                 return self._send(413, page("Too large", "<h1>Upload too large</h1>", nav="", store=store_path))
             raw = self.rfile.read(n)
             ctype = self.headers.get("Content-Type", "")
             files: dict[str, tuple[str, bytes]] = {}
+            many: dict[str, list[tuple[str, bytes]]] = {}
             if ctype.startswith("multipart/form-data"):
                 msg = BytesParser(policy=HTTP).parsebytes(b"Content-Type: " + ctype.encode() + b"\r\n\r\n" + raw)
                 form = {}
@@ -1799,6 +1807,8 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     name = part.get_param("name", header="content-disposition")
                     if part.get_filename() is not None:
                         files[name] = (part.get_filename(), part.get_payload(decode=True) or b"")
+                        if files[name][1]:
+                            many.setdefault(name, []).append(files[name])
                     else:
                         form[name] = (part.get_payload(decode=True) or b"").decode()
             else:
@@ -1868,6 +1878,43 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                         self._redirect("/results", msg=record_outcome(st, form, now))
                     except (ValueError, KeyError) as x:
                         self._redirect("/results", err=f"Not recorded: {x}")
+                elif parts == ["import", "pages"]:
+                    if not many.get("pages"):
+                        return self._redirect("/import", err="choose one or more saved pages")
+                    from .engine import Engine
+                    from .sold_import import import_pages
+                    try:
+                        eng = Engine(store_path, catalog=catalog() if catalog else None)
+                        res = import_pages(eng, many["pages"], now)
+                    except SystemExit as x:
+                        return self._redirect("/import", err=str(x))
+                    except Exception as x:          # nothing half-done is shown as success
+                        return self._redirect("/import", err=f"Import failed: {type(x).__name__}: {x}")
+                    msg = (f"Read {res['rows']} sale(s) from {len(res['pages'])} page(s); {res['new']} new." +
+                           (" Some are synthetic test pages and never price anything." if any(p['synthetic'] for p in res['pages']) else ""))
+                    self._redirect(f"/import?batch={res['batch']}", msg=msg, err="; ".join(res["errors"][:5]))
+                elif len(parts) == 3 and parts[0] == "obs" and parts[2] == "identify":
+                    oid, pid = unquote(parts[1]), form.get("printing", "")
+                    back = form.get("back") or "/import"
+                    if not back.startswith("/") or back.startswith("//"):
+                        back = "/import"
+                    cat = catalog() if catalog else None
+                    known = cat is not None and any(p.id == pid.split("|")[0] for p in cat.printings)
+                    if not known:
+                        return self._redirect(back, err="unknown printing")
+                    try:
+                        st.confirm_identity(oid, pid, actor="ui", now=now)
+                        self._redirect(back, msg="Confirmed. That sale now counts for this printing.")
+                    except KeyError:
+                        self._redirect(back, err="no such sale")
+                elif len(parts) == 3 and parts[0] == "card" and parts[2] == "sale" and parts[1].isdigit():
+                    from .ui_home import record_sale
+                    cat = catalog() if catalog else None
+                    try:
+                        oid = record_sale(st, cat, parts[1], form, now)
+                        self._redirect(f"/card/{parts[1]}", msg=f"Sale recorded ({oid}). It prices that printing from now on.")
+                    except ValueError as x:
+                        self._redirect(f"/card/{parts[1]}", err=str(x))
                 elif parts == ["import"]:
                     if "csv" not in files:
                         return self._redirect("/import", err="choose a CSV file")

@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS snapshot (
     stage TEXT, payload_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS snapshot_printing (snapshot_id TEXT NOT NULL, printing_id TEXT NOT NULL,
     PRIMARY KEY (snapshot_id, printing_id));
+CREATE TABLE IF NOT EXISTS observation_identity (
+    obs_id TEXT NOT NULL, printing_id TEXT NOT NULL, actor TEXT NOT NULL, recorded_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS snapshot_redaction (snapshot_id TEXT PRIMARY KEY, redacted_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS invalidation (
     printing_id TEXT NOT NULL, reason TEXT NOT NULL, recorded_at TEXT NOT NULL);
@@ -205,7 +207,19 @@ class Store:
         row = self.db.execute(q + " ORDER BY rowid DESC LIMIT 1", args).fetchone()
         if row:
             o = MarketObservation(**{**o.__dict__, "status": row[0], "status_reason": row[1]})
+        iq = "SELECT printing_id FROM observation_identity WHERE obs_id=?" + (" AND recorded_at<=?" if as_of is not None else "")
+        ident = self.db.execute(iq + " ORDER BY rowid DESC LIMIT 1", args).fetchone()
+        if ident:
+            o = MarketObservation(**{**o.__dict__, "printing_candidates": (ident[0],)})
         return o
+
+    def confirm_identity(self, obs_id: str, printing_id: str, *, actor: str, now: datetime | None = None) -> None:
+        """A person says which exact printing a recorded sale was. Kept as an event, like a status: the sale record
+        itself is never rewritten, and the confirmation only counts from the moment it was made."""
+        self.original(obs_id)          # KeyError if there is no such record
+        with self.db:
+            self.db.execute("INSERT INTO observation_identity VALUES (?,?,?,?)", (obs_id, printing_id, actor, _ts(now or _now())))
+            self.db.execute("INSERT OR IGNORE INTO observation_printing VALUES (?,?)", (obs_id, printing_id))
 
     def status_history(self, obs_id: str) -> list[tuple[str, str, str, str]]:
         return self.db.execute("SELECT status, reason, actor, recorded_at FROM observation_status WHERE obs_id=?"

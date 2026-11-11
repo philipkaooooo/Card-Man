@@ -241,7 +241,7 @@ def _para(t: str | None) -> str:
     return "".join(f"<p>{e(line)}</p>" for line in (t or "").splitlines() if line.strip())
 
 
-def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalog=None, home: str = "TWD") -> str:
+def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalog=None, home: str = "TWD", token: str = "") -> str:
     c = idx.card(passcode)
     if not c:
         raise KeyError(f"no card with passcode {passcode}")
@@ -314,7 +314,61 @@ def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalo
         'printing (and edition); live asks are copies for sale right now. A scan appears only when its file is that printing.</p>'
         '<div class="wrap"><table class="prints"><tr><th></th><th>Region</th><th>Set code</th><th>Product</th><th>Rarity</th><th>Edition</th>'
         '<th class="n">Sales</th><th class="n">Low</th><th class="n">Mid</th><th class="n">Live asks</th><th></th></tr>'
-        + "".join(rows) + '</table></div></section>')
+        + "".join(rows) + '</table></div></section>' + (_sale_form(passcode, all_v, token, now) if token else ""))
+
+
+def _sale_form(passcode: str, variants, token: str, now: datetime) -> str:
+    opts = "".join(f'<option value="{e(v.id)}">{e(" · ".join(x for x in (v.set_code or "no code", v.rarity, v.edition, v.product_name) if x))}</option>'
+                   for v in variants)
+    return (f'<section id="record"><h2>Record a sale</h2><p class="why">Your own sale, a private deal, or one you saw at a show. It prices '
+            'the printing you choose, exactly like an imported sale. Give a link if there is one.</p>'
+            f'<form method="post" action="/card/{e(passcode)}/sale" class="inline sale"><input type="hidden" name="t" value="{e(token)}">'
+            f'<label>Printing<select name="printing" required>{opts}</select></label>'
+            '<label>Price<input name="amount" inputmode="decimal" required size="9"></label>'
+            '<label>Currency<select name="currency"><option>USD</option><option>TWD</option><option>JPY</option><option>EUR</option>'
+            '<option>GBP</option></select></label>'
+            f'<label>Date<input type="date" name="date" value="{now.date().isoformat()}" required></label>'
+            '<label>Kind<select name="kind"><option value="transaction">Completed sale</option><option value="accepted_offer">Accepted offer'
+            '</option></select></label>'
+            '<label>Graded<select name="grade_company"><option value="">Raw</option><option>PSA</option><option>BGS</option><option>CGC</option>'
+            '<option>ARS</option></select></label><label>Grade<input name="grade" size="4"></label>'
+            '<label>Link<input name="url" type="url" placeholder="https://…" size="28"></label>'
+            '<button>Record sale</button></form></section>')
+
+
+def record_sale(st, catalog, passcode: str, form: dict, now: datetime) -> str:
+    """A sale you witnessed, as one write-once record for exactly the printing you picked."""
+    import uuid
+    from .models import EvidenceType, MarketObservation
+    pid = form.get("printing", "")
+    base = pid.split("|")[0]
+    if catalog is None or not any(p.id == base and p.artwork_id == f"art:pw{passcode}" for p in catalog.printings):
+        raise ValueError("pick a printing of this card")
+    try:
+        amount = Decimal(str(form.get("amount", "")).replace(",", "").strip())
+    except Exception:
+        raise ValueError("price must be a number")
+    if amount <= 0:
+        raise ValueError("price must be above zero")
+    cur = (form.get("currency") or "").upper()
+    if cur not in ("USD", "TWD", "JPY", "EUR", "GBP"):
+        raise ValueError("unknown currency")
+    try:
+        when = datetime.fromisoformat(form.get("date", "")).replace(tzinfo=now.tzinfo)
+    except ValueError:
+        raise ValueError("date must be YYYY-MM-DD")
+    if when > now:
+        raise ValueError("a sale cannot be in the future")
+    url = (form.get("url") or "").strip()
+    if url and not url.startswith(("http://", "https://")):
+        raise ValueError("link must start with http(s)://")
+    kind = EvidenceType.ACCEPTED_OFFER if form.get("kind") == "accepted_offer" else EvidenceType.INDEPENDENT_TRANSACTION
+    oid = f"manual:{uuid.uuid4().hex[:12]}"
+    st.add_observation(MarketObservation(
+        id=oid, evidence_type=kind, source="manual", original_amount=amount, currency=cur, event_time=when, capture_time=now,
+        source_url=url or f"cardman://manual/{oid}", printing_candidates=(pid,), grade_company=form.get("grade_company") or None,
+        grade=(form.get("grade") or "").strip() or None, synthetic_fixture=False, raw_ref="recorded in the UI"), now=now)
+    return oid
 
 
 HOME_CSS = """
