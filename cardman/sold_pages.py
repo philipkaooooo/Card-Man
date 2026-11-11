@@ -333,6 +333,38 @@ def parse_yahoo_closed(root: Node, captured: datetime) -> list[SoldRow]:
     return rows
 
 
+def yahoo_next_data(html: str, captured: datetime) -> list[SoldRow]:
+    """Yahoo! Auctions now renders results from a JSON block (__NEXT_DATA__) rather than Product__ list items.
+    Only the sale fields are read; the seller object in each item is never touched or stored."""
+    import json
+    m = re.search(r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
+    if not m:
+        return []
+    try:
+        data = json.loads(m.group(1))
+        items = data["props"]["pageProps"]["initialState"]["search"]["items"]["listing"]["items"]
+    except (ValueError, KeyError, TypeError):
+        return []
+    rows = []
+    for it in items:
+        aid, title, price = it.get("auctionId"), (it.get("title") or "").strip(), it.get("price")
+        if not (aid and title and isinstance(price, (int, float)) and price > 0) or it.get("isNoPrice"):
+            continue
+        try:
+            when = datetime.fromisoformat(it["endTime"]).astimezone(timezone.utc) if it.get("endTime") else None
+        except ValueError:
+            when = None
+        bids = it.get("bidCount")
+        fixed = bool(it.get("isFixedPrice") or it.get("isFleamarketItem"))
+        notes = ["fixed price (flea market) sale" if fixed else f"{bids} bids" if bids is not None else "bids not shown"]
+        if when is None:
+            notes.append("end date not on the page")
+        rows.append(SoldRow("yahoo_auctions_jp", str(aid), title, Decimal(str(price)), "JPY", "sold", when or captured,
+                            f"https://page.auctions.yahoo.co.jp/jp/auction/{aid}",
+                            shipping=Decimal(0) if it.get("isFreeShipping") else None, date_is_capture=when is None, notes=notes))
+    return rows
+
+
 def parse_mercari_sold(root: Node, captured: datetime) -> list[SoldRow]:
     rows = []
     for a in root.find_all(lambda n: n.tag == "a" and re.search(r"/item/(m\d{6,})", n.attrs.get("href") or "")):
@@ -388,4 +420,6 @@ def read_page(name: str, data: bytes, captured: datetime) -> PageResult:
     site = detect(html, name)
     root = strip_people(parse_html(html))
     rows = PARSERS[site](root, captured) if site else []
+    if site == "yahoo" and not rows:
+        rows = yahoo_next_data(html, captured)
     return PageResult(site, rows, serialize(root), SYNTHETIC_MARK in html, hashlib.sha256(data).hexdigest())

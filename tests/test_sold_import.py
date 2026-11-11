@@ -252,3 +252,18 @@ def test_japanese_titles_put_japanese_printings_first():
     a = analyze("遊戯王 青眼の白龍 初期 ウルトラレア 美品", CAT)
     top = max(a.identity.candidates, key=lambda p: a.weights[p.id])
     assert top.region == Region.JP_OCG
+
+
+def test_yahoo_results_rendered_from_json_are_read_and_sellers_are_not_kept():
+    # Yahoo! Auctions moved its results into a __NEXT_DATA__ JSON block (seen on a live page 2026-11-11).
+    from datetime import datetime, timezone
+    from pathlib import Path
+    from cardman.sold_pages import read_page
+    data = (Path(__file__).parent / "data" / "sold_pages" / "yahoo_closed_nextjs.html").read_bytes()
+    r = read_page("yahoo.html", data, datetime(2026, 11, 11, tzinfo=timezone.utc))
+    assert r.site == "yahoo" and r.synthetic and [x.item_id for x in r.rows] == ["x100000001", "m100000002"]
+    first = r.rows[0]
+    assert first.price == 12800 and first.currency == "JPY" and first.sold_at == datetime(2026, 11, 10, 12, 3, 11, tzinfo=timezone.utc)
+    assert not first.date_is_capture and r.rows[1].shipping == 0 and "flea market" in r.rows[1].notes[0]
+    assert r.rows[1].flags()["is_lot"]
+    assert "SYNTHETIC-SELLER" not in r.stored_html
