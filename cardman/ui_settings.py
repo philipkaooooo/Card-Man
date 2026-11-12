@@ -1,0 +1,104 @@
+"""Settings: display, your costs, where the data comes from, and the advanced tools kept out of the way."""
+from __future__ import annotations
+
+import html
+import json
+import os
+from datetime import datetime
+from urllib.parse import urlencode
+
+
+def e(v) -> str:
+    return html.escape("" if v is None else str(v), quote=True)
+
+
+def _q(st, sql, args=()):
+    try:
+        return st.db.execute(sql, args).fetchone()
+    except Exception:
+        return None
+
+
+def _ago(ts, now: datetime) -> str:
+    if not ts:
+        return "never"
+    try:
+        t = ts if isinstance(ts, datetime) else datetime.fromisoformat(str(ts))
+    except ValueError:
+        return str(ts)
+    m = (now - t).total_seconds() / 60
+    return "just now" if m < 1 else f"{m:.0f} min ago" if m < 90 else f"{m / 60:.0f} h ago" if m < 72 * 60 else f"{m / 1440:.0f} days ago"
+
+
+def _row(name: str, state: str, detail: str, ok: bool | None) -> str:
+    dot = {True: "good", False: "crit", None: "muted"}[ok]
+    return (f'<tr><td><span class="sdot {dot}"></span><b>{e(name)}</b></td><td>{e(state)}</td>'
+            f'<td class="fg2">{detail}</td></tr>')
+
+
+def view_settings(st, now: datetime, cur: str, theme: str, profile: dict | None, engine_status: dict, path: str = "/settings") -> str:
+    def toggle(param, opts, on):
+        return '<span class="curs">' + "".join(
+            f'<a href="/{param}?{urlencode({"c" if param == "currency" else "t": v, "back": path})}" class="{"on" if v == on else ""}">{e(label)}</a>'
+            for v, label in opts) + '</span>'
+    display = ('<section><h2>Display</h2><table class="compact"><tr><td>Currency</td><td>' + toggle("currency", (("USD", "USD"), ("TWD", "TWD")), cur)
+               + '</td><td class="fg2">Every price on every page.</td></tr><tr><td>Look</td><td>'
+               + toggle("theme", (("market", "Market"), ("vault", "Vault")), theme)
+               + '</td><td class="fg2">Vault is the high-end look and only shows listings around $280 and up, or graded.</td></tr></table></section>')
+
+    assumed = (profile or {}).get("_assumed", True)
+    costs = ('<section><h2>Your costs</h2>'
+             + ('<p class="note bad"><b>Still the assumed starter numbers.</b> Every max-buy price depends on these: set your real fees and shipping.</p>'
+                if assumed else '<p class="fg2">Using your saved profile.</p>')
+             + (f'<p class="fg2">Target return {float(profile.get("target_return", 0)) * 100:.0f}% · cost of money '
+                f'{float(profile.get("capital_cost_monthly", 0)) * 100:.1f}%/month · amounts in {e(profile.get("home_currency"))}</p>' if profile else "")
+             + '<p><a class="btn" href="/costs">Edit costs</a></p></section>')
+
+    last = _q(st, "SELECT at, data_json FROM engine_run ORDER BY at DESC LIMIT 1")
+    lr = json.loads(last[1]) if last else {}
+    routes = {r.get("name"): r for r in lr.get("routes") or []}
+    sold = lr.get("ebay_sold") or {}
+    watch = _q(st, "SELECT COUNT(*), SUM(sold_qty IS NOT NULL) FROM ebay_sold_watch") or (0, 0)
+    auto_sales = _q(st, "SELECT COUNT(*) FROM observation WHERE source='ebay_browse:sold_count' AND evidence_type='MARKETPLACE_MARKED_SOLD'") or (0,)
+    real_sold = _q(st, "SELECT COUNT(*) FROM observation WHERE synthetic=0 AND evidence_type IN ('MARKETPLACE_MARKED_SOLD','ACCEPTED_OFFER','INDEPENDENT_TRANSACTION')") or (0,)
+    imports = _q(st, "SELECT COUNT(*) FROM import_row") or (0,)
+    fx = _q(st, "SELECT mid, as_of, source FROM fx_rate WHERE base='USD' AND quote='TWD' ORDER BY as_of DESC LIMIT 1")
+    keys = bool(os.environ.get("EBAY_CLIENT_ID") and os.environ.get("EBAY_CLIENT_SECRET"))
+    webhook = bool(os.environ.get("EBAY_DELETIONS_URL") and os.environ.get("EBAY_DELETIONS_SECRET"))
+    every = engine_status.get("every_min") or 0
+    eng_state = ("checking now" if engine_status.get("running") else f"every {every:g} min while CardMan is open") if every else "only when you press check"
+    rows = [
+        _row("Engine", eng_state, f'last check {e(_ago(last[0] if last else None, now))}'
+             + (f' · next in {max(0, (engine_status["next"] - now).total_seconds() / 60):.0f} min' if engine_status.get("next") else "")
+             + (f' · <span class="bad">{e(engine_status["error"])}</span>' if engine_status.get("error") else ""), bool(last)),
+        _row("eBay listings", "on" if (routes.get("ebay") or {}).get("on") else "off",
+             e((routes.get("ebay") or {}).get("detail") or ("keys found" if keys else "add your eBay keys to .env")), (routes.get("ebay") or {}).get("on")),
+        _row("eBay sales (sold counts)", f"{watch[1] or 0:,} listings watched",
+             f"{auto_sales[0]:,} sales recorded so far · {sold.get('calls_today', 0)} API calls today (cap 4,000)", bool(watch[1])),
+        _row("Sales you added", f"{imports[0]:,} rows imported", f"{real_sold[0]:,} real sold records in total", bool(real_sold[0]) or None),
+        _row("Account deletion webhook", "connected" if webhook else "not set on this Mac",
+             "eBay notifications are drained into your data on every check" if webhook else "deploy it, then set EBAY_DELETIONS_URL and _SECRET", webhook),
+        _row("Exchange rates", f"1 USD = {float(fx[0]):.2f} TWD" if fx else "none yet", f"{e(fx[2])}, {e(str(fx[1])[:10])}" if fx else "fetched on each check", bool(fx)),
+        _row("Guide prices (YGOPRODeck)", "on" if (routes.get("ygoprodeck") or {}).get("on") else "off", "leads only; never used as a value", None),
+        _row("Inbox folder", "on", e((routes.get("inbox") or {}).get("detail") or "~/card-man/data/inbox"), None),
+    ]
+    sources = ('<section><h2>Data sources</h2><table class="srcs">' + "".join(rows) + '</table>'
+               '<form method="post" action="/engine/tick" class="inline"><input type="hidden" name="t" value="__TOKEN__">'
+               '<button>Check for new listings now</button></form></section>')
+
+    adv = (("Deals", "/deals", "Full valuations behind escalated listings: the math step by step, YES / WAIT / NO."),
+           ("Scan a listing", "/scan", "Paste any listing title to see what it could be and what each version resells for."),
+           ("Evidence", "/evidence", "Every recorded sale and ask, why each is or isn't used, coverage per printing."),
+           ("Results", "/results", "Your own buys, sales and lessons: what really happened after each decision."),
+           ("Engine details", "/opportunities/engine", "Raw engine queue, market signals and the last check's report."))
+    advanced = ('<section id="advanced"><h2>Advanced</h2><p class="why">Tools and diagnostics. Everything here also feeds the main pages.</p>'
+                '<ul class="advlist">' + "".join(f'<li><a href="{h}">{e(t)}</a><span class="fg2">{e(d)}</span></li>' for t, h, d in adv) + '</ul></section>')
+    return '<h1>Settings</h1>' + display + costs + sources + advanced
+
+
+SETTINGS_CSS = """
+.sdot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:8px;background:var(--muted)}.sdot.good{background:var(--good)}
+.sdot.crit{background:var(--crit)}table.srcs td{padding:8px}.advlist{list-style:none;padding:0;margin:0;display:grid;gap:8px}
+.advlist li{display:grid;grid-template-columns:160px 1fr;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+@media(max-width:600px){.advlist li{grid-template-columns:1fr}}
+"""

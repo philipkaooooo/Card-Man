@@ -475,6 +475,8 @@ font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;font-we
 """
 
 HOME_JS = r"""
+(function(){document.addEventListener('keydown',function(ev){var t=ev.target;if(ev.key!=='/'||ev.metaKey||ev.ctrlKey||
+/INPUT|TEXTAREA|SELECT/.test(t.tagName)||t.isContentEditable)return;var s=document.querySelector('input[data-suggest]');if(s){ev.preventDefault();s.focus();s.select()}})})();
 (function(){var forms=document.querySelectorAll('form.search');forms.forEach(function(f){var inp=f.querySelector('input[data-suggest]'),
 box=f.querySelector('.sugg');if(!inp||!box)return;var t=null,items=[],sel=-1,last='';
 function render(list){box.textContent='';items=[];sel=-1;if(!list.length){box.hidden=true;return}

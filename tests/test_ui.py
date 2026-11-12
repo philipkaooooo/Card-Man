@@ -182,12 +182,19 @@ def app2(tmp_path):
     srv.shutdown()
 
 
-def test_left_menu_and_currency_next_to_logo(app2):
+def test_one_header_with_five_places_and_old_pages_still_reachable(app2):
     h = app2.get("/deals?syn=1")
-    assert h.index('class="logo"') < h.index('class="curs"') < h.index("<aside>")
-    for path in ("/scan", "/results", "/evidence", "/import"):
-        assert f'href="{path}"' in h
-    assert 'aria-current="page">Deals' in h
+    nav = h[h.index('<nav class="main"'):h.index("</nav>")]
+    assert nav.count("<a ") == 5 and all(x in nav for x in (">Home<", ">Listings<", ">Cards<", ">Add sales<", ">Settings<"))
+    assert 'aria-current="page">Settings' in nav                      # Deals lives under Settings now
+    assert h.index('class="logo"') < h.index("<nav") < h.index('class="curs"')
+    assert "← Settings" in h
+    s = app2.get("/settings")
+    for path in ("/deals", "/scan", "/evidence", "/results", "/opportunities/engine", "/costs"):
+        assert f'href="{path}"' in s
+    for path in ("/scan", "/results", "/evidence", "/import", "/costs", "/opportunities", "/search", "/listings", "/cards",
+                 "/add-sales", "/sales", "/advanced", "/home"):
+        assert "<!doctype" in app2.get(path)
 
 
 def test_scan_page(app2):

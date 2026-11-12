@@ -275,40 +275,51 @@ CURRENCIES = ("USD", "TWD")
 
 
 ON = ' class="on" aria-current="page"'
-NAV = (("Browse", (("home", "Home", "/"), ("search", "Card search", "/search"))),
-       ("Decide", (("opportunities", "Listings", "/opportunities"), ("deals", "Deals", "/deals"),
-                   ("scan", "Scan a listing", "/scan"))),
-       ("Evidence", (("evidence", "Evidence", "/evidence"), ("import", "Import sales", "/import"))),
-       ("Learn", (("results", "Results", "/results"),)),
-       ("Setup", (("costs", "Your costs", "/costs"),)))
+# One header, five places. Every older page still exists and belongs to one of them.
+NAV = (("home", "Home", "/"), ("listings", "Listings", "/opportunities"), ("cards", "Cards", "/search"),
+       ("add", "Add sales", "/import"), ("settings", "Settings", "/settings"))
+NAV_OF = {"home": "home", "opportunities": "listings", "search": "cards", "import": "add", "costs": "settings", "settings": "settings",
+          "deals": "settings", "scan": "settings", "evidence": "settings", "results": "settings", "engine": "settings"}
+SHELL_CSS = """
+body{display:flex;flex-direction:column;min-height:100vh}
+header.top{position:sticky;top:0;z-index:30;background:color-mix(in srgb,var(--surface) 92%,transparent);backdrop-filter:blur(8px);
+border-bottom:1px solid var(--line);padding:0 20px;display:flex;align-items:center;gap:18px;height:58px}
+header.top .logo{font-weight:800;font-size:17px;color:var(--fg);text-decoration:none;letter-spacing:-.01em}
+nav.main{display:flex;gap:2px;align-items:center}nav.main a{color:var(--fg2);text-decoration:none;padding:7px 12px;border-radius:8px;
+font-weight:550;font-size:14px;white-space:nowrap}nav.main a:hover{background:var(--soft);color:var(--fg)}
+nav.main a.on{color:var(--fg);background:var(--soft);box-shadow:inset 0 -2px 0 var(--accent)}
+header.top .hsearch{flex:1;max-width:440px;margin-left:auto}header.top .curs{flex:none}
+main.page{width:100%;max-width:1180px;margin:0 auto;padding:22px 20px 40px;flex:1}
+.crumb-back{display:inline-block;margin:0 0 10px;color:var(--fg2);text-decoration:none;font-size:13px}.crumb-back:hover{color:var(--fg)}
+footer.foot{border-top:1px solid var(--line);color:var(--muted);font-size:12px;padding:12px 20px;text-align:center}
+@media(max-width:860px){header.top{flex-wrap:wrap;height:auto;padding:8px 12px;gap:8px}nav.main{order:3;width:100%;overflow-x:auto}
+header.top .hsearch{order:2;flex-basis:100%;max-width:none;margin:0}main.page{padding:14px 12px 30px}}
+"""
 
 
 def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str = "", cur: str = "USD",
-         path: str = "/", theme: str = "market", q: str = "") -> bytes:
+         path: str = "/", theme: str = "market", q: str = "", back: tuple[str, str] | None = None) -> bytes:
     from .ui_home import HOME_CSS, THEMES, header_search
     from .ui_import import IMPORT_CSS
     from .ui_listing import LISTING_CSS
+    from .ui_settings import SETTINGS_CSS
     theme = theme if theme in THEMES else "market"
-    themes = ('<span class="themes" role="group" aria-label="Look">' + "".join(
-        f'<a href="/theme?{urlencode({"t": t, "back": path})}" class="{"on" if t == theme else ""}">{t.title()}</a>'
-        for t in THEMES) + '</span>')
-    hsearch = "" if nav == "home" else f'<div class="hsearch">{header_search(q)}</div>'
-    groups = []
-    for label, items in NAV:
-        links = "".join(f'<a href="{h}"{ON if k == nav else ""}>{e(t)}</a>' for k, t, h in items)
-        groups.append(f'<details open><summary>{e(label)}</summary><nav>{links}</nav></details>')
+    where = NAV_OF.get(nav, "")
+    links = "".join(f'<a href="{h}"{ON if k == where else ""}>{e(t)}</a>' for k, t, h in NAV)
     curs = ('<span class="curs" role="group" aria-label="Display currency">' + "".join(
         f'<a href="/currency?{urlencode({"c": c, "back": path})}" class="{"on" if c == cur else ""}">{c}</a>'
         for c in CURRENCIES) + '</span>')
-    here = next((t for _, items in NAV for k, t, _h in items if k == nav), "Menu")
+    hsearch = "" if nav == "home" else f'<div class="hsearch">{header_search(q)}</div>'
     flash = (f'<div class="note ok">{e(msg)}</div>' if msg else "") + (f'<div class="note bad">{e(err)}</div>' if err else "")
+    crumb = f'<a class="crumb-back" href="{e(back[1])}">← {e(back[0])}</a>' if back else ""
     tz = datetime.now().astimezone().strftime("UTC%z")
     return (f'<!doctype html><html lang="en" data-theme="{"vault" if theme == "vault" else "light"}"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)} · CardMan</title>'
-            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}</style></head><body><header><a class="logo" href="/"><b>CardMan</b></a>{curs}{themes}{hsearch}'
-            f'<span class="store">{e(store)} · times {e(tz)}</span></header>'
-            f'<div class="shell"><aside><details class="menu" open><summary>{e(here)}</summary>{"".join(groups)}</details></aside>'
-            f'<main>{flash}{body}</main></div><script src="/static/ui.js"></script></body></html>').encode()
+            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{SHELL_CSS}</style></head><body>'
+            f'<header class="top"><a class="logo" href="/">CardMan</a><nav class="main" aria-label="Main">{links}</nav>{hsearch}{curs}</header>'
+            f'<main class="page">{crumb}{flash}{body}</main>'
+            f'<footer class="foot">Private to this Mac · data in {e(store)} · times {e(tz)} · press <kbd>/</kbd> to search</footer>'
+            '<script src="/static/ui.js"></script></body></html>').encode()
 
 
 # -- display currency ---------------------------------------------------------------------------
@@ -1697,13 +1708,15 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     return v
             return "market"
 
-        def _page(self, nav, title, body, qs):
+        def _page(self, nav, title, body, qs, crumb=None):
+            if crumb is None and nav in ("deals", "scan", "evidence", "results", "engine", "costs"):
+                crumb = ("Settings", "/settings")
             u = urlsplit(self.path)
             back = u.path + ("?" + urlencode({k: v[0] for k, v in qs.items() if k not in ("msg", "err")})
                              if any(k not in ("msg", "err") for k in qs) else "")
             self._send(200, page(title, body, nav=nav, store=store_path, cur=self._cur(), path=back,
                                  msg=qs.get("msg", [""])[0], err=qs.get("err", [""])[0], theme=self._theme(),
-                                 q=qs.get("q", [""])[0][:120] if nav == "search" else ""))
+                                 q=qs.get("q", [""])[0][:120] if nav == "search" else "", back=crumb))
 
         def do_GET(self):
             u = urlsplit(self.path)
@@ -1753,8 +1766,25 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                 self.send_header("Location", back)
                 self.send_header("Content-Length", "0")
                 return self.end_headers()
+            ALIASES = {("listings",): "/opportunities", ("cards",): "/search", ("add-sales",): "/import", ("sales",): "/import",
+                       ("advanced",): "/settings#advanced", ("home",): "/"}
+            if tuple(parts) in ALIASES:
+                st.db.close()
+                self.send_response(301)
+                self.send_header("Location", ALIASES[tuple(parts)] + ("?" + u.query if u.query else ""))
+                self.send_header("Content-Length", "0")
+                return self.end_headers()
             try:
-                if not parts:
+                if parts == ["settings"]:
+                    from .ui_settings import view_settings
+                    try:
+                        from .engine import load_profile
+                        prof = load_profile()
+                    except Exception:
+                        prof = None
+                    self._page("settings", "Settings", view_settings(st, now, self._cur(), self._theme(), prof, ENGINE_STATUS)
+                               .replace("__TOKEN__", token), qs)
+                elif not parts:
                     from .ui_home import view_home
                     try:
                         from .engine import load_profile
@@ -1778,15 +1808,15 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     from .ui_home import view_card
                     self._page("search", (cards.card(parts[1]) or {}).get("name_en") or parts[1],
                                view_card(st, cards, parts[1], now, self._cur(), book=_book(st, now), catalog=catalog() if catalog else None,
-                                         token=token), qs)
+                                         token=token), qs, crumb=("Cards", "/search"))
                 elif parts[0] == "deal" and len(parts) == 2:
-                    self._page("deals", parts[1], view_deal(st, parts[1], now, token, self._cur()), qs)
+                    self._page("deals", "Deal", view_deal(st, parts[1], now, token, self._cur()), qs, crumb=("Deals", "/deals"))
                 elif parts == ["evidence"]:
                     self._page("evidence", "Evidence", view_evidence(st, now, qs.get("printing", [""])[0] or None,
                                                                      qs.get("syn", [""])[0] == "1"), qs)
                 elif parts[0] == "obs" and len(parts) == 2:
                     oid = unquote(parts[1])
-                    self._page("evidence", oid, view_obs(st, oid, now, token), qs)
+                    self._page("evidence", "Record", view_obs(st, oid, now, token), qs, crumb=("Evidence", "/evidence"))
                 elif parts == ["import"]:
                     from .ui_import import view_import as view_import_pages
                     csv_form = view_import(token).replace("<h1>Import</h1>", "<h2>Or a CSV you prepared</h2>", 1)
@@ -1811,7 +1841,7 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                                              t_filter=t if t in ("any", "singles", "lots") else "any", home_cur=M.cur).replace(
                                        '</p>', '</p>' + tick, 1), qs)
                 elif parts == ["opportunities", "engine"]:
-                    self._page("opportunities", "Engine", view_opportunities(st, now, token, self._cur(), qs.get("show", ["open"])[0]), qs)
+                    self._page("engine", "Engine details", view_opportunities(st, now, token, self._cur(), qs.get("show", ["open"])[0]), qs)
                 elif parts[0] == "opp" and len(parts) == 2:
                     from .ui_listing import view_one
                     k = unquote(parts[1])
@@ -1822,7 +1852,7 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                         prof = load_profile()
                     except Exception:
                         prof = None
-                    self._page("opportunities", k, view_one(st, cards, k, now, token, EngineMoney(st, _engine_home(st), self._cur(), now), prof), qs)
+                    self._page("opportunities", "Listing", view_one(st, cards, k, now, token, EngineMoney(st, _engine_home(st), self._cur(), now), prof), qs, crumb=("Listings", "/opportunities"))
                 elif parts == ["costs"]:
                     self._page("costs", "Your costs", view_costs(token), qs)
                 elif parts == ["scan"]:
