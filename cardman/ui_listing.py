@@ -167,53 +167,91 @@ def _type_label(meta: dict, d: dict) -> str:
 
 # -- the list ---------------------------------------------------------------------------------------------------------
 
-def view_list(st, cards, now, M, *, v_filter: str, t_filter: str, home_cur: str) -> str:
-    rows = st.db.execute("SELECT o.key, o.status, o.payload_json FROM opportunity o").fetchall()
-    items = []
-    for key, status, pj in rows:
-        d = json.loads(pj)
-        items.append((key, status, d, verdict(d, status, M)))
-    counts = {c: sum(1 for i in items if i[3].code == c) for c in ORDER}
-    is_lot = lambda d: "LOT" in (d.get("kinds") or [])
-    shown = [i for i in items if (v_filter == "all" and i[3].code != PASS) or i[3].code == v_filter or (v_filter == "every")]
-    if t_filter == "singles":
-        shown = [i for i in shown if not is_lot(i[2])]
-    elif t_filter == "lots":
-        shown = [i for i in shown if is_lot(i[2])]
-    shown.sort(key=lambda i: (ORDER[i[3].code], -(i[3].margin if i[3].margin is not None else -1e12), -(i[2].get("priority") or 0)))
-
-    def chip(param, val, text, n=None):
-        on = (v_filter if param == "v" else t_filter) == val
-        q = {"v": v_filter, "t": t_filter, param: val}
-        return (f'<a class="fchip{" on" if on else ""}" href="/opportunities?v={e(q["v"])}&t={e(q["t"])}">{e(text)}'
-                + (f' <b>{n}</b>' if n is not None else "") + '</a>')
-    chips = ('<div class="fchips">' + chip("v", "all", "All but pass", sum(counts[c] for c in (BUY, CHECK, WATCH)))
-             + chip("v", BUY, "Buy", counts[BUY]) + chip("v", CHECK, "Needs check", counts[CHECK]) + chip("v", WATCH, "Watch", counts[WATCH])
-             + chip("v", PASS, "Pass", counts[PASS]) + '<span class="sep"></span>' + chip("t", "any", "Singles and lots")
-             + chip("t", "singles", "Singles") + chip("t", "lots", "Lots") + '</div>')
-    cards_html = []
-    for key, status, d, v in shown[:150]:
-        top = v.top
-        name, sub = d.get("title") or key, ""
-        pc = _passcode(top)
-        c = cards.card(pc) if (pc and cards is not None and not is_lot(d)) else None
-        if c and d.get("printing_id"):
-            name = c.get("name_en") or name
-        if top and top.get("label"):
-            sub = top["label"].split(" · ")
-            sub = " · ".join(sub[:3])
-        mb = top.get("max_buy") if top and top.get("basis") == "sales" else None
-        cards_html.append(
-            f'<a class="lrow" href="/opp/{quote(key, safe="")}">{_art(d, v)}'
+def row_html(key: str, d: dict, v: Verdict, cards, M, now: datetime) -> str:
+    """One listing as one line: picture, card, verdict, all-in vs max buy, confidence, time left. Shared by Home and Listings."""
+    top = v.top
+    lot = "LOT" in (d.get("kinds") or [])
+    name, sub = d.get("title") or key, ""
+    pc = _passcode(top)
+    c = cards.card(pc) if (pc and cards is not None and not lot) else None
+    if c and d.get("printing_id"):
+        name = c.get("name_en") or name
+    if top and top.get("label"):
+        sub = " · ".join(top["label"].split(" · ")[:3])
+    mb = top.get("max_buy") if top and top.get("basis") == "sales" else None
+    return (f'<a class="lrow" href="/opp/{quote(key, safe="")}">{_art(d, v)}'
             f'<span class="lr-main"><span class="lr-title">{e(name)}</span><span class="lr-sub">{e(sub) or e(d.get("market") or "")}</span>'
             f'<span class="lr-reason">{e(v.reason)}</span></span>'
             f'<span class="lr-side">{badge(v)}<span class="lr-money"><small>All-in</small> {M(d.get("all_in_home"))}'
             f'{"<small> · max buy</small> " + M(mb) if mb is not None else ""}</span>'
             f'<span class="lr-meta">{conf_meter(v)} <span class="muted small">{e(_left(d.get("ends_at"), now))}</span></span></span></a>')
-    hidden = "" if v_filter in (PASS, "every") else f'<p class="muted small">{counts[PASS]} passed listings are hidden. <a href="/opportunities?v=PASS&t={e(t_filter)}">Show them</a>.</p>'
-    return ('<h1>Listings</h1><p class="sub">Each listing as one decision: Buy, Needs your check, Watch or Pass. Buy only ever appears when real '
-            'sales back the price.</p>' + chips + hidden
-            + (f'<div class="lrows">{"".join(cards_html)}</div>' if cards_html else '<p class="empty">Nothing here with these filters.</p>'))
+
+
+def decisions(st, M) -> list[tuple]:
+    """Every listing with its verdict: (key, status, payload, verdict)."""
+    out = []
+    for key, status, pj in st.db.execute("SELECT key, status, payload_json FROM opportunity"):
+        d = json.loads(pj)
+        out.append((key, status, d, verdict(d, status, M)))
+    return out
+
+
+SITES = (("any", "All sites"), ("ebay", "eBay"), ("yahoo", "Yahoo! Auctions"), ("mercari", "Mercari"), ("other", "Other"))
+
+
+def site_of(key: str) -> str:
+    src = key.split(":", 1)[0].lower()
+    return "ebay" if src.startswith("ebay") else "yahoo" if src.startswith("yahoo") else "mercari" if src.startswith("mercari") else "other"
+
+
+def view_list(st, cards, now, M, *, v_filter: str, t_filter: str, home_cur: str, site: str = "any",
+              pmin: float | None = None, pmax: float | None = None) -> str:
+    items = decisions(st, M)
+    counts = {c: sum(1 for i in items if i[3].code == c) for c in ORDER}
+    is_lot = lambda d: "LOT" in (d.get("kinds") or [])
+    shown = [i for i in items if (v_filter == "all" and i[3].code != PASS) or i[3].code == v_filter or v_filter == "every"]
+    if t_filter == "singles":
+        shown = [i for i in shown if not is_lot(i[2])]
+    elif t_filter == "lots":
+        shown = [i for i in shown if is_lot(i[2])]
+    if site != "any":
+        shown = [i for i in shown if site_of(i[0]) == site]
+    k = float(getattr(M, "k", 1) or 1)                       # price filters are in the display currency
+    if pmin is not None:
+        shown = [i for i in shown if (i[2].get("all_in_home") or 0) * k >= pmin]
+    if pmax is not None:
+        shown = [i for i in shown if (i[2].get("all_in_home") or 0) * k <= pmax]
+    shown.sort(key=lambda i: (ORDER[i[3].code], -(i[3].margin if i[3].margin is not None else -1e12), -(i[2].get("priority") or 0)))
+    state = {"v": v_filter, "t": t_filter, "site": site, "min": "" if pmin is None else f"{pmin:g}", "max": "" if pmax is None else f"{pmax:g}"}
+
+    def href(**kw):
+        from urllib.parse import urlencode
+        q = {**state, **kw}
+        return "/opportunities?" + urlencode({a: b for a, b in q.items() if b not in ("", None)})
+
+    def chip(param, val, text, n=None):
+        on = state[param] == val
+        return f'<a class="fchip{" on" if on else ""}" href="{e(href(**{param: val}))}">{e(text)}' + (f' <b>{n}</b>' if n is not None else "") + '</a>'
+    bar = ('<div class="filterbar">'
+           '<div class="fchips">' + chip("v", "all", "All but pass", sum(counts[c] for c in (BUY, CHECK, WATCH)))
+           + chip("v", BUY, "Buy", counts[BUY]) + chip("v", CHECK, "Needs check", counts[CHECK]) + chip("v", WATCH, "Watch", counts[WATCH])
+           + chip("v", PASS, "Pass", counts[PASS]) + '</div><div class="fchips">'
+           + chip("t", "any", "Singles and lots") + chip("t", "singles", "Singles") + chip("t", "lots", "Lots")
+           + '<span class="sep"></span>' + "".join(chip("site", v, label) for v, label in SITES) + '</div>'
+           f'<form class="prange" method="get" action="/opportunities">'
+           + "".join(f'<input type="hidden" name="{a}" value="{e(b)}">' for a, b in state.items() if a in ("v", "t", "site"))
+           + f'<label>All-in from <input name="min" value="{e(state["min"])}" inputmode="decimal" size="6"></label>'
+           f'<label>to <input name="max" value="{e(state["max"])}" inputmode="decimal" size="6"></label>'
+           f'<span class="muted small">{e(getattr(M, "cur", ""))}</span><button>Apply</button>'
+           + (f'<a class="small" href="{e(href(min="", max=""))}">clear</a>' if pmin is not None or pmax is not None else "")
+           + '</form></div>')
+    rows = [row_html(key, d, v, cards, M, now) for key, status, d, v in shown[:150]]
+    hidden = "" if v_filter in (PASS, "every") else f'<p class="muted small">{counts[PASS]} passed listings are hidden. <a href="{e(href(v=PASS))}">Show them</a>.</p>'
+    more = f'<p class="muted small">Showing the first 150 of {len(shown)}. Narrow the filters to see the rest.</p>' if len(shown) > 150 else ""
+    return ('<h1>Listings</h1><p class="sub">Each listing as one decision. Buy only ever appears when real sales back the price.</p>'
+            + bar + hidden
+            + (f'<div class="lrows">{"".join(rows)}</div>' if rows else '<p class="empty">Nothing matches these filters. Try “All but pass” or clear the price range.</p>')
+            + more)
 
 
 # -- one listing ------------------------------------------------------------------------------------------------------
@@ -361,7 +399,10 @@ align-items:center;justify-content:center;color:#fff;font-size:12px;background:v
 .vbadge.big{font-size:19px;padding:5px 18px 5px 6px}.vbadge.big .vi{width:28px;height:28px;font-size:15px}
 .conf-m{display:inline-flex;align-items:center;gap:2px;vertical-align:middle;cursor:help}.conf-m i{width:6px;height:12px;border-radius:2px;
 background:var(--line);display:inline-block}.conf-m i.on{background:var(--fg2)}.conf-m small{margin-left:5px;font-size:12px;color:var(--fg2)}
-.fchips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 10px;align-items:center}.fchips .sep{width:10px}
+.fchips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px;align-items:center}
+.filterbar{position:sticky;top:58px;z-index:20;background:var(--bg);padding:10px 0 4px;margin:0 0 6px;border-bottom:1px solid var(--line)}
+.prange{display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin:0 0 6px}.prange label{flex-direction:row;align-items:center;gap:6px}
+@media(max-width:860px){.filterbar{top:0;position:static}}.fchips .sep{width:10px}
 .fchip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:4px 12px;font-size:13px;color:var(--fg2);text-decoration:none}
 .fchip.on{background:var(--fg);color:var(--surface);border-color:var(--fg)}.fchip b{font-weight:700}
 .lrows{display:grid;gap:8px}.lrow{display:grid;grid-template-columns:56px minmax(0,1fr) auto;gap:14px;align-items:center;padding:10px 14px;

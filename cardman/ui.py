@@ -1791,7 +1791,8 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                         assumed = bool(load_profile().get("_assumed"))
                     except Exception:
                         assumed = True
-                    self._page("home", "Home", view_home(st, cards, now, self._cur(), self._theme(), assumed_costs=assumed), qs)
+                    EM = EngineMoney(st, _engine_home(st), self._cur(), now) if _engine_ready(st) else None
+                    self._page("home", "Home", view_home(st, cards, now, self._cur(), self._theme(), assumed_costs=assumed, EM=EM), qs)
                 elif parts == ["deals"]:
                     self._page("deals", "Deals", view_deals(st, now, self._cur(), qs.get("syn", [""])[0] == "1"), qs)
                 elif parts == ["search"]:
@@ -1838,7 +1839,9 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                                 '<button>Check for new listings now</button> <a class="small" href="/opportunities/engine">engine details</a></form>')
                         self._page("opportunities", "Listings",
                                    view_list(st, cards, now, M, v_filter=v if v in ("all", "BUY", "CHECK", "WATCH", "PASS", "every") else "all",
-                                             t_filter=t if t in ("any", "singles", "lots") else "any", home_cur=M.cur).replace(
+                                             t_filter=t if t in ("any", "singles", "lots") else "any", home_cur=M.cur,
+                                             site=qs.get("site", ["any"])[0] if qs.get("site", ["any"])[0] in ("any", "ebay", "yahoo", "mercari", "other") else "any",
+                                             pmin=_num(qs.get("min", [""])[0]), pmax=_num(qs.get("max", [""])[0])).replace(
                                        '</p>', '</p>' + tick, 1), qs)
                 elif parts == ["opportunities", "engine"]:
                     self._page("engine", "Engine details", view_opportunities(st, now, token, self._cur(), qs.get("show", ["open"])[0]), qs)
@@ -2050,6 +2053,13 @@ def catalog_loader(path: str):
                 box["c"] = cache.catalog() if cache.revision() else None
         return box["c"]
     return get
+
+
+def _num(v: str) -> float | None:
+    try:
+        return float(v.replace(",", "")) if v.strip() else None
+    except (ValueError, AttributeError):
+        return None
 
 
 ENGINE_LOCK = threading.Lock()

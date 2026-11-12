@@ -120,98 +120,80 @@ def _tile(key, title, price, currency, payload, M, *, ask_home=None, sub="") -> 
             f'<span class="tl-sub">{sub}</span>{note}</span></a>')
 
 
-def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", assumed_costs: bool = True) -> str:
+def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", assumed_costs: bool = True, EM=None) -> str:
+    """Search, then what needs you: Buy and Check first, then a few Watch singles. New singles and recent sales below."""
+    from .ui_listing import BUY, CHECK, WATCH, decisions, row_html
     M = Money(st, home, cur, now)
     vault = theme == "vault"
     have = _tables(st)
-    hero = ('<section class="hero">'
+    out = [('<section class="hero slim">'
             f'<h1>{"The Vault" if vault else "Find the exact card."}</h1>'
-            f'<p>{"High-value and graded listings only, with the evidence behind every number." if vault else "Every printing, every language, matched by passcode, with real sales behind the prices."}</p>'
             + _search_box(big=True) +
             '<p class="try">Try <a href="/search?q=Blue-Eyes+White+Dragon">Blue-Eyes White Dragon</a> · '
-            '<a href="/search?q=%E9%9D%92%E7%9C%BC%E3%81%AE%E7%99%BD%E9%BE%8D">青眼の白龍</a> · <a href="/search?q=LOB-EN001">LOB-EN001</a> · '
-            '<a href="/search?q=89631139">89631139</a></p></section>')
-    out = [hero]
+            '<a href="/search?q=%E9%9D%92%E7%9C%BC%E3%81%AE%E7%99%BD%E9%BE%8D">青眼の白龍</a> · <a href="/search?q=LOB-EN001">LOB-EN001</a></p></section>')]
+    if assumed_costs:
+        out.append('<p class="note slimnote">Max-buy prices use <b>assumed</b> costs. <a href="/settings">Set your real fees and shipping</a>.</p>')
 
-    if "opportunity" in have and "listing" in have:
-        rows = st.db.execute(
-            "SELECT o.key, o.status, o.kinds, o.payload_json, l.title, l.price, l.currency FROM opportunity o JOIN listing l ON l.key=o.key "
-            "WHERE o.status IN ('OPEN','ESCALATED') ORDER BY (o.status='ESCALATED') DESC, o.priority DESC LIMIT 200").fetchall()
-        tiles = []
-        for key, status, kinds, pj, title, price, currency in rows:
-            p = json.loads(pj)
-            ah = p.get("ask_home")
-            graded = bool(re.search(r"\b(PSA|BGS|CGC|ARS|SGC)\s*\d", title or "", re.I))
-            if vault and not ((ah or 0) >= float(VAULT_MIN_HOME) or graded):
-                continue
-            sub = chips(json.loads(kinds or "[]")) + (' <span class="chip good">Escalated</span>' if status == "ESCALATED" else "")
-            tiles.append(_tile(key, title, price, currency, p, M, ask_home=ah, sub=sub))
-            if len(tiles) == 8:
-                break
-        out.append('<section class="shelf"><div class="shelf-h"><h2>Worth a look</h2><a href="/opportunities">All opportunities →</a></div>'
-                   + (f'<div class="tiles-l">{"".join(tiles)}</div>' if tiles else
-                      '<p class="empty">Nothing open right now. New listings are checked on every engine pass.</p>') + '</section>')
+    if "opportunity" in have and EM is not None:
+        items = decisions(st, EM)
+        high = lambda d: (d.get("ask_home") or 0) >= float(VAULT_MIN_HOME) or re.search(r"\b(PSA|BGS|CGC|ARS|SGC)\s*\d", d.get("title") or "", re.I)
+        if vault:
+            items = [i for i in items if high(i[2])]
+        lot = lambda d: "LOT" in (d.get("kinds") or [])
+        by = lambda code, lots=False: [i for i in items if i[3].code == code and lot(i[2]) == lots]
+        buy, check, watch, watch_lots = by(BUY), by(CHECK), by(WATCH), by(WATCH, True)
+        rank = lambda i: (-(i[3].margin or -1e12), -(i[2].get("priority") or 0))
+        top = sorted(buy, key=rank) + sorted(check, key=rank)
+        rows = [row_html(k, d, v, idx, EM, now) for k, _s, d, v in top[:6]]
+        rows += [row_html(k, d, v, idx, EM, now) for k, _s, d, v in sorted(watch, key=rank)[:max(0, 8 - len(rows))]]
+        chips = ('<div class="fchips">'
+                 f'<a class="fchip" href="/opportunities?v=BUY">Buy <b>{len(buy)}</b></a>'
+                 f'<a class="fchip" href="/opportunities?v=CHECK">Needs your check <b>{len(check)}</b></a>'
+                 f'<a class="fchip" href="/opportunities?v=WATCH&t=singles">Watch <b>{len(watch)}</b></a>'
+                 f'<a class="fchip" href="/opportunities?v=WATCH&t=lots">Lots to look at <b>{len(watch_lots)}</b></a></div>')
+        out.append('<section class="shelf"><div class="shelf-h"><h2>Decisions for you</h2><a href="/opportunities">All listings →</a></div>' + chips
+                   + (f'<div class="lrows">{"".join(rows)}</div>' if rows else
+                      '<p class="empty">Nothing needs you right now. CardMan checks eBay every 15 minutes while it is open.</p>')
+                   + ('' if buy else '<p class="muted small">No Buy yet: a Buy needs real sold prices for the exact card. eBay sold counts add them '
+                      'automatically; you can also <a href="/import">add sales</a>.</p>') + '</section>')
 
+    if "listing" in have:
         recent = st.db.execute(
             "SELECT l.key, l.title, l.price, l.currency, o.payload_json FROM listing l LEFT JOIN opportunity o ON o.key=l.key "
             "WHERE l.ended_at IS NULL AND l.kind IN ('ask','bid','auction') AND COALESCE(o.status,'')<>'REJECTED' "
-            "ORDER BY l.first_seen DESC, l.rowid DESC LIMIT 200").fetchall()
-        rt, lots = [], []
+            "ORDER BY l.first_seen DESC, l.rowid DESC LIMIT 300").fetchall()
+        rt = []
         for key, title, price, currency, pj in recent:
             p = json.loads(pj) if pj else None
             ah = (p or {}).get("ask_home")
             if vault and not ((ah or 0) >= float(VAULT_MIN_HOME)):
                 continue
-            if "LOT" in ((p or {}).get("kinds") or []):
-                if len(lots) < 4:
-                    lots.append(_tile(key, title, price, currency, p, M, ask_home=ah))
-            elif _listing_art(p) and len(rt) < 12:
+            if "LOT" not in ((p or {}).get("kinds") or []) and _listing_art(p):
                 rt.append(_tile(key, title, price, currency, p, M, ask_home=ah))
-            if len(rt) == 12 and len(lots) == 4:
+            if len(rt) == 6:
                 break
-        out.append('<section class="shelf"><div class="shelf-h"><h2>Just listed</h2><span class="muted">single cards, newest first</span></div>'
-                   + (f'<div class="tiles-l">{"".join(rt)}</div>' if rt else '<p class="empty">No live single-card listings yet.</p>') + '</section>')
-        if lots:
-            out.append('<section class="shelf"><div class="shelf-h"><h2>New lots and collections</h2><a href="/opportunities">All →</a></div>'
-                       f'<div class="tiles-l">{"".join(lots)}</div></section>')
+        if rt:
+            out.append('<section class="shelf"><div class="shelf-h"><h2>New single cards</h2><a href="/opportunities?t=singles">More →</a></div>'
+                       f'<div class="tiles-l">{"".join(rt)}</div></section>')
 
-    if "market_signal" in have:
-        # Price and volume moves first; at most three "seller clearing stock" notes, biggest first.
-        sig = st.db.execute("SELECT kind, printing_id, at, detail_json FROM market_signal WHERE kind<>'SELLER_ACTIVITY' "
-                            "ORDER BY at DESC LIMIT 6").fetchall()
-        sellers = st.db.execute("SELECT kind, printing_id, at, detail_json FROM market_signal WHERE kind='SELLER_ACTIVITY' "
-                                "ORDER BY at DESC LIMIT 60").fetchall()
-        sellers.sort(key=lambda r: -(json.loads(r[3]).get("n") or 0))
-        sig += sellers[:3]
-        if sig:
-            li = []
-            for kind, pid, at, dj in sig:
-                d = json.loads(dj)
-                pc = passcode_of(pid)
-                name = (idx.card(pc) or {}).get("name_en") if pc else None
-                label = {"PRICE_SHIFT": "Price move", "VOLUME_SPIKE": "Selling fast", "SELLER_ACTIVITY": "Seller clearing stock"}.get(
-                    kind, kind.replace("_", " ").title())
-                li.append(f'<li><span class="chip info">{e(label)}</span> '
-                          + (f'<a href="/card/{e(pc)}">{e(name)}</a> · ' if name else "") + f'{e(_move_text(d.get("text", "")))}</li>')
-            out.append('<section class="shelf"><div class="shelf-h"><h2>Market moves</h2></div><ul class="moves">' + "".join(li) + '</ul></section>')
-
-    n_cards = len(idx.cards) if idx is not None and getattr(idx, "_loaded", False) else None
-    stats = []
-    if n_cards:
-        stats.append(f"<b>{n_cards:,}</b> cards")
-        stats.append(f"<b>{sum(len(v) for v in idx._prints.values()):,}</b> printings")
-    if "listing" in have:
-        stats.append(f"<b>{st.db.execute('SELECT COUNT(*) FROM listing').fetchone()[0]:,}</b> listings tracked")
-    sold = st.db.execute("SELECT COUNT(*) FROM observation WHERE synthetic=0 AND evidence_type IN "
-                         "('MARKETPLACE_MARKED_SOLD','ACCEPTED_OFFER','INDEPENDENT_TRANSACTION')").fetchone()[0]
-    stats.append(f"<b>{sold:,}</b> real sales recorded" + ("" if sold else ' · <a href="/import">import sold prices</a> to turn leads into deals'))
-    out.append('<p class="statline">' + " · ".join(stats) + '</p>')
-    fx = st.db.execute("SELECT mid, as_of, source FROM fx_rate WHERE base='USD' AND quote='TWD' ORDER BY as_of DESC LIMIT 1").fetchone() \
-        if "fx_rate" in have else None
-    out.append('<p class="statline small">' + (f"FX: 1 USD = {float(fx[0]):.2f} TWD, {e(fx[2])}, {e(fx[1][:10])}" if fx else "FX: no rate stored yet")
-               + ' · Prices shown on listings are asking prices, not values. '
-               + ('<b>Costs are assumed starter numbers</b>: <a href="/costs">set yours</a> before trusting any max-buy price.'
-                  if assumed_costs else "Costs: your profile.") + '</p>')
+    sold = st.db.execute(
+        "SELECT o.id, o.data_json FROM observation o WHERE o.synthetic=0 AND o.evidence_type IN "
+        "('MARKETPLACE_MARKED_SOLD','ACCEPTED_OFFER','INDEPENDENT_TRANSACTION') ORDER BY o.event_time DESC LIMIT 6").fetchall()
+    srows = []
+    for oid, dj in sold:
+        d = json.loads(dj)
+        cands = d.get("printing_candidates") or []
+        pc = passcode_of(cands[0]) if len(cands) == 1 else None
+        name = ((idx.card(pc) or {}).get("name_en") if (pc and idx is not None) else None) or (d.get("listing_id") or oid)
+        site = {"ebay_browse:sold_count": "eBay", "ebay": "eBay", "130point": "130point", "yahoo_auctions_jp": "Yahoo! Auctions",
+                "mercari_jp": "Mercari", "manual": "you"}.get(d.get("source"), d.get("source"))
+        srows.append(f'<li>{img(pc, "small", name)}<span><b>{e(name)}</b><br><span class="muted small">{e(site)} · {e(str(d.get("event_time"))[:10])}'
+                     f'{"" if len(cands) == 1 else " · printing not confirmed"}</span></span>'
+                     f'<span class="sold-p">{e(charts.fmt(float(d["original_amount"]), d["currency"]))}</span></li>')
+    out.append('<section class="shelf"><div class="shelf-h"><h2>Recently sold</h2><a href="/import">Add sales →</a></div>'
+               + (f'<ul class="soldlist">{"".join(srows)}</ul>' if srows else
+                  '<p class="empty">No real sales recorded yet. eBay sold counts start filling this in on their own; '
+                  'Yahoo! Auctions and Mercari come in with one click through <a href="/import">Add sales</a>.</p>') + '</section>')
     return "".join(out)
 
 
@@ -418,6 +400,10 @@ box-shadow:0 12px 32px rgba(0,0,0,.14);overflow:hidden;text-align:left}
 .sugg a.on,.sugg a:hover{background:var(--soft)}.sugg img,.sugg .ph{width:30px;height:44px;flex:none}
 .sugg b{display:block;font-weight:600}.sugg small{color:var(--muted)}
 section.hero{text-align:center;padding:46px 12px 26px;max-width:760px;margin:0 auto;background:none;border:0}
+section.hero.slim{padding:26px 12px 12px}.slimnote{max-width:760px;margin:0 auto 6px;font-size:13px}
+.soldlist{list-style:none;padding:0;margin:0;display:grid;gap:8px}.soldlist li{display:grid;grid-template-columns:40px 1fr auto;gap:12px;align-items:center;
+background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:8px 12px}.soldlist .card{width:40px;height:58px}
+.sold-p{font-weight:700;font-variant-numeric:tabular-nums}
 .hero h1{font-size:clamp(28px,5vw,40px);letter-spacing:-.02em;margin:0 0 6px;display:block}.hero>p{color:var(--fg2);font-size:16px;margin:0 0 22px}
 .hero .try{font-size:13px;color:var(--muted);margin:14px 0 0}.hero .try a{color:var(--fg2)}
 .shelf{background:none;border:0;padding:0;margin:26px 0}.shelf-h{display:flex;align-items:baseline;justify-content:space-between;margin:0 0 10px}

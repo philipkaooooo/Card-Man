@@ -168,8 +168,9 @@ def app2(tmp_path):
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{srv.server_address[1]}"
 
-    def get(path):
-        with urllib.request.urlopen(base + path) as r:
+    def get(path, cookie=None):
+        req = urllib.request.Request(base + path, headers={"Cookie": cookie} if cookie else {})
+        with urllib.request.urlopen(req) as r:
             return r.read().decode()
 
     def post(path, data):
@@ -259,3 +260,11 @@ def test_evidence_page_for_a_printing_with_no_records_explains_instead_of_failin
 def test_demo_valuations_are_hidden_from_deals_unless_asked(app):
     page = app.get("/deals")
     assert "No real deals yet" in page and "demo valuation" in page
+
+
+def test_currency_choice_applies_on_every_main_page(app2):
+    for path in ("/", "/opportunities", "/search?q=blue", "/import", "/settings", "/deals?syn=1"):
+        h = app2.get(path, cookie="cur=TWD")
+        assert 'class="on">TWD</a>' in h, path
+        h = app2.get(path)
+        assert 'class="on">USD</a>' in h, path
