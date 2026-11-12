@@ -1774,8 +1774,12 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                 elif parts == ["import"]:
                     from .ui_import import view_import as view_import_pages
                     csv_form = view_import(token).replace("<h1>Import</h1>", "<h2>Or a CSV you prepared</h2>", 1)
+                    from .capture import bookmarklet, capture_key, worth_pricing
+                    port = self.server.server_address[1]
                     self._page("import", "Import", view_import_pages(st, token, qs.get("batch", [""])[0] or None,
-                                                                     catalog() if catalog else None, csv_form), qs)
+                                                                     catalog() if catalog else None, csv_form,
+                                                                     bookmark=bookmarklet(port, capture_key()),
+                                                                     searches=worth_pricing(st, cards)), qs)
                 elif parts == ["opportunities"]:
                     self._page("opportunities", "Opportunities",
                                view_opportunities(st, now, token, self._cur(), qs.get("show", ["open"])[0]), qs)
@@ -1819,6 +1823,25 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                         form[name] = (part.get_payload(decode=True) or b"").decode()
             else:
                 form = {k: v[0] for k, v in parse_qs(raw.decode(), keep_blank_values=True).items()}
+            if parts == ["capture"]:
+                # The "Send to CardMan" bookmark posts from the marketplace's own page: it carries the capture key, not the
+                # form token, and only ever adds evidence.
+                from .capture import capture_key, file_name_for
+                if not secrets.compare_digest(form.get("k", ""), capture_key()):
+                    return self._send(403, page("Refused", "<h1>Refused</h1><p>This bookmark's key does not match. Add the bookmark "
+                                                "again from the Import page.</p>", nav="", store=store_path))
+                html_text = form.get("html", "")
+                if not html_text:
+                    return self._redirect("/import", err="the bookmark sent an empty page")
+                from .engine import Engine
+                from .sold_import import import_pages
+                try:
+                    eng = Engine(store_path, catalog=catalog() if catalog else None)
+                    res = import_pages(eng, [(file_name_for(form.get("url", "")), html_text.encode("utf-8"))], clock())
+                except Exception as x:
+                    return self._redirect("/import", err=f"Capture failed: {type(x).__name__}: {x}")
+                return self._redirect(f"/import?batch={res['batch']}", msg=f"Captured {res['rows']} sale(s) from the page; {res['new']} new.",
+                                      err="; ".join(res["errors"][:3]))
             if not secrets.compare_digest(form.get("t", ""), token):
                 return self._send(403, page("Refused", "<h1>Refused</h1><p>Form token mismatch. Reload the page.</p>",
                                             nav="", store=store_path))

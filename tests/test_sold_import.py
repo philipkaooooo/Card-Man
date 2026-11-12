@@ -267,3 +267,20 @@ def test_yahoo_results_rendered_from_json_are_read_and_sellers_are_not_kept():
     assert not first.date_is_capture and r.rows[1].shipping == 0 and "flea market" in r.rows[1].notes[0]
     assert r.rows[1].flags()["is_lot"]
     assert "SYNTHETIC-SELLER" not in r.stored_html
+
+
+def test_capture_route_needs_the_key_and_imports_the_page(ui, monkeypatch, tmp_path):
+    get, post, db = ui
+    monkeypatch.setattr("cardman.capture.KEY_FILE", tmp_path / "capture_key")
+    from cardman.capture import capture_key
+    key = capture_key(tmp_path / "capture_key")
+    html_text = (PAGES / "ebay_sold_results.html").read_text()
+    page = get("/import")
+    assert "Send to CardMan" in page and "javascript:" in page
+    try:
+        post("/capture", {"k": "wrong", "url": "https://www.ebay.com/sch/i.html", "html": html_text})
+        assert False, "a wrong key must be refused"
+    except urllib.error.HTTPError as x:
+        assert x.code == 403
+    url, body = post("/capture", {"k": key, "url": "https://www.ebay.com/sch/i.html", "html": html_text})
+    assert "Captured 4 sale(s)" in body and "/import?batch=" in url

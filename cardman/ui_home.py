@@ -309,12 +309,23 @@ def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalo
         + (f"<dt>Source</dt><dd>{ext}</dd>" if ext else "") + '</dl>'
         + (f'<details><summary>Other languages</summary><p class="small">{other}</p></details>' if other else "")
         + (f'<p class="small muted">Series: {e(", ".join(c["series"]))}</p>' if c.get("series") else "")
+        + _sold_links(c)
         + '</div></div>'
         f'<section><h2>All {len(rows)} printings</h2><p class="why">From the identity catalog. Prices are only from recorded sales of that exact '
         'printing (and edition); live asks are copies for sale right now. A scan appears only when its file is that printing.</p>'
         '<div class="wrap"><table class="prints"><tr><th></th><th>Region</th><th>Set code</th><th>Product</th><th>Rarity</th><th>Edition</th>'
         '<th class="n">Sales</th><th class="n">Low</th><th class="n">Mid</th><th class="n">Live asks</th><th></th></tr>'
         + "".join(rows) + '</table></div></section>' + (_sale_form(passcode, all_v, token, now) if token else ""))
+
+
+def _sold_links(c: dict) -> str:
+    from .capture import sold_search_links
+    links = sold_search_links(c.get("name_en"), c.get("name_ja"))
+    if not links:
+        return ""
+    return ('<p class="soldlinks"><b>Find sold prices:</b> ' + " · ".join(
+        f'<a href="{e(u)}" target="_blank" rel="noreferrer noopener">{e(label)}</a>' for label, u in links)
+        + ' <span class="small muted">then click your “Send to CardMan” bookmark on that page</span></p>')
 
 
 def _sale_form(passcode: str, variants, token: str, now: datetime) -> str:

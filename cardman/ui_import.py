@@ -54,8 +54,26 @@ def _status(o, confirmed, n_cands: int) -> tuple[str, str]:
     return "warnt", f"Could be {n_cands} printings: pick the right one to use this sale"
 
 
-def view_import(st, token: str, batch: str | None, catalog, csv_form: str) -> str:
-    drop = (
+def _capture_box(bookmark: str | None, searches: list[dict]) -> str:
+    if not bookmark:
+        return ""
+    rows = "".join(
+        f'<li><a href="/card/{e(s["passcode"])}">{e(s["name"])}</a>{" <span class=muted>" + e(s["code"]) + "</span>" if s.get("code") else ""}: '
+        + " · ".join(f'<a href="{e(u)}" target="_blank" rel="noreferrer noopener">{e(label)}</a>' for label, u in s["links"]) + '</li>'
+        for s in searches)
+    return ('<section class="capture"><h2>One click: Send to CardMan</h2>'
+            '<p class="why">Drag this button to your bookmarks bar once. Then on any sold-results page (eBay, 130point, Yahoo! Auctions, '
+            'Mercari), click it: the page you are looking at goes straight into CardMan, nothing to save or drag.</p>'
+            f'<p><a class="bookmarklet" href="{e(bookmark)}">Send to CardMan</a> <span class="small muted">← drag me to the bookmarks bar '
+            '(clicking it here does nothing)</span></p>'
+            + (f'<h3>Sold searches worth running now</h3><p class="why">The cards behind your top open opportunities. Each link opens the sold '
+               f'results (240 per page on eBay); click the bookmark there.</p><ol class="searches">{rows}</ol>' if rows else "")
+            + '</section>')
+
+
+def view_import(st, token: str, batch: str | None, catalog, csv_form: str, bookmark: str | None = None,
+                searches: list[dict] | None = None) -> str:
+    drop = _capture_box(bookmark, searches or []) + (
         '<section class="dropbox"><h2>Add sold prices</h2>'
         '<p class="why">Drop pages you saved from a sold-results search. CardMan reads every sale on them, removes seller names, '
         'and keeps the page as evidence. Nothing is fetched from those sites.</p>'
@@ -139,7 +157,9 @@ IMPORT_CSS = """
 .dz{flex:1;min-width:260px;border:2px dashed var(--axis);border-radius:14px;padding:26px 18px;text-align:center;cursor:pointer;
 background:var(--soft);display:flex;flex-direction:column;gap:4px;color:var(--fg2)}.dz.over{border-color:var(--accent);background:var(--surface)}
 .dz input{position:absolute;opacity:0;width:1px;height:1px}.dz-big{font-size:17px;font-weight:600;color:var(--fg)}.dz-small{font-size:12px}
-form.drop button{padding:0 22px;font-weight:600}.guide{margin:6px 0 0;padding-left:20px}.guide li{margin:4px 0}
+form.drop button{padding:0 22px;font-weight:600}
+a.bookmarklet{display:inline-block;padding:8px 16px;border-radius:999px;background:var(--fg);color:var(--surface);font-weight:700;
+text-decoration:none;cursor:grab}.searches{margin:4px 0 0;padding-left:22px}.searches li{margin:3px 0}.guide{margin:6px 0 0;padding-left:20px}.guide li{margin:4px 0}
 kbd{font:12px ui-monospace,monospace;border:1px solid var(--axis);border-bottom-width:2px;border-radius:4px;padding:0 4px;background:var(--surface)}
 .batches{display:flex;flex-wrap:wrap;gap:6px;align-items:center}.pick select{max-width:420px}
 """

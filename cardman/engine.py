@@ -75,6 +75,7 @@ class TickReport:
     seconds: float = 0.0
     errors: list[str] = field(default_factory=list)
     routes: list[dict] = field(default_factory=list)
+    ebay_sold: dict = field(default_factory=dict)
 
 
 class Engine:
@@ -352,6 +353,13 @@ class Engine:
         for r in new:
             self.remember(r, now, rep)
             self._take_evidence(r, now, rep)
+        if self.ebay.status().on:
+            # Sales seen through eBay's own API: sold counts that rose on tracked fixed-price listings.
+            from .ebay_sold_watch import check as check_sold_counts
+            try:
+                rep.ebay_sold = asdict(check_sold_counts(self, now, budget=int(self.profile.get("ebay_sold_checks_per_pass", 120))))
+            except Exception as x:
+                rep.errors.append(f"eBay sold counts: {type(x).__name__}: {x}")
         cal = self.ledger.calibration(now)
         book = PriceBook(self.store, self.fx, self.profile, now, bias=cal.resale_bias, reference=self.reference)
         cutoff = (now - GONE_AFTER).isoformat()
