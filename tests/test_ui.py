@@ -241,3 +241,8 @@ def test_costs_page_saves_your_numbers(app2, tmp_path, monkeypatch):
     assert d["ebay_queries"] == ["yugioh LOB 1st", "遊戯王 レリーフ"] and "_assumed" not in d
     url, h = app2.post("/costs", {**form, "target_return": "abc"})
     assert "Not saved" in h
+
+
+def test_evidence_page_for_a_printing_with_no_records_explains_instead_of_failing(app):
+    page = app.get("/evidence?printing=p%3AEN_TCG%3ANOPE-EN001%3Ax%3Ay%4012345")
+    assert "No records for this printing yet" in page

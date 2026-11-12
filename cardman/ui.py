@@ -885,6 +885,12 @@ def view_evidence(st: Store, now: datetime, printing: str | None, include_synthe
         return "".join(out)
 
     obs = st.observation_list(printing, as_of=now)
+    if not obs:
+        # Most printings have no records yet: say so and show how to add one, instead of failing.
+        return "".join(out) + (
+            '<section><h2>No records for this printing yet</h2><p class="why">Nothing sold or listed has been recorded against '
+            f'<code>{e(printing)}</code>. Import saved sold-results pages on the <a href="/import">Import</a> page, or use '
+            '"Record a sale" on the card page. A price appears once it has 3 sales.</p></section>')
     comps, verdict = verdicts(printing)
     groups: dict[str, int] = {}
     for o in obs:
