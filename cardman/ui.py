@@ -492,7 +492,7 @@ def gate_icons(gates: list[dict]) -> str:
         f'tabindex="0">{icon(g["passed"])}</span>' for g in gates) + "</span>")
 
 
-def view_deals(st: Store, now: datetime, want: str) -> str:
+def view_deals(st: Store, now: datetime, want: str, show_synthetic: bool = False) -> str:
     models, broken, seen = [], [], {}
     for s in st.snapshots():
         seen[s["listing_ref"]] = seen.get(s["listing_ref"], 0) + 1
@@ -505,6 +505,15 @@ def view_deals(st: Store, now: datetime, want: str) -> str:
             continue
         m["decision"] = s["decision"]
         models.append(m)
+    # Demo and test valuations never sit next to real ones unless asked for.
+    demo = [m for m in models if m["synthetic"]]
+    if not show_synthetic:
+        models = [m for m in models if not m["synthetic"]]
+    if not models and not broken and demo:
+        return ('<h1>Deals</h1><p class="sub">No real deals yet. A deal appears when a listing is confirmed as one exact printing and '
+                'that printing has at least 3 real sales, so the price is backed by evidence.</p>'
+                f'<p class="note">{len(demo)} demo valuation(s) from the setup are hidden: they use made-up sales. '
+                '<a href="/deals?syn=1">Show them</a>.</p>')
     if not models and not broken:
         return ('<h1>Deals</h1><p class="sub">No valuations stored yet. Run '
                 '<code>python -m cardman.slice listing.json [obs.csv] --store PATH</code> to add one.</p>')
@@ -1745,9 +1754,14 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
             try:
                 if not parts:
                     from .ui_home import view_home
-                    self._page("home", "Home", view_home(st, cards, now, self._cur(), self._theme()), qs)
+                    try:
+                        from .engine import load_profile
+                        assumed = bool(load_profile().get("_assumed"))
+                    except Exception:
+                        assumed = True
+                    self._page("home", "Home", view_home(st, cards, now, self._cur(), self._theme(), assumed_costs=assumed), qs)
                 elif parts == ["deals"]:
-                    self._page("deals", "Deals", view_deals(st, now, self._cur()), qs)
+                    self._page("deals", "Deals", view_deals(st, now, self._cur(), qs.get("syn", [""])[0] == "1"), qs)
                 elif parts == ["search"]:
                     from .ui_home import view_search
                     q = qs.get("q", [""])[0][:120]

@@ -100,16 +100,27 @@ def _listing_art(payload: dict | None) -> str | None:
     return pcs.pop() if len(pcs) == 1 else None
 
 
+def _lot_art(n: int | None) -> str:
+    return (f'<span class="card ph lotph" role="img" aria-label="Lot"><span>LOT</span>'
+            f'{f"<small>{n} cards</small>" if n else ""}</span>')
+
+
 def _tile(key, title, price, currency, payload, M, *, ask_home=None, sub="") -> str:
     pc = _listing_art(payload)
-    return (f'<a class="tile-l" href="/opp/{quote(key, safe="")}">{img(pc, "small", title)}'
+    is_lot = "LOT" in ((payload or {}).get("kinds") or [])
+    lot_n = None
+    if is_lot:
+        from .listing_parser import parse_listing_text
+        lot_n = parse_listing_text(title or "").lot_size
+    art = _lot_art(lot_n) if is_lot else img(pc, "small", title)
+    note = "" if pc or is_lot else "<span class=tl-note>could be several printings: artwork once the exact card is known</span>"
+    return (f'<a class="tile-l" href="/opp/{quote(key, safe="")}">{art}'
             f'<span class="tl-body"><span class="tl-title">{e(title)}</span>'
-            f'<span class="tl-price">{M(ask_home, original=(price, currency)) if ask_home is not None else e(charts.fmt(float(price), currency)) if price else "—"}</span>'
-            f'<span class="tl-sub">{sub}</span>'
-            f'{"" if pc else "<span class=tl-note>artwork shown only once the exact card is known</span>"}</span></a>')
+            f'<span class="tl-price"><small>Ask</small> {M(ask_home, original=(price, currency)) if ask_home is not None else e(charts.fmt(float(price), currency)) if price else "—"}</span>'
+            f'<span class="tl-sub">{sub}</span>{note}</span></a>')
 
 
-def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD") -> str:
+def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", assumed_costs: bool = True) -> str:
     M = Money(st, home, cur, now)
     vault = theme == "vault"
     have = _tables(st)
@@ -145,17 +156,24 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD") -
             "SELECT l.key, l.title, l.price, l.currency, o.payload_json FROM listing l LEFT JOIN opportunity o ON o.key=l.key "
             "WHERE l.ended_at IS NULL AND l.kind IN ('ask','bid','auction') AND COALESCE(o.status,'')<>'REJECTED' "
             "ORDER BY l.first_seen DESC, l.rowid DESC LIMIT 200").fetchall()
-        rt = []
+        rt, lots = [], []
         for key, title, price, currency, pj in recent:
             p = json.loads(pj) if pj else None
             ah = (p or {}).get("ask_home")
             if vault and not ((ah or 0) >= float(VAULT_MIN_HOME)):
                 continue
-            rt.append(_tile(key, title, price, currency, p, M, ask_home=ah))
-            if len(rt) == 12:
+            if "LOT" in ((p or {}).get("kinds") or []):
+                if len(lots) < 4:
+                    lots.append(_tile(key, title, price, currency, p, M, ask_home=ah))
+            elif _listing_art(p) and len(rt) < 12:
+                rt.append(_tile(key, title, price, currency, p, M, ask_home=ah))
+            if len(rt) == 12 and len(lots) == 4:
                 break
-        out.append('<section class="shelf"><div class="shelf-h"><h2>Just listed</h2><span class="muted">newest first</span></div>'
-                   + (f'<div class="tiles-l">{"".join(rt)}</div>' if rt else '<p class="empty">No live listings yet.</p>') + '</section>')
+        out.append('<section class="shelf"><div class="shelf-h"><h2>Just listed</h2><span class="muted">single cards, newest first</span></div>'
+                   + (f'<div class="tiles-l">{"".join(rt)}</div>' if rt else '<p class="empty">No live single-card listings yet.</p>') + '</section>')
+        if lots:
+            out.append('<section class="shelf"><div class="shelf-h"><h2>New lots and collections</h2><a href="/opportunities">All →</a></div>'
+                       f'<div class="tiles-l">{"".join(lots)}</div></section>')
 
     if "market_signal" in have:
         # Price and volume moves first; at most three "seller clearing stock" notes, biggest first.
@@ -188,6 +206,12 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD") -
                          "('MARKETPLACE_MARKED_SOLD','ACCEPTED_OFFER','INDEPENDENT_TRANSACTION')").fetchone()[0]
     stats.append(f"<b>{sold:,}</b> real sales recorded" + ("" if sold else ' · <a href="/import">import sold prices</a> to turn leads into deals'))
     out.append('<p class="statline">' + " · ".join(stats) + '</p>')
+    fx = st.db.execute("SELECT mid, as_of, source FROM fx_rate WHERE base='USD' AND quote='TWD' ORDER BY as_of DESC LIMIT 1").fetchone() \
+        if "fx_rate" in have else None
+    out.append('<p class="statline small">' + (f"FX: 1 USD = {float(fx[0]):.2f} TWD, {e(fx[2])}, {e(fx[1][:10])}" if fx else "FX: no rate stored yet")
+               + ' · Prices shown on listings are asking prices, not values. '
+               + ('<b>Costs are assumed starter numbers</b>: <a href="/costs">set yours</a> before trusting any max-buy price.'
+                  if assumed_costs else "Costs: your profile.") + '</p>')
     return "".join(out)
 
 
@@ -409,6 +433,9 @@ text-decoration:none;transition:box-shadow .15s,transform .15s}.tile-l:hover{box
 .tl-note{font-size:11px;color:var(--muted)}
 img.card,.card.ph{border-radius:4.5%/3.2%;background:var(--soft);object-fit:cover;aspect-ratio:421/614;display:block}
 .card.ph{display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:20px;border:1px dashed var(--axis)}
+.card.lotph{flex-direction:column;gap:2px;border-style:solid;background:repeating-linear-gradient(135deg,var(--soft),var(--soft) 6px,var(--surface) 6px,var(--surface) 12px);
+font-weight:800;font-size:13px;letter-spacing:.08em;color:var(--fg2)}.card.lotph small{font-size:10px;font-weight:600;letter-spacing:0}
+.tl-price small{font-size:11px;font-weight:600;color:var(--muted)}
 .chip{display:inline-block;font-size:11px;font-weight:600;padding:1px 8px;border-radius:999px;background:var(--soft);color:var(--fg2);border:1px solid var(--line)}
 .chip.good{color:var(--good-text);border-color:color-mix(in srgb,var(--good) 40%,transparent)}
 .chip.warn{color:#8a5a00;border-color:color-mix(in srgb,var(--warn) 60%,transparent)}.chip.info{color:var(--accent)}

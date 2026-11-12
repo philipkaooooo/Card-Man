@@ -119,3 +119,10 @@ def test_rush_duel_is_blocked_even_when_a_duel_monsters_name_matches():
     for t in ("Harpie Lady Rush Rare RD/KP01-JP001", "Blue-Eyes White Dragon ラッシュデュエル", "Dark Magician Rush Duel promo"):
         a = analyze(t, CATALOG)
         assert a.blocked and a.has("OUT_OF_SCOPE")
+
+
+def test_a_year_is_not_a_lot_size():
+    from cardman.listing_parser import parse_listing_text as P
+    assert P("Vintage Yugioh 1996 Card Lot").lot_size is None
+    assert P("Lot of 160 Yu-Gi-Oh Cards From 1996").lot_size == 160
+    assert P("Yu-Gi-Oh! Collection Lot 250+ Cards").lot_size == 250

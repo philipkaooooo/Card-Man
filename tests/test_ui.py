@@ -67,7 +67,7 @@ def multipart(fields: dict, filename: str, content: bytes) -> tuple[str, bytes]:
 
 
 def test_deals_and_deal_page_render(app):
-    home = app.get("/deals")                                   # USD by default; the demo FX is 32 TWD per USD
+    home = app.get("/deals?syn=1")                                   # USD by default; the demo FX is 32 TWD per USD
     assert "demo:1" in home and "$500" in home and "pay up to $535" in home and "Buy after checks" in home
     page = app.get(f"/deal/{app.sid}")
     assert "replays exactly" in page and "ACCEPTED_OFFER" in page
@@ -117,7 +117,7 @@ def test_yes_refused_after_identity_invalidated(app):
     Store(app.db).invalidate_printing("p:LOB-EN001:UR:1st", "wrong print found", now=NOW)
     _, _, page = app.post(f"/deal/{app.sid}/decide", {"action": "YES", "rationale": "go"})
     assert "YES refused" in page and Store(app.db).decisions(app.sid) == []
-    assert "identity invalidated" in app.get("/deals").lower()
+    assert "identity invalidated" in app.get("/deals?syn=1").lower()
 
 
 def test_status_event_then_reevaluate_makes_a_new_snapshot(app):
@@ -183,7 +183,7 @@ def app2(tmp_path):
 
 
 def test_left_menu_and_currency_next_to_logo(app2):
-    h = app2.get("/deals")
+    h = app2.get("/deals?syn=1")
     assert h.index('class="logo"') < h.index('class="curs"') < h.index("<aside>")
     for path in ("/scan", "/results", "/evidence", "/import"):
         assert f'href="{path}"' in h
@@ -246,3 +246,9 @@ def test_costs_page_saves_your_numbers(app2, tmp_path, monkeypatch):
 def test_evidence_page_for_a_printing_with_no_records_explains_instead_of_failing(app):
     page = app.get("/evidence?printing=p%3AEN_TCG%3ANOPE-EN001%3Ax%3Ay%4012345")
     assert "No records for this printing yet" in page
+
+
+
+def test_demo_valuations_are_hidden_from_deals_unless_asked(app):
+    page = app.get("/deals")
+    assert "No real deals yet" in page and "demo valuation" in page
