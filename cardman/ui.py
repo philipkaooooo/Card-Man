@@ -14,6 +14,7 @@ import html
 import secrets
 import statistics
 import tempfile
+import threading
 from datetime import datetime, timezone
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal, InvalidOperation
 from email.parser import BytesParser
@@ -1911,10 +1912,15 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                         self._redirect(f"/obs/{quote(oid)}", err=str(x))
                 elif parts == ["engine", "tick"]:
                     try:
-                        from .engine import Engine
-                        eng = Engine(store_path, catalog=catalog() if catalog else None)
-                        rep = eng.tick(now)
-                        eng.db.close()
+                        if not ENGINE_LOCK.acquire(blocking=False):
+                            return self._redirect("/opportunities", msg="A check is already running in the background; refresh in a minute.")
+                        try:
+                            from .engine import Engine
+                            eng = Engine(store_path, catalog=catalog() if catalog else None)
+                            rep = eng.tick(now)
+                            eng.db.close()
+                        finally:
+                            ENGINE_LOCK.release()
                         self._redirect("/opportunities", msg=f"Checked: {rep.new_listings} new, {rep.analyzed} analyzed, "
                                        f"{rep.open_opportunities} open.", err="; ".join(rep.errors[:3]))
                     except Exception as x:
@@ -2016,16 +2022,48 @@ def catalog_loader(path: str):
     return get
 
 
+ENGINE_LOCK = threading.Lock()
+ENGINE_STATUS: dict = {"every_min": 0, "last": None, "next": None, "running": False, "error": None}
+
+
+def background_engine(store_path: str, catalog, every_min: float, stop: "threading.Event") -> None:
+    """While the UI is open, run an engine pass every `every_min` minutes. One pass at a time, shared with the button."""
+    from datetime import timedelta
+    ENGINE_STATUS["every_min"] = every_min
+    while not stop.is_set():
+        if ENGINE_LOCK.acquire(blocking=False):
+            ENGINE_STATUS["running"] = True
+            try:
+                from .engine import Engine
+                eng = Engine(store_path, catalog=catalog() if catalog else None)
+                eng.tick()
+                eng.db.close()
+                ENGINE_STATUS["error"] = None
+            except Exception as x:            # keep the loop alive; the next pass may succeed
+                ENGINE_STATUS["error"] = f"{type(x).__name__}: {x}"
+            finally:
+                ENGINE_STATUS["running"] = False
+                ENGINE_STATUS["last"] = datetime.now(timezone.utc)
+                ENGINE_LOCK.release()
+        ENGINE_STATUS["next"] = datetime.now(timezone.utc) + timedelta(minutes=every_min)
+        stop.wait(every_min * 60)
+
+
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(prog="python -m cardman.ui")
     ap.add_argument("--store", default="data/store/evidence.sqlite")
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--catalog", default="data/cache/identity.sqlite", help="identity cache for the Scan page")
+    ap.add_argument("--engine-every", type=float, default=15, help="minutes between background engine passes; 0 turns them off")
     a = ap.parse_args(argv)
     Store(a.store).db.close()          # create the file and schema up front
     srv = ThreadingHTTPServer(("127.0.0.1", a.port), make_handler(a.store, secrets.token_urlsafe(24),
                                                                   catalog=catalog_loader(a.catalog)))
     print(f"CardMan UI on http://127.0.0.1:{a.port}  (store {a.store}; Ctrl+C to stop)")
+    if a.engine_every > 0:
+        stop = threading.Event()
+        threading.Thread(target=background_engine, args=(a.store, catalog_loader(a.catalog), a.engine_every, stop), daemon=True,
+                         name="cardman-engine").start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

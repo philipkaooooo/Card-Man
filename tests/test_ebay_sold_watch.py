@@ -126,3 +126,16 @@ def test_bookmark_posts_the_page_with_the_key():
     assert js.startswith("javascript:") and "http://127.0.0.1:8766/capture" in js and '"KEY123"' in js and "outerHTML" in js
     links = dict(sold_search_links("Blue-Eyes White Dragon", "青眼の白龍", "LOB-EN001"))
     assert "LH_Sold=1" in links["eBay sold"] and "_ipg=240" in links["eBay sold"] and "status=sold_out" in links["Mercari 売り切れ"]
+
+
+def test_rechecks_come_before_new_listings_so_sales_appear_early(tmp_path):
+    e = make(tmp_path)
+    tracked(e, ["old"])
+    b = FakeBrowse({"old": item(10)})
+    check(e, NOW, browse=b, budget=3)                                   # baseline for "old"
+    tracked(e, [f"n{i}" for i in range(10)])
+    for i in range(10):
+        b.items[f"n{i}"] = item(1)
+    b.items["old"] = item(12)
+    r = check(e, NOW + timedelta(hours=7), browse=b, budget=3)          # tiny budget: the recheck must still happen
+    assert r.sales_recorded == 2 and r.checked == 3

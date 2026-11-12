@@ -71,11 +71,15 @@ def check(engine, now: datetime, *, browse: EbayBrowse | None = None, budget: in
         return rep
     since = (now - timedelta(days=14)).isoformat()
     due = (now - RECHECK_AFTER).isoformat()
+    # Rechecks first, fastest sellers first: only a second look at a listing can show a sale. New listings get the rest.
     rows = db.execute(
+        "SELECT w.listing_key, w.item_id FROM ebay_sold_watch w JOIN listing l ON l.key=w.listing_key "
+        "WHERE w.status<>'GONE' AND w.sold_qty IS NOT NULL AND w.checked_at<=? AND l.ended_at IS NULL AND l.last_seen>=? "
+        "ORDER BY w.sold_qty DESC, w.checked_at LIMIT ?", (due, since, (budget * 2) // 3)).fetchall()
+    rows += db.execute(
         "SELECT l.key, l.listing_id FROM listing l LEFT JOIN ebay_sold_watch w ON w.item_id=l.listing_id "
-        "WHERE l.source LIKE 'ebay_browse%' AND l.kind='ask' AND l.ended_at IS NULL AND l.last_seen>=? "
-        "AND (w.item_id IS NULL OR (w.status<>'GONE' AND w.checked_at<=?)) ORDER BY w.checked_at IS NOT NULL, w.checked_at LIMIT ?",
-        (since, due, budget)).fetchall()
+        "WHERE l.source LIKE 'ebay_browse%' AND l.kind='ask' AND l.ended_at IS NULL AND l.last_seen>=? AND w.item_id IS NULL "
+        "ORDER BY l.first_seen DESC LIMIT ?", (since, budget - len(rows))).fetchall()
     for key, item_id in rows:
         req = urllib.request.Request(ITEM_URL.format(id=urllib.parse.quote(item_id)),
                                      headers={"Authorization": f"Bearer {browse.token()}", "X-EBAY-C-MARKETPLACE-ID": browse.marketplace})
