@@ -139,3 +139,15 @@ def test_rechecks_come_before_new_listings_so_sales_appear_early(tmp_path):
     b.items["old"] = item(12)
     r = check(e, NOW + timedelta(hours=7), browse=b, budget=3)          # tiny budget: the recheck must still happen
     assert r.sales_recorded == 2 and r.checked == 3
+
+
+def test_home_lists_recorded_sales_without_crashing(tmp_path):
+    from cardman.ui_home import view_home
+    e = make(tmp_path)
+    tracked(e, ["1"])
+    b = FakeBrowse({"1": item(3)})
+    check(e, NOW, browse=b)
+    b.items["1"] = item(4)
+    check(e, NOW + timedelta(hours=7), browse=b)
+    page = view_home(e.store, None, NOW + timedelta(hours=8), "USD", "market")
+    assert "Recently sold" in page and "$10" in page and "printing not confirmed yet" in page

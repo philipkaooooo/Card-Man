@@ -177,19 +177,23 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", a
                        f'<div class="tiles-l">{"".join(rt)}</div></section>')
 
     sold = st.db.execute(
-        "SELECT o.id, o.data_json FROM observation o WHERE o.synthetic=0 AND o.evidence_type IN "
+        "SELECT o.id FROM observation o WHERE o.synthetic=0 AND o.evidence_type IN "
         "('MARKETPLACE_MARKED_SOLD','ACCEPTED_OFFER','INDEPENDENT_TRANSACTION') ORDER BY o.event_time DESC LIMIT 6").fetchall()
     srows = []
-    for oid, dj in sold:
-        d = json.loads(dj)
-        cands = d.get("printing_candidates") or []
+    for (oid,) in sold:
+        try:
+            o = st.effective(oid)          # decoded record, with any confirmed printing applied
+        except Exception:
+            continue
+        cands = o.printing_candidates
         pc = passcode_of(cands[0]) if len(cands) == 1 else None
-        name = ((idx.card(pc) or {}).get("name_en") if (pc and idx is not None) else None) or (d.get("listing_id") or oid)
+        title = st.db.execute("SELECT title FROM listing WHERE listing_id=? LIMIT 1", (o.listing_id,)).fetchone() if "listing" in have else None
+        name = ((idx.card(pc) or {}).get("name_en") if (pc and idx is not None) else None) or (title[0] if title else o.listing_id or oid)
         site = {"ebay_browse:sold_count": "eBay", "ebay": "eBay", "130point": "130point", "yahoo_auctions_jp": "Yahoo! Auctions",
-                "mercari_jp": "Mercari", "manual": "you"}.get(d.get("source"), d.get("source"))
-        srows.append(f'<li>{img(pc, "small", name)}<span><b>{e(name)}</b><br><span class="muted small">{e(site)} · {e(str(d.get("event_time"))[:10])}'
-                     f'{"" if len(cands) == 1 else " · printing not confirmed"}</span></span>'
-                     f'<span class="sold-p">{e(charts.fmt(float(d["original_amount"]), d["currency"]))}</span></li>')
+                "mercari_jp": "Mercari", "manual": "you"}.get(o.source, o.source)
+        srows.append(f'<li>{img(pc, "small", name)}<span><b>{e(name)}</b><br><span class="muted small">{e(site)} · {e(o.event_time.date().isoformat())}'
+                     f'{"" if len(cands) == 1 else " · printing not confirmed yet"}</span></span>'
+                     f'<span class="sold-p">{e(charts.fmt(float(o.original_amount), o.currency))}</span></li>')
     out.append('<section class="shelf"><div class="shelf-h"><h2>Recently sold</h2><a href="/import">Add sales →</a></div>'
                + (f'<ul class="soldlist">{"".join(srows)}</ul>' if srows else
                   '<p class="empty">No real sales recorded yet. eBay sold counts start filling this in on their own; '
