@@ -167,6 +167,12 @@ def _type_label(meta: dict, d: dict) -> str:
 
 # -- the list ---------------------------------------------------------------------------------------------------------
 
+def _likely(d: dict) -> dict | None:
+    """The printing it most probably is (which can differ from the one a price came from)."""
+    sc = d.get("scenarios") or []
+    return max(sc, key=lambda s: s.get("weight") or 0) if sc else None
+
+
 def row_html(key: str, d: dict, v: Verdict, cards, M, now: datetime) -> str:
     """One listing as one line: picture, card, verdict, all-in vs max buy, confidence, time left. Shared by Home and Listings."""
     top = v.top
@@ -176,8 +182,9 @@ def row_html(key: str, d: dict, v: Verdict, cards, M, now: datetime) -> str:
     c = cards.card(pc) if (pc and cards is not None and not lot) else None
     if c and d.get("printing_id"):
         name = c.get("name_en") or name
-    if top and top.get("label"):
-        sub = " · ".join(top["label"].split(" · ")[:3])
+    likely = _likely(d) or top
+    if likely and likely.get("label") and not lot:
+        sub = " · ".join(likely["label"].split(" · ")[:3]) + ("" if d.get("printing_id") else " (most likely)")
     mb = top.get("max_buy") if top and top.get("basis") == "sales" else None
     return (f'<a class="lrow" href="/opp/{quote(key, safe="")}">{_art(d, v)}'
             f'<span class="lr-main"><span class="lr-title">{e(name)}</span><span class="lr-sub">{e(sub) or e(d.get("market") or "")}</span>'
@@ -270,7 +277,8 @@ def view_one(st, cards, key: str, now: datetime, token: str, M, profile: dict | 
     lot = "LOT" in (d.get("kinds") or [])
     settled = bool(d.get("printing_id"))
     card_line = ("Lot: " + (f"{_lot_size(d)} cards" if _lot_size(d) else "several cards")) if lot else \
-        (" · ".join((top or {}).get("label", "").split(" · ")[:3]) + ("" if settled else "  (most likely; not confirmed)")) if top else "Card not identified yet"
+        (" · ".join((_likely(d) or top or {}).get("label", "").split(" · ")[:3]) + ("" if settled else "  (most likely; not confirmed)")) \
+        if (_likely(d) or top) else "Card not identified yet"
 
     # -- key facts
     def fact(label, value, note=""):

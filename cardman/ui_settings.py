@@ -97,6 +97,8 @@ def view_settings(st, now: datetime, cur: str, theme: str, profile: dict | None,
 
 
 SETTINGS_CSS = """
+.curs{display:inline-flex;border:1px solid var(--axis);border-radius:6px;overflow:hidden}.curs a{padding:2px 10px;font-size:13px;color:var(--fg2);
+text-decoration:none}.curs a.on{background:var(--fg);color:var(--surface)}
 .sdot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:8px;background:var(--muted)}.sdot.good{background:var(--good)}
 .sdot.crit{background:var(--crit)}table.srcs td{padding:8px}.advlist{list-style:none;padding:0;margin:0;display:grid;gap:8px}
 .advlist li{display:grid;grid-template-columns:160px 1fr;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
