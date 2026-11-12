@@ -320,7 +320,7 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
             f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{CHART_CSS}{SHELL_CSS}</style></head><body>'
             f'<header class="top"><a class="logo" href="/">CardMan</a><nav class="main" aria-label="Main">{links}</nav>{hsearch}{curs}</header>'
             f'<main class="page">{crumb}{flash}{body}</main>'
-            f'<footer class="foot">Private to this Mac · data in {e(store)} · times {e(tz)} · press <kbd>/</kbd> to search</footer>'
+            f'<footer class="foot">Private to this Mac · times {e(tz)} · press <kbd>/</kbd> to search</footer>'
             f'<script src="/static/ui.js?v={_js_version()}"></script></body></html>').encode()
 
 
@@ -1762,7 +1762,7 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                 s_ = next((x for x in hist["series"] if x["key"] == k), None)
                 if s_ is None:
                     return self._send(404, b"no such series", "text/plain")
-                return self._send(200, (f'<div data-hchips>{chips(s_, hist["currency"])}</div>' + table(s_, hist["currency"])).encode(),
+                return self._send(200, (chips(s_, hist["currency"]) + table(s_, hist["currency"])).encode(),
                                   "text/html; charset=utf-8")
             if len(parts) == 3 and parts[:2] == ["img", "card"] and parts[2].endswith(".jpg"):
                 st.db.close()
@@ -1817,7 +1817,11 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                         prof = load_profile()
                     except Exception:
                         prof = None
-                    self._page("settings", "Settings", view_settings(st, now, self._cur(), self._theme(), prof, ENGINE_STATUS)
+                    from .capture import worth_pricing
+                    pc = qs.get("card", [""])[0]
+                    focus = cards.card(pc) if pc.isdigit() else None
+                    self._page("settings", "Settings", view_settings(st, now, self._cur(), self._theme(), prof, ENGINE_STATUS,
+                                                                     fill=worth_pricing(st, cards), focus=focus)
                                .replace("__TOKEN__", token), qs)
                 elif not parts:
                     from .ui_home import view_home
@@ -1845,7 +1849,7 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     from .ui_home import view_card
                     self._page("search", (cards.card(parts[1]) or {}).get("name_en") or parts[1],
                                view_card(st, cards, parts[1], now, self._cur(), book=_book(st, now), catalog=catalog() if catalog else None,
-                                         token=token, filters={k: qs.get(k, [""])[0][:200] for k in ("platform", "printing", "graded", "type")}),
+                                         token=token, filters={k: qs.get(k, [""])[0][:300] for k in ("platform", "graded", "type", "v")}),
                                qs, crumb=("Cards", "/search"))
                 elif parts[0] == "deal" and len(parts) == 2:
                     self._page("deals", "Deal", view_deal(st, parts[1], now, token, self._cur()), qs, crumb=("Deals", "/deals"))
@@ -1862,8 +1866,7 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     port = self.server.server_address[1]
                     self._page("import", "Import", view_import_pages(st, token, qs.get("batch", [""])[0] or None,
                                                                      catalog() if catalog else None, csv_form,
-                                                                     bookmark=bookmarklet(port, capture_key()),
-                                                                     searches=worth_pricing(st, cards)), qs)
+                                                                     bookmark=bookmarklet(port, capture_key()), searches=[]), qs)
                 elif parts == ["opportunities"]:
                     if not _engine_ready(st):
                         self._page("opportunities", "Listings", view_opportunities(st, now, token, self._cur(), "open"), qs)
@@ -2058,7 +2061,7 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     cat = catalog() if catalog else None
                     try:
                         oid = record_sale(st, cat, parts[1], form, now)
-                        self._redirect(f"/card/{parts[1]}", msg=f"Sale recorded ({oid}). It prices that printing from now on.")
+                        self._redirect(f"/card/{parts[1]}", msg="Sale added. It counts toward this version's price from now on.")
                     except ValueError as x:
                         self._redirect(f"/card/{parts[1]}", err=str(x))
                 elif parts == ["import"]:

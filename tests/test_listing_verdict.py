@@ -20,7 +20,7 @@ def D(**kw):
 
 def test_buy_needs_real_sales_a_settled_identity_and_an_all_in_under_max_buy():
     v = verdict(D(kinds=["UNDERPRICED"], scenarios=[sc()], priced_share=1.0, printing_id="p:x@89631139"), "ESCALATED", M)
-    assert v.code == BUY and v.headline == "Buy up to $500" and "6 recent sales" in v.reason and v.confidence == "High"
+    assert v.code == BUY and v.headline == "Buy (up to $500)" and "6 recent sales" in v.reason and v.confidence == "High"
 
 
 def test_no_real_sales_never_buy_whatever_else_says_so():
@@ -33,7 +33,7 @@ def test_no_real_sales_never_buy_whatever_else_says_so():
 def test_cheap_only_if_its_the_right_print_needs_a_check():
     d = D(kinds=["RIGHT_PRINT_ONLY"], scenarios=[sc(weight=0.4), sc(basis="none", weight=0.6, pid="p:y@1")], priced_share=0.4)
     v = verdict(d, "OPEN", M)
-    assert v.code == CHECK and "2 printings" in v.reason and v.confidence == "Low"
+    assert v.code == CHECK and "one of 2 versions" in v.reason and "Check the photos" in v.reason and v.confidence == "Low"
 
 
 def test_over_max_buy_everywhere_is_a_pass():
@@ -43,12 +43,12 @@ def test_over_max_buy_everywhere_is_a_pass():
 
 def test_guide_only_is_watch_with_the_reason_said_plainly():
     v = verdict(D(kinds=["REFERENCE_GAP"], scenarios=[sc(basis="reference")]), "OPEN", M)
-    assert v.code == WATCH and v.reason == "No sales yet: the price is a guide estimate only."
+    assert v.code == WATCH and v.reason == "Looks cheap next to the price guides, but we haven't seen enough real sales to be sure."
 
 
 def test_lots_say_what_they_are():
     v = verdict(D(title="Yu-Gi-Oh! Collection Lot 250+ Cards", kinds=["LOT", "COLLECTION"]), "OPEN", M)
-    assert v.code == WATCH and v.reason.startswith("Lot of 250: can't value it per card")
+    assert v.code == WATCH and v.reason.startswith("A lot of 250 cards: we can't tell what each card is worth yet")
     assert verdict(D(title="Lot of 40 cards", kinds=["LOT"]), "SHELVED", M).code == PASS
 
 
@@ -93,9 +93,9 @@ def test_listing_page_keeps_raw_data_inside_closed_details(tmp_path):
                                                                                     d["url"], None, "ask", "12", "USD", None, "t", "t", None, "fp", "{}"))
     page = view_one(db, None, key, datetime.now(timezone.utc), "tok", M, None)
     outside = re.sub(r"<details.*?</details>", "", page, flags=re.S)
-    assert "Watch" in outside and "guide estimate only" in outside
+    assert "Watch" in outside and "price guides" in outside
     assert key not in outside and "SPECTATE" not in outside and "fp" not in outside and "evpi" not in outside.lower()
-    assert key in page and re.search(r"<details class=\"dsec\"><summary>Raw listing data", page) and "<details class=\"dsec\" open" not in page
+    assert key in page and re.search(r"<details class=\"dsec\"><summary>Technical details", page) and "<details class=\"dsec\" open" not in page
 
 
 def test_listing_filters_site_kind_and_price(tmp_path):

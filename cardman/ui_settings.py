@@ -36,7 +36,8 @@ def _row(name: str, state: str, detail: str, ok: bool | None) -> str:
             f'<td class="fg2">{detail}</td></tr>')
 
 
-def view_settings(st, now: datetime, cur: str, theme: str, profile: dict | None, engine_status: dict, path: str = "/settings") -> str:
+def view_settings(st, now: datetime, cur: str, theme: str, profile: dict | None, engine_status: dict, path: str = "/settings",
+                  fill: list[dict] | None = None, focus: dict | None = None) -> str:
     def toggle(param, opts, on):
         return '<span class="curs">' + "".join(
             f'<a href="/{param}?{urlencode({"c" if param == "currency" else "t": v, "back": path})}" class="{"on" if v == on else ""}">{e(label)}</a>'
@@ -82,7 +83,9 @@ def view_settings(st, now: datetime, cur: str, theme: str, profile: dict | None,
         _row("Guide prices (YGOPRODeck)", "on" if (routes.get("ygoprodeck") or {}).get("on") else "off", "leads only; never used as a value", None),
         _row("Inbox folder", "on", e((routes.get("inbox") or {}).get("detail") or "~/card-man/data/inbox"), None),
     ]
-    sources = ('<section><h2>Data sources</h2><table class="srcs">' + "".join(rows) + '</table>'
+    from .card_market import coverage, coverage_line
+    sources = ('<section id="sources"><h2>Data sources</h2>'
+               f'<p class="fg2">What CardMan holds right now: {e(coverage_line(coverage(st)))}.</p><table class="srcs">' + "".join(rows) + '</table>'
                '<form method="post" action="/engine/tick" class="inline"><input type="hidden" name="t" value="__TOKEN__">'
                '<button>Check for new listings now</button></form></section>')
 
@@ -93,7 +96,21 @@ def view_settings(st, now: datetime, cur: str, theme: str, profile: dict | None,
            ("Engine details", "/opportunities/engine", "Raw engine queue, market signals and the last check's report."))
     advanced = ('<section id="advanced"><h2>Advanced</h2><p class="why">Tools and diagnostics. Everything here also feeds the main pages.</p>'
                 '<ul class="advlist">' + "".join(f'<li><a href="{h}">{e(t)}</a><span class="fg2">{e(d)}</span></li>' for t, h, d in adv) + '</ul></section>')
-    return '<h1>Settings</h1>' + display + costs + sources + advanced
+    return '<h1>Settings</h1>' + display + costs + sources + _past_prices(fill or [], focus) + advanced
+
+
+def _past_prices(fill: list[dict], focus: dict | None) -> str:
+    """Getting the last few months of sales in: each link opens a site's sold results; the bookmark sends the page in."""
+    from .capture import backfill_links
+    def links(name_en, name_ja):
+        return " · ".join(f'<a href="{e(u)}" target="_blank" rel="noreferrer noopener">{e(t)}</a>' for t, u in backfill_links(name_en, name_ja))
+    top = (f'<p><b>{e(focus.get("name_en") or focus.get("name_ja"))}</b>: {links(focus.get("name_en"), focus.get("name_ja"))}</p>' if focus else "")
+    rows = "".join(f'<li><a href="/card/{e(c["passcode"])}">{e(c["name"])}</a>: {links(c["name"], c.get("ja"))}</li>' for c in fill)
+    return ('<section id="past"><h2>Fill in past prices</h2><p class="why">eBay and Yahoo! Auctions show the last 3 to 4 months of sales on '
+            'their own websites. Open a link, scroll to the end of the results, then click your <b>Send to CardMan</b> bookmark '
+            '(set it up once on <a href="/import">Add sales</a>). Each sale keeps its real date, and a sale seen on two sites counts once. '
+            'Mercari doesn\'t show sale dates, so its sales count toward prices but not the chart.</p>' + top
+            + (f'<h3>Cards worth doing now</h3><ol class="searches">{rows}</ol>' if rows else "") + '</section>')
 
 
 SETTINGS_CSS = """

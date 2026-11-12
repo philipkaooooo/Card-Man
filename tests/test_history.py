@@ -140,8 +140,8 @@ def test_chart_endpoint_on_fixtures(tmp_path, monkeypatch):
         assert [(b["start"], b["n"], b["median"]) for b in s["month"]] == [("2026-10-01", 2, 900), ("2026-11-01", 2, 925)]
         assert s["summary"]["n_30"] == 3 and s["summary"]["median_30"] == 950 and s["summary"]["change_90"]["pct"] is None
         page = get("/card/89631139")
-        assert 'id="history"' in page and 'data-hchart="/card/89631139/history.json"' in page and "Backfill 3 months" in page
-        assert "Data table" in page and "30-day median" in page
+        assert 'id="history"' in page and 'data-hchart="/card/89631139/history.json"' in page and f'data-printing="{pid}"' in page
+        assert "Price over time" in page and "See the numbers" in page and "Last sold" in page
         frag = get(f"/card/89631139/history.html?key={urllib.parse.quote(d['default'])}")
         assert "data-hchips" in frag and "Every sale" in frag
         assert "CHART" not in get("/static/ui.js") and "data-hchart" in get("/static/ui.js")

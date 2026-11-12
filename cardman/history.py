@@ -31,7 +31,7 @@ from .verify import EXCLUDING, assess
 UTC = timezone.utc
 SOLD_TYPES = ("MARKETPLACE_MARKED_SOLD", "ACCEPTED_OFFER", "INDEPENDENT_TRANSACTION")
 ASK_CARD_PROB, ASK_PRINTING_PROB = 0.95, 0.9
-SITE_OF = (("ebay_browse", "eBay (sold count)"), ("ebay", "eBay"), ("130point", "130point"), ("yahoo", "Yahoo! Auctions"),
+SITE_OF = (("ebay_browse", "eBay"), ("ebay", "eBay"), ("130point", "eBay"), ("yahoo", "Yahoo! Auctions"),
            ("mercari", "Mercari"), ("manual", "You"))
 
 
@@ -385,3 +385,23 @@ def cached_build(st, passcode: str, variants: list, now: datetime, conv: Convert
             _BUILD_CACHE.clear()
         _BUILD_CACHE[k] = build(st, variants, now, conv)
     return _BUILD_CACHE[k]
+
+
+def plain_trend(summary: dict) -> str | None:
+    """'Up 12% in 3 months', 'Down 8% in 3 months' or 'Steady', only when the sales support it; otherwise None."""
+    ch = (summary.get("change_90") or {}).get("pct")
+    if ch is not None:
+        return "Steady over 3 months" if abs(ch) < 3 else f'{"Up" if ch > 0 else "Down"} {abs(ch):.0f}% in 3 months'
+    t = summary.get("trend") or {}
+    if t.get("label") in ("rising", "falling"):
+        three = ((1 + t["monthly_pct"] / 100) ** 3 - 1) * 100
+        return f'{"Up" if three > 0 else "Down"} about {abs(three):.0f}% in 3 months'
+    if t.get("ci") and -3 <= t["ci"][0] and t["ci"][1] <= 3:
+        return "Steady"
+    return None
+
+
+def first_seen(series: list[dict]) -> str | None:
+    """The first day CardMan holds anything for these series (a sale, an ask or a guide price)."""
+    days = [d["t"][:10] for s in series for d in s["sales"]] + [a["d"] for s in series for a in s["asks"]] + [g["d"] for s in series for g in s["guide"]]
+    return min(days) if days else None

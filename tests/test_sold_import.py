@@ -211,10 +211,10 @@ def test_identify_refuses_an_unknown_printing_and_foreign_redirects(ui):
 def test_record_a_sale_on_the_card_page(ui):
     get, post, db = ui
     page = get("/card/89631139")
-    assert "Record a sale" in page
+    assert "Know a sale of this card? Add it" in page
     url, body = post("/card/89631139/sale", {"printing": LOB.id, "amount": "950", "currency": "USD", "date": "2026-11-01",
                                              "kind": "transaction", "grade_company": "", "grade": "", "url": ""})
-    assert "Sale recorded" in body
+    assert "Sale added" in body
     st = Store(db)
     comps, _ = select_comps(st.observations_for(LOB.id, as_of=datetime.now(timezone.utc)), LOB.id, as_of=datetime.now(timezone.utc))
     assert [c.original_amount for c in comps] == [D("950")] and comps[0].evidence_type == ET.INDEPENDENT_TRANSACTION

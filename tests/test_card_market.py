@@ -58,15 +58,17 @@ def test_section_keeps_groups_apart_counts_lots_and_filters(tmp_path):
     st = _store(tmp_path, ROWS)
     market = cm.listings_for(st, "1")
     M = lambda v, sign=False: "—" if v is None else f"${v:,.0f}"
-    html = _market_section(st, "1", market, [], M, NOW, {}, None)
-    this, maybe = html.split("Might be this card")
-    assert "T-a-T" in this and "T-b-T" in this and "T-c-T" not in this
-    assert "T-c-T" in maybe
-    assert "1 lot(s)" in html and "T-d-T" not in html and "T-e-T" not in html and "T-f-T" not in html
-    assert this.index("T-b-T") < this.index("T-a-T") < this.index("T-g-T")
-    only_raw = _market_section(st, "1", market, [], M, NOW, {"graded": "raw"}, None)
+    html = _market_section("1", market, "p:A@1", {}, M, NOW, {})
+    head, rest = html.split("Possibly this card")
+    this, other = head.split("Other versions of this card")
+    assert "T-a-T" in this and "T-g-T" in this and "T-b-T" not in this     # b is most likely another version (B)
+    assert "T-b-T" in other and "T-c-T" not in head
+    assert "T-c-T" in rest
+    assert "Also in 1 lot " in html and "T-d-T" not in html and "T-e-T" not in html and "T-f-T" not in html
+    assert this.index("T-a-T") < this.index("T-g-T")                         # cheapest first, no price last
+    only_raw = _market_section("1", market, "p:A@1", {}, M, NOW, {"graded": "raw"})
     assert "T-g-T" not in only_raw and "T-a-T" in only_raw
-    only_yahoo = _market_section(st, "1", market, [], M, NOW, {"platform": "yahoo"}, None)
+    only_yahoo = _market_section("1", market, "p:A@1", {}, M, NOW, {"platform": "yahoo"})
     assert "T-a-T" not in only_yahoo and "T-c-T" in only_yahoo
 
 
@@ -78,12 +80,12 @@ def test_coverage_line_says_only_what_we_hold(tmp_path):
     assert "Mercari: nothing yet" in cm.coverage_line({"ebay": {"live": 3, "sold": 0}})
 
 
-def test_printing_filter_is_one_dropdown_and_filters(tmp_path):
+def test_other_versions_are_folded_away_not_mixed_in(tmp_path):
     from cardman.ui_home import _market_section
     rows = ROWS + [("h", "ebay_browse", [("p:B@1", 1.0)], 60, {})]
     st = _store(tmp_path, rows)
     market = cm.listings_for(st, "1")
     M = lambda v, sign=False: "—" if v is None else f"${v:,.0f}"
-    html = _market_section(st, "1", market, [], M, NOW, {"printing": "p:B@1"}, None)
-    assert html.count('<select name="printing">') == 1 and 'value="p:B@1" selected' in html
-    assert "T-h-T" in html and "T-a-T" not in html
+    html = _market_section("1", market, "p:B@1", {}, M, NOW, {})
+    this, other = html.split("Other versions of this card")[:2]
+    assert "T-h-T" in this and "T-b-T" in this and "T-a-T" not in this and "T-a-T" in other
