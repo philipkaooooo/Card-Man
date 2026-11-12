@@ -201,8 +201,12 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", a
     return "".join(out)
 
 
-def view_search(idx, q: str) -> str:
+def view_search(idx, q: str, st=None, M=None) -> str:
     hits = idx.search(q, 48) if q else []
+    mkt = {}
+    if st is not None and hits and "opportunity" in _tables(st):
+        from .card_market import summary
+        mkt = summary(st, [h.passcode for h in hits])
     head = ""
     if not q:
         return head + '<p class="empty">Type a card name in English or Japanese, a set code, or a passcode.</p>'
@@ -222,6 +226,8 @@ def view_search(idx, q: str) -> str:
                      + f'<span class="ct-meta">{e(c.get("type_line") or c.get("card_type") or "")}{(" · " + e(stat)) if stat else ""}</span>'
                      f'<span class="ct-meta">{len(prints)} printing{"s" if len(prints) != 1 else ""}'
                      + (f' · {e(codes[0])}{" …" if len(codes) > 1 else ""}' if codes else "") + '</span>'
+                     + (f'<span class="ct-mkt">{mkt[h.passcode][0]} listing{"s" if mkt[h.passcode][0] != 1 else ""} · from {M(mkt[h.passcode][1])}</span>'
+                        if h.passcode in mkt and M is not None else "")
                      + (f'<span class="ct-why">{"alternate artwork · " if same[h.name] > 1 else ""}passcode {e(h.passcode)}</span>'
                         if same[h.name] > 1 else "")
                      + (f'<span class="ct-why">matched {e(h.matched)}</span>' if h.matched not in ("name",) else "") + '</a>')
@@ -251,7 +257,8 @@ def _para(t: str | None) -> str:
     return "".join(f"<p>{e(line)}</p>" for line in (t or "").splitlines() if line.strip())
 
 
-def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalog=None, home: str = "TWD", token: str = "") -> str:
+def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalog=None, home: str = "TWD", token: str = "",
+              filters: dict | None = None) -> str:
     c = idx.card(passcode)
     if not c:
         raise KeyError(f"no card with passcode {passcode}")
@@ -260,26 +267,40 @@ def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalo
     rows, lows = [], []
     from .identity import edition_variants
     all_v = [v for p in prints for v in (edition_variants(p, catalog) if catalog is not None else [p])]
-    # Price only printings the store has any record of: one query instead of a valuation per printing.
+    # Value only printings with a real sale recorded: asks never price anything, and there are thousands of them.
     ids = [v.id for v in all_v]
     seen: set[str] = set()
     for i in range(0, len(ids), 500):
         chunk = ids[i:i + 500]
         seen |= {r[0] for r in st.db.execute(
-            f"SELECT DISTINCT printing_id FROM observation_printing WHERE printing_id IN ({','.join('?' * len(chunk))})", chunk)}
+            "SELECT DISTINCT p.printing_id FROM observation_printing p JOIN observation o ON o.id=p.obs_id WHERE o.synthetic=0 AND "
+            "o.evidence_type IN ('MARKETPLACE_MARKED_SOLD','ACCEPTED_OFFER','INDEPENDENT_TRANSACTION') AND "
+            f"p.printing_id IN ({','.join('?' * len(chunk))})", chunk)}
+    from .card_market import THIS_CARD, listings_for
+    market = listings_for(st, passcode) if "opportunity" in _tables(st) else []
+    listed: dict[str, list] = {}
+    for r in market:
+        if r["card_prob"] >= THIS_CARD and not r["lot"]:
+            listed.setdefault(r["printing_id"], []).append(r)
+    method_lines = []
     for v in all_v:
         if True:
-            sales = asks = 0
+            sales = 0
             low = mid = None
             if book is not None and v.id in seen:
                 try:
                     val = book.value(v.id)
-                    sales, asks = len(val.sales), getattr(val, "competing", 0)
+                    sales = len(val.sales)
                     if val.estimate:
-                        low, mid = val.estimate.low, val.estimate.mid
+                        est = val.estimate
+                        low, mid = est.low, est.mid
                         lows.append((low, v))
+                        method_lines.append(_method_line(v, est, M, getattr(book, "bias", 1.0)))
                 except Exception:
                     pass
+            here = listed.get(v.id, [])
+            asks = len(here)
+            cheapest = min((r["all_in"] for r in here if r["all_in"] is not None), default=None)
             scan = idx.printing_scan(passcode, v)
             region = {"EN_TCG": "EN", "JP_OCG": "JP"}.get(v.region.value, v.region.value)
             rows.append(
@@ -288,6 +309,7 @@ def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalo
                 f'<td>{e(v.product_name or v.product_id)}</td><td>{e(v.rarity)}</td><td>{e(v.edition or "")}</td>'
                 f'<td class="n">{sales or "—"}</td><td class="n">{M(low) if low is not None else "—"}</td>'
                 f'<td class="n">{M(mid) if mid is not None else "—"}</td><td class="n">{asks or "—"}</td>'
+                f'<td class="n">{M(cheapest) if cheapest is not None else "—"}</td>'
                 f'<td><a class="small" href="/evidence?printing={quote(v.id)}">evidence</a></td></tr>')
     names = c.get("names") or {}
     other = " · ".join(f'{e(k)}: {e(v)}' for k, v in names.items() if k not in ("en", "ja") and v)
@@ -321,11 +343,157 @@ def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalo
         + (f'<p class="small muted">Series: {e(", ".join(c["series"]))}</p>' if c.get("series") else "")
         + _sold_links(c)
         + '</div></div>'
-        f'<section><h2>All {len(rows)} printings</h2><p class="why">From the identity catalog. Prices are only from recorded sales of that exact '
+        + _market_section(st, passcode, market, all_v, M, now, filters or {}, idx)
+        + f'<section><h2>All {len(rows)} printings</h2><p class="why">From the identity catalog. Prices are only from recorded sales of that exact '
         'printing (and edition); live asks are copies for sale right now. A scan appears only when its file is that printing.</p>'
         '<div class="wrap"><table class="prints"><tr><th></th><th>Region</th><th>Set code</th><th>Product</th><th>Rarity</th><th>Edition</th>'
-        '<th class="n">Sales</th><th class="n">Low</th><th class="n">Mid</th><th class="n">Live asks</th><th></th></tr>'
-        + "".join(rows) + '</table></div></section>' + (_sale_form(passcode, all_v, token, now) if token else ""))
+        '<th class="n">Sales</th><th class="n">Low</th><th class="n">Mid</th><th class="n">Listed now</th><th class="n">Lowest all-in</th><th></th></tr>'
+        + "".join(rows) + '</table></div>'
+        + ('<details class="dsec"><summary>How we priced it</summary>'
+           + ('<ul class="method">' + "".join(method_lines) + '</ul>' if method_lines else
+              '<p class="small">No printing of this card has 3 or more real sales recorded yet, so none is priced. One or two sales '
+              'are shown under Recently sold but are not enough to set a price.</p>')
+           + '<p class="why small">Only real sales of that exact printing and edition, raw or the same grade, never asks or guide prices. '
+           'Duplicates of one sale seen on two sites count once. Every price is converted at the rate on its own sale date. '
+           'Full method: docs/pricing-method.md.</p></details>')
+        + '</section>' + (_sale_form(passcode, all_v, token, now) if token else ""))
+
+
+def _method_line(v, est, M, bias) -> str:
+    """One printing's value in plain terms: how many sales, the middle, the range, and every adjustment applied."""
+    label = " · ".join(x for x in (v.set_code or "no code", v.rarity, v.edition) if x)
+    adj = []
+    if est.trend_monthly is not None and est.trend_monthly < 0:
+        adj.append(f"falling market: priced where it is heading ({est.trend_note})")
+    elif est.trend_monthly is not None:
+        adj.append(f"trend {est.trend_note}: not paid for")
+    if bias and bias < 1:
+        adj.append(f"your own results: estimates scaled to {bias:.0%}")
+    rng = ("lowest sale to middle" if est.method.startswith("sparse") else "20th to 75th percentile")
+    return (f'<li><b>{e(label)}</b>: {est.n} sale{"s" if est.n != 1 else ""}, middle {M(est.mid)}, range {M(est.low)} – {M(est.high)} '
+            f'({e(rng)}, recent sales weigh more){"; " + e("; ".join(adj)) if adj else ""}</li>')
+
+
+GRADED = re.compile(r"\b(PSA|BGS|CGC|ARS|SGC|TAG)\b", re.I)
+
+
+def _market_section(st, passcode, market, variants, M, now, f: dict, idx) -> str:
+    """Every live listing of this card across platforms. Confirmed-card rows and maybe-this-card rows never mix."""
+    from .card_market import SITE, THIS_CARD, coverage, coverage_line
+    from .ui_listing import badge, verdict, _left, _type_label
+    EM = lambda v, sign=False: M(v)
+    lots = [r for r in market if r["lot"]]
+    singles = [r for r in market if not r["lot"]]
+    plat, prn, grd, typ = f.get("platform", ""), f.get("printing", ""), f.get("graded", ""), f.get("type", "")
+    rows_in = []
+    for r in singles:
+        graded = bool(r["grade_company"] or GRADED.search(r["title"] or ""))
+        auction = r["kind"] in ("bid", "auction")
+        if (plat and r["site"] != plat) or (prn and r["printing_id"] != prn) or (grd == "raw" and graded) or (grd == "graded" and not graded) \
+                or (typ == "bin" and auction) or (typ == "auction" and not auction):
+            continue
+        rows_in.append((r, graded, auction))
+    this = [x for x in rows_in if x[0]["card_prob"] >= THIS_CARD]
+    maybe = [x for x in rows_in if x[0]["card_prob"] < THIS_CARD]
+
+    def tr(r, graded, auction):
+        v = verdict(r["payload"], r["status"], EM)
+        label = " · ".join((r["label"] or "").split(" · ")[:3])
+        sure = r.get("printing_prob") or 0
+        cond = " ".join(x for x in (r["grade_company"], r["grade"]) if x) or (r["condition"] or "")
+        pc = r["payload"].get("printing_id")
+        return (f'<tr><td><span class="plat {e(r["site"])}">{e(SITE[r["site"]])}</span></td>'
+                f'<td><a href="/opp/{quote(r["key"], safe="")}">{e(r["title"])}</a><br><span class="muted small">{e(label)}'
+                f'{"" if pc else f" · {sure:.0%} sure of the printing"}{" · " + e(cond) if cond else ""}</span></td>'
+                f'<td class="n">{e(charts.fmt(float(r["price"]), r["currency"]))}</td>'
+                f'<td class="n">{e(charts.fmt(float(r["shipping"]), r["currency"])) if r["shipping"] not in (None, "", "0") else "—"}</td>'
+                f'<td class="n"><b>{M(r["all_in"])}</b></td><td>{"Auction" if auction else "Buy it now"}<br><span class="muted small">'
+                f'{e(_left(r["payload"].get("ends_at"), now))}</span></td><td>{badge(v)}</td>'
+                f'<td>{"<a href=" + chr(34) + e(r["url"]) + chr(34) + " target=_blank rel=" + chr(34) + "noreferrer noopener" + chr(34) + ">open ↗</a>" if (r["url"] or "").startswith("http") else ""}</td></tr>')
+
+    def table(items, maybe_group=False):
+        if not items:
+            return ""
+        head = ('<tr><th>Site</th><th>Listing</th><th class="n">Ask</th><th class="n">Shipping</th><th class="n">All-in</th><th>Type</th>'
+                '<th>Verdict</th><th></th></tr>')
+        body = "".join(tr(*x) for x in items[:60])
+        if maybe_group:
+            body = body.replace("<tr>", "<tr class=maybe>")
+        return f'<div class="wrap"><table class="mkt">{head}{body}</table></div>' + (f'<p class="muted small">Showing 60 of {len(items)}.</p>' if len(items) > 60 else "")
+
+    def chip(param, val, text):
+        q = {**{k: v for k, v in f.items() if v}, param: val}
+        q = {k: v for k, v in q.items() if v}
+        on = (f.get(param, "") == val)
+        return f'<a class="fchip{" on" if on else ""}" href="/card/{e(passcode)}?{e(urlencode(q))}#market">{e(text)}</a>'
+    sites = sorted({r["site"] for r in singles})
+    printings: dict[str, list] = {}
+    for r in singles:
+        if r["card_prob"] >= THIS_CARD and r["printing_id"]:
+            printings.setdefault(r["printing_id"], [r["label"] or r["printing_id"], 0])[1] += 1
+    seen: dict[str, int] = {}
+    for v in printings.values():
+        seen[v[0]] = seen.get(v[0], 0) + 1
+    def opt_label(pid, lab):
+        region = pid.split(":")[1] if pid.count(":") > 1 else ""
+        return f"{lab} ({region})" if seen[lab] > 1 and region else lab
+    chips = ('<div class="fchips">' + chip("platform", "", "All sites") + "".join(chip("platform", s_, SITE[s_]) for s_ in sites)
+             + '<span class="sep"></span>' + chip("graded", "", "Raw and graded") + chip("graded", "raw", "Raw") + chip("graded", "graded", "Graded")
+             + '<span class="sep"></span>' + chip("type", "", "Any type") + chip("type", "bin", "Buy it now") + chip("type", "auction", "Auction") + '</div>')
+    if len(printings) > 1:
+        # One dropdown, not a wall of chips: a card can have dozens of printings listed at once.
+        keep = "".join(f'<input type="hidden" name="{k}" value="{e(v)}">' for k, v in f.items() if v and k != "printing")
+        opts = '<option value="">Every printing</option>' + "".join(
+            f'<option value="{e(pid)}"{" selected" if pid == prn else ""}>{e(opt_label(pid, lab))} · {n} listed</option>'
+            for pid, (lab, n) in sorted(printings.items(), key=lambda kv: (-kv[1][1], kv[1][0])))
+        chips += (f'<form class="pfilter" method="get" action="/card/{e(passcode)}#market">{keep}<label>Printing '
+                  f'<select name="printing">{opts}</select></label><button>Show</button></form>')
+    sold = _sold_panel(st, variants, M)
+    return (f'<section id="market"><h2>Listings now <span class="muted">({len(this)} this card{f", {len(maybe)} maybe" if maybe else ""})</span></h2>'
+            f'<p class="why small">{e(coverage_line(coverage(st)))}. Sorted by all-in cost, lowest first; all-in includes shipping, fees and import '
+            'at your costs.</p>' + chips
+            + (table(this) if this else '<p class="empty">No live listing is certainly this card right now.</p>')
+            + (f'<h3>Might be this card <span class="muted">({len(maybe)})</span></h3><p class="why small">The title fits this card and others; '
+               'open one to see how likely each is.</p>' + table(maybe, True) if maybe else "")
+            + (f'<p class="muted small">{len(lots)} lot(s) include this card; lots are not single-card prices. <a href="/opportunities?t=lots">See lots</a>.</p>' if lots else "")
+            + '</section>' + sold)
+
+
+def _sold_panel(st, variants, M) -> str:
+    """Recorded real sales of this card, newest first, grouped by printing (or 'printing not confirmed')."""
+    from .card_market import SITE, site_of
+    ids = [v.id for v in variants]
+    label = {v.id: " · ".join(x for x in (v.set_code or "no code", v.rarity, v.edition) if x) for v in variants}
+    if not ids:
+        return ""
+    rows = []
+    for i in range(0, len(ids), 500):
+        chunk = ids[i:i + 500]
+        rows += st.db.execute(
+            "SELECT DISTINCT o.id FROM observation_printing p JOIN observation o ON o.id=p.obs_id WHERE o.synthetic=0 AND o.evidence_type IN "
+            f"('MARKETPLACE_MARKED_SOLD','ACCEPTED_OFFER','INDEPENDENT_TRANSACTION') AND p.printing_id IN ({','.join('?' * len(chunk))})", chunk).fetchall()
+    obs = []
+    for (oid,) in rows:
+        try:
+            obs.append(st.effective(oid))
+        except Exception:
+            pass
+    obs.sort(key=lambda o: o.event_time, reverse=True)
+    if not obs:
+        return ('<section><h2>Recently sold</h2><p class="empty">No real sale of this card recorded yet. eBay sold counts add them on their own; '
+                'Yahoo! Auctions and Mercari come in through <a href="/import">Add sales</a>.</p></section>')
+    groups: dict[str, list] = {}
+    for o in obs[:80]:
+        k = label.get(o.printing_candidates[0], "printing not confirmed") if len(o.printing_candidates) == 1 else "printing not confirmed yet"
+        groups.setdefault(k, []).append(o)
+    kind = {"MARKETPLACE_MARKED_SOLD": "sold", "ACCEPTED_OFFER": "accepted offer", "INDEPENDENT_TRANSACTION": "completed sale"}
+    out = []
+    for k, os_ in groups.items():
+        out.append(f'<h3>{e(k)} <span class="muted">({len(os_)})</span></h3><ul class="soldlist">' + "".join(
+            f'<li><span class="plat {e(site_of(o.source))}">{e(SITE[site_of(o.source)])}</span><span>{e(o.event_time.date().isoformat())} · '
+            f'{e(kind.get(o.evidence_type.value, ""))}{" · " + e(o.grade_company + " " + (o.grade or "")) if o.grade_company else ""}</span>'
+            f'<span class="sold-p">{e(charts.fmt(float(o.original_amount), o.currency))}</span></li>' for o in os_[:12]) + '</ul>')
+    return '<section><h2>Recently sold</h2>' + "".join(out) + '</section>'
 
 
 def _sold_links(c: dict) -> str:
@@ -437,7 +605,11 @@ font-weight:800;font-size:13px;letter-spacing:.08em;color:var(--fg2)}.card.lotph
 .ctile{display:flex;flex-direction:column;gap:3px;padding:10px;background:var(--surface);border:1px solid var(--line);border-radius:12px;color:var(--fg);text-decoration:none}
 .ctile:hover{box-shadow:0 6px 18px rgba(0,0,0,.08)}.ctile .card{width:100%;margin:0 0 6px}
 .ct-name{font-weight:600;line-height:1.25}.ct-ja{font-size:12px;color:var(--fg2)}.ct-meta{font-size:12px;color:var(--muted)}
-.ct-why{font-size:11px;color:var(--accent)}
+.ct-why{font-size:11px;color:var(--accent)}.ct-mkt{font-size:12px;font-weight:650;color:var(--fg)}
+.plat{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:5px;border:1px solid var(--axis);white-space:nowrap}
+.plat.ebay{color:#0064d2}.plat.yahoo{color:#b3261e}.plat.mercari{color:#d24a4a}table.mkt tr.maybe td{opacity:.85}
+select{max-width:100%}form.sale{flex-wrap:wrap}form.sale label{min-width:0;max-width:100%}form.sale label select{width:100%}.pfilter{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 10px}#market .pfilter label{display:flex;flex-direction:row;gap:6px;align-items:center;min-width:0;max-width:100%;font-size:13px;color:var(--fg2);margin:0}#market .pfilter select{min-width:0;width:auto;max-width:min(520px,70vw);margin:0}#market .pfilter button{margin:0}
+.method{margin:4px 0 8px;padding-left:18px}.method li{margin:4px 0}.soldlist li .plat{justify-self:start}
 .cardpage{display:grid;grid-template-columns:minmax(220px,340px) minmax(0,1fr);gap:28px;margin:0 0 22px}
 @media(max-width:760px){.cardpage{grid-template-columns:1fr}.cp-img{max-width:300px}}
 .card.big{width:100%;box-shadow:0 14px 40px rgba(0,0,0,.22)}.img-note{font-size:12px;color:var(--muted);margin:8px 2px}

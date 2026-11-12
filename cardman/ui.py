@@ -1804,12 +1804,14 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                         self.send_header("Location", f"/card/{hits[0].passcode}")
                         self.send_header("Content-Length", "0")
                         return self.end_headers()
-                    self._page("search", q or "Card search", view_search(cards, q), qs)
+                    from .ui_home import Money
+                    self._page("search", q or "Card search", view_search(cards, q, st, Money(st, _engine_home(st), self._cur(), now)), qs)
                 elif parts[0] == "card" and len(parts) == 2 and parts[1].isdigit():
                     from .ui_home import view_card
                     self._page("search", (cards.card(parts[1]) or {}).get("name_en") or parts[1],
                                view_card(st, cards, parts[1], now, self._cur(), book=_book(st, now), catalog=catalog() if catalog else None,
-                                         token=token), qs, crumb=("Cards", "/search"))
+                                         token=token, filters={k: qs.get(k, [""])[0][:200] for k in ("platform", "printing", "graded", "type")}),
+                               qs, crumb=("Cards", "/search"))
                 elif parts[0] == "deal" and len(parts) == 2:
                     self._page("deals", "Deal", view_deal(st, parts[1], now, token, self._cur()), qs, crumb=("Deals", "/deals"))
                 elif parts == ["evidence"]:

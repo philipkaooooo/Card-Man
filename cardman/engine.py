@@ -113,8 +113,10 @@ class Engine:
         return self.db.execute("SELECT 1 FROM inbox_seen WHERE hash=?", (h,)).fetchone() is not None
 
     # -- memory ---------------------------------------------------------------------------------------------------
-    def remember(self, r: RawListing, now: datetime, rep: TickReport) -> None:
+    def remember(self, r: RawListing, now: datetime, rep: TickReport) -> str:
+        """Returns "new", "changed" (price or state) or "same"."""
         row = self.db.execute("SELECT price, kind FROM listing WHERE key=?", (r.key,)).fetchone()
+        state = "new" if row is None else ("changed" if (Decimal(row[0]) != r.price or row[1] != r.kind) else "same")
         data = {"description": r.description, "shipping": str(r.shipping) if r.shipping is not None else None, "photos": list(r.photos),
                 "grade_company": r.grade_company, "grade": r.grade, "condition": r.condition, "verified": r.verified, "printing_id": r.printing_id,
                 "event_time": r.event_time.isoformat() if r.event_time else None, "raw_ref": r.raw_ref, "synthetic": r.synthetic, "bids": r.bids}
@@ -137,6 +139,7 @@ class Engine:
                                    fingerprint=?, data_json=? WHERE key=?""",
                                 (r.title, r.url, r.seller, r.kind, str(r.price), r.currency, r.ends_at.isoformat() if r.ends_at else None, now.isoformat(), ended,
                                  r.fingerprint(), json.dumps(data, ensure_ascii=False), r.key))
+        return state
 
     def _record_observation(self, r: RawListing, candidates: list[str], now: datetime, rep: TickReport) -> None:
         try:
@@ -351,8 +354,9 @@ class Engine:
         if self.reference:
             rep.routes.append(asdict(self.reference.status()))
         for r in new:
-            self.remember(r, now, rep)
-            self._take_evidence(r, now, rep)
+            # An unchanged asking price seen again is not a new fact: recording it every pass only bloated the store.
+            if self.remember(r, now, rep) != "same" or r.kind not in ("ask", "bid", "auction"):
+                self._take_evidence(r, now, rep)
         if self.ebay.status().on:
             # Sales seen through eBay's own API: sold counts that rose on tracked fixed-price listings.
             from .ebay_sold_watch import check as check_sold_counts
