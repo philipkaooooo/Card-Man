@@ -50,6 +50,13 @@ class ListingAnalysis:
 
 
 _KANA = re.compile(r"[\u3040-\u30ff]")
+_PREFIX_TOKEN = re.compile(r"(?<![A-Za-z0-9-])([A-Z][A-Z0-9]{1,4})(?![A-Za-z0-9-])")
+_NOT_PREFIX = {"PSA", "BGS", "CGC", "ARS", "SGC", "NM", "LP", "MP", "HP", "UR", "SR", "SE", "QCSR", "TCG", "OCG", "YGO", "ENG", "JP", "EN",
+               "LOT", "NEW", "MINT", "GEM", "PACK", "CARD", "HOLO", "RARE", "FOIL", "VLP", "EX", "VG", "OG", "SP", "UTR", "GR", "CR", "SCR", "STR"}
+
+
+def _prefixes(text: str) -> set[str]:
+    return {t for t in _PREFIX_TOKEN.findall(text or "") if t not in _NOT_PREFIX and not t.isdigit()}
 
 
 def _weights(cands: list[Printing], parsed: ParsedListing) -> dict[str, float]:
@@ -67,7 +74,10 @@ def _weights(cands: list[Printing], parsed: ParsedListing) -> dict[str, float]:
             w *= 2.0 if p.region == Region.JP_OCG else 0.25
         elif parsed.language == "en":
             w *= 2.0 if p.region == Region.EN_TCG else 0.25
-        elif _KANA.search(parsed.text):
+        # A set prefix written alone ("LCJW 1st Edition", "LOB Blue-Eyes") names the product, even without the number.
+        if p.set_code and p.set_code.split("-")[0].upper() in _prefixes(parsed.text):
+            w *= 6.0
+        if parsed.language not in ("ja", "en") and _KANA.search(parsed.text):
             # A title written in Japanese is usually a Japanese card, but sellers there also sell English ones: a tilt only.
             w *= 2.0 if p.region == Region.JP_OCG else 0.5
         raw[p.id] = w
@@ -144,6 +154,16 @@ def analyze(title: str, catalog: Catalog, *, description: str = "", verified: di
     # Named card vs the code's real owner: the classic misidentification, in either direction.
     if seller_code:
         owners = {p.family_id for p in catalog.by_code[seller_code]}
+        # A seller who shortens a long name ("Blue-Eyes Ultimate Dragon" for "Blue-Eyes Ultimate Dragon, the God-Surpassing
+        # Servant") named the code's own card: identify it as that card, not as a mistake.
+        named = {normalize_name(catalog.families[f].names.get(lang) or "") for f in fam_ids if f in catalog.families for lang in ("en", "ja")}
+        named.discard("")
+        abbreviated = [o for o in owners if o in catalog.families and any(
+            normalize_name(catalog.families[o].names.get(lang) or "").startswith(n) for n in named for lang in ("en", "ja"))]
+        if fam_ids and abbreviated and not (fam_ids & owners):
+            fam = catalog.families[abbreviated[0]]
+            sig_title = f"{title} {fam.names.get('en') or fam.names.get('ja')}"
+            fam_ids = set(abbreviated)
         # A typo-matched name ("B. Dragon" ~ "Baby Dragon") is too weak to accuse the seller of a wrong code.
         if fam_ids and not fuzzy and not (fam_ids & owners):
             owner_names = ", ".join(sorted(catalog.families[f].names.get("en") or catalog.families[f].names.get("ja", f)

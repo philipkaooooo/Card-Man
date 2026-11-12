@@ -275,7 +275,7 @@ CURRENCIES = ("USD", "TWD")
 
 ON = ' class="on" aria-current="page"'
 NAV = (("Browse", (("home", "Home", "/"), ("search", "Card search", "/search"))),
-       ("Decide", (("opportunities", "Opportunities", "/opportunities"), ("deals", "Deals", "/deals"),
+       ("Decide", (("opportunities", "Listings", "/opportunities"), ("deals", "Deals", "/deals"),
                    ("scan", "Scan a listing", "/scan"))),
        ("Evidence", (("evidence", "Evidence", "/evidence"), ("import", "Import sales", "/import"))),
        ("Learn", (("results", "Results", "/results"),)),
@@ -286,6 +286,7 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
          path: str = "/", theme: str = "market", q: str = "") -> bytes:
     from .ui_home import HOME_CSS, THEMES, header_search
     from .ui_import import IMPORT_CSS
+    from .ui_listing import LISTING_CSS
     theme = theme if theme in THEMES else "market"
     themes = ('<span class="themes" role="group" aria-label="Look">' + "".join(
         f'<a href="/theme?{urlencode({"t": t, "back": path})}" class="{"on" if t == theme else ""}">{t.title()}</a>'
@@ -303,7 +304,7 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     tz = datetime.now().astimezone().strftime("UTC%z")
     return (f'<!doctype html><html lang="en" data-theme="{"vault" if theme == "vault" else "light"}"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)} · CardMan</title>'
-            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}</style></head><body><header><a class="logo" href="/"><b>CardMan</b></a>{curs}{themes}{hsearch}'
+            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}</style></head><body><header><a class="logo" href="/"><b>CardMan</b></a>{curs}{themes}{hsearch}'
             f'<span class="store">{e(store)} · times {e(tz)}</span></header>'
             f'<div class="shell"><aside><details class="menu" open><summary>{e(here)}</summary>{"".join(groups)}</details></aside>'
             f'<main>{flash}{body}</main></div><script src="/static/ui.js"></script></body></html>').encode()
@@ -1795,11 +1796,32 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                                                                      bookmark=bookmarklet(port, capture_key()),
                                                                      searches=worth_pricing(st, cards)), qs)
                 elif parts == ["opportunities"]:
-                    self._page("opportunities", "Opportunities",
-                               view_opportunities(st, now, token, self._cur(), qs.get("show", ["open"])[0]), qs)
+                    if not _engine_ready(st):
+                        self._page("opportunities", "Listings", view_opportunities(st, now, token, self._cur(), "open"), qs)
+                    else:
+                        from .ui_listing import view_list
+                        M = EngineMoney(st, _engine_home(st), self._cur(), now)
+                        v = qs.get("v", ["all"])[0]
+                        t = qs.get("t", ["any"])[0]
+                        tick = (f'<form method="post" action="/engine/tick" class="inline"><input type="hidden" name="t" value="{e(token)}">'
+                                '<button>Check for new listings now</button> <a class="small" href="/opportunities/engine">engine details</a></form>')
+                        self._page("opportunities", "Listings",
+                                   view_list(st, cards, now, M, v_filter=v if v in ("all", "BUY", "CHECK", "WATCH", "PASS", "every") else "all",
+                                             t_filter=t if t in ("any", "singles", "lots") else "any", home_cur=M.cur).replace(
+                                       '</p>', '</p>' + tick, 1), qs)
+                elif parts == ["opportunities", "engine"]:
+                    self._page("opportunities", "Engine", view_opportunities(st, now, token, self._cur(), qs.get("show", ["open"])[0]), qs)
                 elif parts[0] == "opp" and len(parts) == 2:
+                    from .ui_listing import view_one
                     k = unquote(parts[1])
-                    self._page("opportunities", k, view_opportunity(st, k, now, token, self._cur()), qs)
+                    if not _engine_ready(st):
+                        raise KeyError(k)
+                    try:
+                        from .engine import load_profile
+                        prof = load_profile()
+                    except Exception:
+                        prof = None
+                    self._page("opportunities", k, view_one(st, cards, k, now, token, EngineMoney(st, _engine_home(st), self._cur(), now), prof), qs)
                 elif parts == ["costs"]:
                     self._page("costs", "Your costs", view_costs(token), qs)
                 elif parts == ["scan"]:
