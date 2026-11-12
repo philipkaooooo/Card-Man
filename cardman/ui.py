@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import json
 import secrets
 import statistics
 import tempfile
@@ -303,6 +304,7 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     from .ui_import import IMPORT_CSS
     from .ui_listing import LISTING_CSS
     from .ui_settings import SETTINGS_CSS
+    from .ui_chart import CHART_CSS
     theme = theme if theme in THEMES else "market"
     where = NAV_OF.get(nav, "")
     links = "".join(f'<a href="{h}"{ON if k == where else ""}>{e(t)}</a>' for k, t, h in NAV)
@@ -315,11 +317,11 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     tz = datetime.now().astimezone().strftime("UTC%z")
     return (f'<!doctype html><html lang="en" data-theme="{"vault" if theme == "vault" else "light"}"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)} · CardMan</title>'
-            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{SHELL_CSS}</style></head><body>'
+            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{CHART_CSS}{SHELL_CSS}</style></head><body>'
             f'<header class="top"><a class="logo" href="/">CardMan</a><nav class="main" aria-label="Main">{links}</nav>{hsearch}{curs}</header>'
             f'<main class="page">{crumb}{flash}{body}</main>'
             f'<footer class="foot">Private to this Mac · data in {e(store)} · times {e(tz)} · press <kbd>/</kbd> to search</footer>'
-            '<script src="/static/ui.js"></script></body></html>').encode()
+            f'<script src="/static/ui.js?v={_js_version()}"></script></body></html>').encode()
 
 
 # -- display currency ---------------------------------------------------------------------------
@@ -1348,6 +1350,20 @@ class EngineMoney:
         return signed(d, self.cur) if sign else money(d, self.cur)
 
 
+_JSV: list = []
+
+
+def _js_version() -> str:
+    """Changes whenever the script changes, so a browser never keeps running an old copy."""
+    if not _JSV:
+        import hashlib
+        from .ui_chart import CHART_JS
+        from .ui_home import HOME_JS
+        from .ui_import import IMPORT_JS
+        _JSV.append(hashlib.sha256((JS + HOME_JS + IMPORT_JS + CHART_JS).encode()).hexdigest()[:10])
+    return _JSV[0]
+
+
 def _engine_home(st: Store) -> str:
     try:
         from .engine import load_profile
@@ -1728,7 +1744,26 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                 st.db.close()
                 from .ui_home import HOME_JS
                 from .ui_import import IMPORT_JS
-                return self._send(200, (JS + HOME_JS + IMPORT_JS).encode(), "text/javascript; charset=utf-8")
+                from .ui_chart import CHART_JS
+                return self._send(200, (JS + HOME_JS + IMPORT_JS + CHART_JS).encode(), "text/javascript; charset=utf-8")
+            if len(parts) == 3 and parts[0] == "card" and parts[1].isdigit() and parts[2] in ("history.json", "history.html"):
+                try:
+                    from .identity import edition_variants
+                    from .ui_chart import chips, table
+                    from .ui_home import history_for
+                    cat = catalog() if catalog else None
+                    vs = [v for p in cards.printings(parts[1]) for v in (edition_variants(p, cat) if cat is not None else [p])]
+                    hist = history_for(st, parts[1], vs, now, self._cur(), _engine_home(st), _book(st, now))
+                finally:
+                    st.db.close()
+                if parts[2] == "history.json":
+                    return self._send(200, json.dumps(hist).encode(), "application/json")
+                k = qs.get("key", [""])[0]
+                s_ = next((x for x in hist["series"] if x["key"] == k), None)
+                if s_ is None:
+                    return self._send(404, b"no such series", "text/plain")
+                return self._send(200, (f'<div data-hchips>{chips(s_, hist["currency"])}</div>' + table(s_, hist["currency"])).encode(),
+                                  "text/html; charset=utf-8")
             if len(parts) == 3 and parts[:2] == ["img", "card"] and parts[2].endswith(".jpg"):
                 st.db.close()
                 body, ctype = images.artwork(parts[2][:-4], qs.get("size", [""])[0])
@@ -1876,7 +1911,7 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
             u = urlsplit(self.path)
             parts = [p for p in u.path.split("/") if p]
             n = int(self.headers.get("Content-Length") or 0)
-            if n > (MAX_PAGES_UPLOAD if parts == ["import", "pages"] else MAX_UPLOAD):
+            if n > (MAX_PAGES_UPLOAD if parts in (["import", "pages"], ["capture"]) else MAX_UPLOAD):   # a full 240-result page is several MB
                 return self._send(413, page("Too large", "<h1>Upload too large</h1>", nav="", store=store_path))
             raw = self.rfile.read(n)
             ctype = self.headers.get("Content-Type", "")

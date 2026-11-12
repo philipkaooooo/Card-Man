@@ -66,8 +66,10 @@ def _capture_box(bookmark: str | None, searches: list[dict]) -> str:
             'Mercari), click it: the page you are looking at goes straight into CardMan, nothing to save or drag.</p>'
             f'<p><a class="bookmarklet" href="{e(bookmark)}">Send to CardMan</a> <span class="small muted">← drag me to the bookmarks bar '
             '(clicking it here does nothing)</span></p>'
-            + (f'<h3>Sold searches worth running now</h3><p class="why">The cards behind your top open opportunities. Each link opens the sold '
-               f'results (240 per page on eBay); click the bookmark there.</p><ol class="searches">{rows}</ol>' if rows else "")
+            + (f'<h3>Backfill 3 months: the cards worth it now</h3><p class="why">The cards behind your top open opportunities. Each link opens '
+               'the sold results reaching furthest back, newest first and as many per page as the site allows (eBay sold and 130point about '
+               '90 days, Yahoo! 落札相場 about 120). Scroll to the end, click the bookmark. Each sale keeps its real sale date, and a sale '
+               f'seen on two sites counts once.</p><ol class="searches">{rows}</ol>' if rows else "")
             + '</section>')
 
 

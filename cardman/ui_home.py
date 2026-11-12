@@ -144,8 +144,10 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", a
         buy, check, watch, watch_lots = by(BUY), by(CHECK), by(WATCH), by(WATCH, True)
         rank = lambda i: (-(i[3].margin or -1e12), -(i[2].get("priority") or 0))
         top = sorted(buy, key=rank) + sorted(check, key=rank)
-        rows = [row_html(k, d, v, idx, EM, now) for k, _s, d, v in top[:6]]
-        rows += [row_html(k, d, v, idx, EM, now) for k, _s, d, v in sorted(watch, key=rank)[:max(0, 8 - len(rows))]]
+        from .history import sparks as _sparks
+        sp = _sparks(st, now, getattr(M, 'home', 'TWD'))
+        rows = [row_html(k, d, v, idx, EM, now, sp) for k, _s, d, v in top[:6]]
+        rows += [row_html(k, d, v, idx, EM, now, sp) for k, _s, d, v in sorted(watch, key=rank)[:max(0, 8 - len(rows))]]
         chips = ('<div class="fchips">'
                  f'<a class="fchip" href="/opportunities?v=BUY">Buy <b>{len(buy)}</b></a>'
                  f'<a class="fchip" href="/opportunities?v=CHECK">Needs your check <b>{len(check)}</b></a>'
@@ -207,6 +209,16 @@ def view_search(idx, q: str, st=None, M=None) -> str:
     if st is not None and hits and "opportunity" in _tables(st):
         from .card_market import summary
         mkt = summary(st, [h.passcode for h in hits])
+    sparks = {}
+    if st is not None and hits and M is not None:
+        from .history import sparks as _sparks
+        try:
+            sp = _sparks(st, M.now, M.home)
+            for pid, svg in sp.items():
+                pc = pid.rsplit("@", 1)[-1].split("|")[0]
+                sparks.setdefault(pc, svg)
+        except Exception:
+            sparks = {}
     head = ""
     if not q:
         return head + '<p class="empty">Type a card name in English or Japanese, a set code, or a passcode.</p>'
@@ -228,6 +240,7 @@ def view_search(idx, q: str, st=None, M=None) -> str:
                      + (f' · {e(codes[0])}{" …" if len(codes) > 1 else ""}' if codes else "") + '</span>'
                      + (f'<span class="ct-mkt">{mkt[h.passcode][0]} listing{"s" if mkt[h.passcode][0] != 1 else ""} · from {M(mkt[h.passcode][1])}</span>'
                         if h.passcode in mkt and M is not None else "")
+                     + (f'<span class="ct-spark">{sparks[h.passcode]}</span>' if h.passcode in sparks else "")
                      + (f'<span class="ct-why">{"alternate artwork · " if same[h.name] > 1 else ""}passcode {e(h.passcode)}</span>'
                         if same[h.name] > 1 else "")
                      + (f'<span class="ct-why">matched {e(h.matched)}</span>' if h.matched not in ("name",) else "") + '</a>')
@@ -343,6 +356,7 @@ def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalo
         + (f'<p class="small muted">Series: {e(", ".join(c["series"]))}</p>' if c.get("series") else "")
         + _sold_links(c)
         + '</div></div>'
+        + _history_section(st, passcode, c, all_v, now, cur, home, book)
         + _market_section(st, passcode, market, all_v, M, now, filters or {}, idx)
         + f'<section><h2>All {len(rows)} printings</h2><p class="why">From the identity catalog. Prices are only from recorded sales of that exact '
         'printing (and edition); live asks are copies for sale right now. A scan appears only when its file is that printing.</p>'
@@ -375,6 +389,17 @@ def _method_line(v, est, M, bias) -> str:
 
 
 GRADED = re.compile(r"\b(PSA|BGS|CGC|ARS|SGC|TAG)\b", re.I)
+
+
+def history_for(st, passcode, variants, now, cur, home, book) -> dict:
+    from .history import Converter, cached_build
+    return cached_build(st, passcode, variants, now, Converter(st, home, cur, getattr(book, "fx", None)))
+
+
+def _history_section(st, passcode, c, variants, now, cur, home, book) -> str:
+    from .capture import backfill_links
+    from .ui_chart import section
+    return section(passcode, history_for(st, passcode, variants, now, cur, home, book), backfill_links(c.get("name_en"), c.get("name_ja")))
 
 
 def _market_section(st, passcode, market, variants, M, now, f: dict, idx) -> str:

@@ -60,6 +60,17 @@ def ensure_index(st) -> None:
         st.db.execute("DELETE FROM card_listing")
         st.db.executemany("INSERT OR REPLACE INTO card_listing VALUES (?,?,?,?,?,?,?,?,?)", rows)
         st.db.execute("INSERT OR REPLACE INTO card_listing_meta VALUES ('marker', ?)", (marker,))
+    try:
+        from datetime import datetime, timezone
+        from .engine import load_profile
+        from .history import update_ask_daily
+        try:
+            home = load_profile()["home_currency"]
+        except Exception:
+            home = "TWD"
+        update_ask_daily(st, datetime.now(timezone.utc), home)
+    except Exception:
+        pass   # the ask series is a convenience; never block the listings index
 
 
 def listings_for(st, passcode: str) -> list[dict]:

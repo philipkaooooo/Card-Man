@@ -54,6 +54,22 @@ def sold_search_links(name_en: str | None, name_ja: str | None, code: str | None
     return out
 
 
+def backfill_links(name_en: str | None, name_ja: str | None) -> list[tuple[str, str]]:
+    """The sold searches that reach furthest back, results maxed and newest first: one bookmark click each is a backfill."""
+    out = []
+    if name_en:
+        q = quote_plus(name_en)
+        out.append(("eBay sold (90 days, 240 a page)", f"https://www.ebay.com/sch/i.html?_nkw={q}&_sacat={EBAY_YGO_SINGLES}"
+                                                      "&LH_Sold=1&LH_Complete=1&_ipg=240&_sop=13"))
+        out.append(("130point (about 90 days)", f"https://130point.com/sales/?search={q}"))
+    if name_ja:
+        q = quote_plus(name_ja)
+        out.append(("Yahoo! 落札相場 (about 120 days, 100 a page)",
+                    f"https://auctions.yahoo.co.jp/closedsearch/closedsearch?p={q}&n=100&s1=end&o1=d"))
+        out.append(("Mercari 売り切れ", f"https://jp.mercari.com/search?keyword={q}&status=sold_out&sort=created_time&order=desc"))
+    return out
+
+
 def worth_pricing(st, idx, limit: int = 12) -> list[dict]:
     """Cards where sold prices would change a decision now: the most likely card behind open opportunities."""
     have = {r[0] for r in st.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -76,7 +92,7 @@ def worth_pricing(st, idx, limit: int = 12) -> list[dict]:
         code = (sc[0].get("label") or "").split(" · ")[0]
         code = code if code and code != "no code" else None
         out.append({"passcode": pc, "name": c.get("name_en") or c.get("name_ja"), "ja": c.get("name_ja"), "code": code,
-                    "links": sold_search_links(c.get("name_en"), c.get("name_ja"), code)})
+                    "links": backfill_links(c.get("name_en"), c.get("name_ja"))})
         if len(out) == limit:
             break
     return out

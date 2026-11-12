@@ -123,3 +123,36 @@ card it is*, never as a blended price:
 - No "all printings of this card" average: a card-level number would mix 1st edition with reprints.
 - Guide prices never enter a value.
 - A redundant re-filter in the opportunity step was removed; the result is unchanged.
+
+## History and charts (`cardman/history.py`, card page "Price history")
+
+- **One series per printing and grade.** Raw, PSA 9 and PSA 10 of a printing are three series. A dropdown picks one,
+  defaulting to the series with the most sales. Nothing is pooled.
+- **Which sales are charted.** The same rules as pricing (§1–4), without the 10-sale cap:
+  - real sales only;
+  - the printing is confirmed;
+  - singles only;
+  - duplicates removed one-to-one;
+  - excluded flags left out.
+  
+  Two kinds of sale are counted but not charted, and the page says how many:
+  - a sale whose printing is still open;
+  - a sale with no real sale date (Mercari search pages, rows that showed no date).
+- **Currency.** Each sale is converted once, at its own date's rate, to the display currency.
+- **Buckets.** ISO weeks (Monday start) and calendar months, in UTC, so one moment is always in one bucket.
+  - Each bucket gives n, the median and the low–high range.
+  - It gives P25–P75 only with 3+ sales.
+  - Empty buckets stay empty, and lines never cross a gap.
+- **Asks.** A separate, lighter line: the lowest ask per day, drawn as "asking, not sold".
+  - It comes from a daily snapshot (`ask_daily`) of live listings the engine is 95%+ sure are this card and 90%+ sure are this printing.
+  - A listing counts on each day between its first and last sighting.
+  - Today's row is rewritten on every check, and past days are kept as written.
+  - The first days (Nov 7–12) were rebuilt from listing prices current at that time.
+- **Guide prices.** A dashed line, "guide estimate". Only for raw series: the YGOPRODeck price for that set code and
+  rarity, stored once a day from Nov 7. YGOPRODeck has no price history, so this line only grows onward.
+- **Summary chips.**
+  - Last sale.
+  - 30-day median, only with 3+ sales.
+  - 90-day change: the median of the last 30 days vs days 90–120 ago, only with 3+ sales at each end.
+  - Trend: a Theil-Sen slope on log price with a seeded bootstrap 95% interval (6+ sales over 30+ days). Labelled "rising" or "falling" only when the interval excludes 0; otherwise "no clear trend".
+- **Sparklines** in search results and listing rows show the weekly sold median over 90 days for the raw series, only with 3+ sales.

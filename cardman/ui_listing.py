@@ -173,7 +173,7 @@ def _likely(d: dict) -> dict | None:
     return max(sc, key=lambda s: s.get("weight") or 0) if sc else None
 
 
-def row_html(key: str, d: dict, v: Verdict, cards, M, now: datetime) -> str:
+def row_html(key: str, d: dict, v: Verdict, cards, M, now: datetime, sparks: dict | None = None) -> str:
     """One listing as one line: picture, card, verdict, all-in vs max buy, confidence, time left. Shared by Home and Listings."""
     top = v.top
     lot = "LOT" in (d.get("kinds") or [])
@@ -186,9 +186,10 @@ def row_html(key: str, d: dict, v: Verdict, cards, M, now: datetime) -> str:
     if likely and likely.get("label") and not lot:
         sub = " · ".join(likely["label"].split(" · ")[:3]) + ("" if d.get("printing_id") else " (most likely)")
     mb = top.get("max_buy") if top and top.get("basis") == "sales" else None
+    sp = (sparks or {}).get(d.get("printing_id") or "") if not lot else ""
     return (f'<a class="lrow" href="/opp/{quote(key, safe="")}">{_art(d, v)}'
             f'<span class="lr-main"><span class="lr-title">{e(name)}</span><span class="lr-sub">{e(sub) or e(d.get("market") or "")}</span>'
-            f'<span class="lr-reason">{e(v.reason)}</span></span>'
+            f'<span class="lr-reason">{e(v.reason)}</span>{sp or ""}</span>'
             f'<span class="lr-side">{badge(v)}<span class="lr-money"><small>All-in</small> {M(d.get("all_in_home"))}'
             f'{"<small> · max buy</small> " + M(mb) if mb is not None else ""}</span>'
             f'<span class="lr-meta">{conf_meter(v)} <span class="muted small">{e(_left(d.get("ends_at"), now))}</span></span></span></a>')
@@ -252,7 +253,9 @@ def view_list(st, cards, now, M, *, v_filter: str, t_filter: str, home_cur: str,
            f'<span class="muted small">{e(getattr(M, "cur", ""))}</span><button>Apply</button>'
            + (f'<a class="small" href="{e(href(min="", max=""))}">clear</a>' if pmin is not None or pmax is not None else "")
            + '</form></div>')
-    rows = [row_html(key, d, v, cards, M, now) for key, status, d, v in shown[:150]]
+    from .history import sparks as _sparks
+    sp = _sparks(st, now, home_cur)
+    rows = [row_html(key, d, v, cards, M, now, sp) for key, status, d, v in shown[:150]]
     hidden = "" if v_filter in (PASS, "every") else f'<p class="muted small">{counts[PASS]} passed listings are hidden. <a href="{e(href(v=PASS))}">Show them</a>.</p>'
     more = f'<p class="muted small">Showing the first 150 of {len(shown)}. Narrow the filters to see the rest.</p>' if len(shown) > 150 else ""
     return ('<h1>Listings</h1><p class="sub">Each listing as one decision. Buy only ever appears when real sales back the price.</p>'
