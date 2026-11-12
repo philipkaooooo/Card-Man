@@ -2062,6 +2062,13 @@ def _num(v: str) -> float | None:
         return None
 
 
+class CardManServer(ThreadingHTTPServer):
+    """A page asks for two dozen card images at once; the standard queue of 5 waiting connections made some of them fail
+    with "connection reset" (a card picture or a search suggestion silently missing)."""
+    request_queue_size = 128
+    daemon_threads = True
+
+
 ENGINE_LOCK = threading.Lock()
 ENGINE_STATUS: dict = {"every_min": 0, "last": None, "next": None, "running": False, "error": None}
 
@@ -2097,7 +2104,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--engine-every", type=float, default=15, help="minutes between background engine passes; 0 turns them off")
     a = ap.parse_args(argv)
     Store(a.store).db.close()          # create the file and schema up front
-    srv = ThreadingHTTPServer(("127.0.0.1", a.port), make_handler(a.store, secrets.token_urlsafe(24),
+    srv = CardManServer(("127.0.0.1", a.port), make_handler(a.store, secrets.token_urlsafe(24),
                                                                   catalog=catalog_loader(a.catalog)))
     print(f"CardMan UI on http://127.0.0.1:{a.port}  (store {a.store}; Ctrl+C to stop)")
     if a.engine_every > 0:

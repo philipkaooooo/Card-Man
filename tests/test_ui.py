@@ -268,3 +268,24 @@ def test_currency_choice_applies_on_every_main_page(app2):
         assert 'class="on">TWD</a>' in h, path
         h = app2.get(path)
         assert 'class="on">USD</a>' in h, path
+
+
+def test_many_images_at_once_are_all_served(tmp_path):
+    """Regression: with the standard 5-connection queue, bursts of image requests were reset."""
+    import concurrent.futures as cf
+    from cardman.cardinfo import ImageCache
+    from cardman.ui import CardManServer, make_handler
+    Store(tmp_path / "s.sqlite").db.close()
+    images = ImageCache(tmp_path / "img", get=lambda u: (b"\xff\xd8x", "image/jpeg"))
+    srv = CardManServer(("127.0.0.1", 0), make_handler(str(tmp_path / "s.sqlite"), "t", images=images))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{srv.server_address[1]}/img/card/89631139.jpg?size=small"
+
+    def one(_):
+        with urllib.request.urlopen(url, timeout=30) as r:
+            return r.read() == b"\xff\xd8x"
+    try:
+        with cf.ThreadPoolExecutor(120) as ex:
+            assert all(ex.map(one, range(240)))
+    finally:
+        srv.shutdown()
