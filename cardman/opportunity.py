@@ -264,7 +264,7 @@ def evaluate_listing(raw: RawListing, an: ListingAnalysis, book: PriceBook, cata
         evpi = (sum(s.weight * max(0.0, s.profit_mid) for s in priced) - max(0.0, sum(s.weight * s.profit_mid for s in priced))) / all_w
 
     # -- what kind of edge is this? -------------------------------------------------------------------------------
-    sold_backed = [s for s in priced if s.basis == "sales"]
+    sold_backed = priced   # already sales-basis only
     total_w = sum(s.weight for s in scenarios) or 1.0
     cheap_w = sum(s.weight for s in sold_backed if s.max_buy is not None and float(ask_home) <= s.max_buy) / total_w
     if cheap_w >= UNDERPRICED_SHARE:

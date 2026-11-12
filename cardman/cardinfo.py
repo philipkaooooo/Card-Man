@@ -16,6 +16,7 @@ import difflib
 import math
 import hashlib
 import json
+import os
 import re
 import sqlite3
 import threading
@@ -304,7 +305,8 @@ class ImageCache:
         if not body or not any(k.split("/")[1] in ctype for k in kinds):
             miss.touch()
             return None
-        tmp = path.with_suffix(path.suffix + ".tmp")
+        # A private temp file per writer: two requests for the same uncached image must not share one.
+        tmp = path.with_suffix(f"{path.suffix}.{os.getpid()}.{threading.get_ident()}.tmp")
         tmp.write_bytes(body)
         tmp.replace(path)
         return body, kinds[0]
