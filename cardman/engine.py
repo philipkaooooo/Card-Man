@@ -75,6 +75,12 @@ class TickReport:
     seconds: float = 0.0
     errors: list[str] = field(default_factory=list)
     routes: list[dict] = field(default_factory=list)
+    ebay_sold: dict = field(default_factory=dict)
+
+
+# Pokémon searches when the profile names none. eBay files them under the "Pokémon TCG" game aspect.
+PKM_QUERIES = ["pokemon special illustration rare", "pokemon 1st edition holo", "pokemon psa 10", "pokemon alt art",
+               "pokemon base set holo", "pokemon full art"]
 
 
 class Engine:
@@ -93,9 +99,34 @@ class Engine:
         self.inbox = InboxAdapter(inbox or (ROOT / "data" / "inbox"), self.raw, self._seen)
         from .settings import load_env
         load_env()                       # eBay keys from the git-ignored .env, if present
-        self.ebay = EbayAdapter(self.raw, list(self.profile.get("ebay_queries") or []), self.catalog)
+        self.pkm = self._load_pkm()
+        pkm_q = [(q, "pkm") for q in (self.profile.get("pkm_ebay_queries") or PKM_QUERIES)] if self.pkm is not None else []
+        self.ebay = EbayAdapter(self.raw, list(self.profile.get("ebay_queries") or []) + pkm_q, self.catalog)
         self.reference = YgoprodeckReference(self.db, get=reference_get) if use_reference else None
         self.routes = [self.inbox, self.ebay] + ([self.reference] if self.reference else [])
+
+    def _load_pkm(self):
+        """The Pokémon catalog, if it has been synced (python -m cardman.pkm_catalog). Without it Pokémon stays off."""
+        from .pkm_catalog import DB, PkmCatalog
+        path = getattr(self, "pkm_db", None) or DB
+        try:
+            if not Path(path).exists():
+                return None
+            cat = PkmCatalog(path)
+            return cat if len(cat) else None
+        except Exception:
+            return None
+
+    def catalog_for(self, game: str):
+        return self.pkm if game == "pkm" else self.catalog
+
+    def _analyze(self, r: RawListing, verified: dict, *, ocr: bool = False):
+        if r.game == "pkm":
+            from .pkm_intel import analyze as pkm_analyze
+            if self.pkm is None:
+                raise RuntimeError("Pokémon catalog not synced")
+            return pkm_analyze(r.title, self.pkm, description=r.description, verified=verified)
+        return analyze(r.title, self.catalog, description=r.description, verified=verified, ocr_codes=self._ocr(r) if ocr else ())
 
     def _load_catalog(self) -> Catalog:
         cache = IdentityCache(self.catalog_db)
@@ -112,11 +143,14 @@ class Engine:
         return self.db.execute("SELECT 1 FROM inbox_seen WHERE hash=?", (h,)).fetchone() is not None
 
     # -- memory ---------------------------------------------------------------------------------------------------
-    def remember(self, r: RawListing, now: datetime, rep: TickReport) -> None:
+    def remember(self, r: RawListing, now: datetime, rep: TickReport) -> str:
+        """Returns "new", "changed" (price or state) or "same"."""
         row = self.db.execute("SELECT price, kind FROM listing WHERE key=?", (r.key,)).fetchone()
+        state = "new" if row is None else ("changed" if (Decimal(row[0]) != r.price or row[1] != r.kind) else "same")
         data = {"description": r.description, "shipping": str(r.shipping) if r.shipping is not None else None, "photos": list(r.photos),
                 "grade_company": r.grade_company, "grade": r.grade, "condition": r.condition, "verified": r.verified, "printing_id": r.printing_id,
-                "event_time": r.event_time.isoformat() if r.event_time else None, "raw_ref": r.raw_ref, "synthetic": r.synthetic, "bids": r.bids}
+                "event_time": r.event_time.isoformat() if r.event_time else None, "raw_ref": r.raw_ref, "synthetic": r.synthetic, "bids": r.bids,
+                "game": r.game}
         ended = (r.event_time or now).isoformat() if r.kind in ("sold", "accepted_offer", "transaction", "unsold") else None
         with self.db:
             if row is None:
@@ -136,6 +170,7 @@ class Engine:
                                    fingerprint=?, data_json=? WHERE key=?""",
                                 (r.title, r.url, r.seller, r.kind, str(r.price), r.currency, r.ends_at.isoformat() if r.ends_at else None, now.isoformat(), ended,
                                  r.fingerprint(), json.dumps(data, ensure_ascii=False), r.key))
+        return state
 
     def _record_observation(self, r: RawListing, candidates: list[str], now: datetime, rep: TickReport) -> None:
         try:
@@ -169,7 +204,7 @@ class Engine:
                           shipping=Decimal(d["shipping"]) if d.get("shipping") else None, photos=tuple(d.get("photos") or ()),
                           grade_company=d.get("grade_company"), grade=d.get("grade"), condition=d.get("condition"), verified=d.get("verified") or {},
                           printing_id=d.get("printing_id"), event_time=datetime.fromisoformat(d["event_time"]) if d.get("event_time") else None,
-                          raw_ref=d.get("raw_ref"), synthetic=d.get("synthetic", False), bids=d.get("bids"))
+                          raw_ref=d.get("raw_ref"), synthetic=d.get("synthetic", False), bids=d.get("bids"), game=d.get("game") or "ygo")
 
     # -- analysis -------------------------------------------------------------------------------------------------
     def _ocr(self, r: RawListing) -> tuple[str, ...]:
@@ -208,7 +243,7 @@ class Engine:
         r = self.listing_from_row(key)
         verified = {**r.verified, **self.reviews(key)}
         authenticity = verified.pop("authenticity_ok", None)
-        an = analyze(r.title, self.catalog, description=r.description, verified=verified, ocr_codes=self._ocr(r))
+        an = self._analyze(r, verified, ocr=True)
         ids = [p.id for p in an.identity.candidates]
         fp = hashlib.sha256(json.dumps([ANALYSIS_VERSION, r.fingerprint(), verified, authenticity, ids[:500], self._evidence_version(ids),
                                         now.date().isoformat() if r.ends_at else ""], sort_keys=True, default=str).encode()).hexdigest()[:16]
@@ -217,9 +252,9 @@ class Engine:
             rep.skipped_unchanged += 1
             return None
         rep.analyzed += 1
-        op = evaluate_listing(r, an, book, self.catalog, self.ledger, now)
+        op = evaluate_listing(r, an, book, self.catalog_for(r.game), self.ledger, now)
         snapshot = prev[2] if prev else None
-        escalated = self._escalate(r, an, op, verified, authenticity, book, now, rep)
+        escalated = self._escalate(r, an, op, verified, authenticity, book, now, rep) if r.game == "ygo" else None
         if escalated:
             snapshot, op.stage, op.status = escalated
             rep.escalated += 1
@@ -228,7 +263,7 @@ class Engine:
         with self.db:
             self.db.execute("INSERT OR REPLACE INTO opportunity VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                             (key, op.stage, op.status, op.priority, op.expected_profit, op.evpi, json.dumps(op.kinds), op.printing_id, snapshot, fp,
-                             json.dumps(op.to_dict(), ensure_ascii=False, default=str), prev[1] if prev else now.isoformat(), now.isoformat()))
+                             json.dumps({**op.to_dict(), "game": r.game}, ensure_ascii=False, default=str), prev[1] if prev else now.isoformat(), now.isoformat()))
         return op
 
     def _escalate(self, r: RawListing, an, op: Opportunity, verified: dict, authenticity, book: PriceBook, now: datetime, rep: TickReport):
@@ -349,9 +384,20 @@ class Engine:
                 rep.errors.append(f"{route.name}: {x}")
         if self.reference:
             rep.routes.append(asdict(self.reference.status()))
+        from .games import guess_game
         for r in new:
-            self.remember(r, now, rep)
-            self._take_evidence(r, now, rep)
+            if r.source not in ("ebay_browse:EBAY_US",) and not r.source.startswith("ebay_browse") and r.game == "ygo":
+                r.game = guess_game(f"{r.title} {r.description}", self.pkm)     # imported pages: either game
+            # An unchanged asking price seen again is not a new fact: recording it every pass only bloated the store.
+            if self.remember(r, now, rep) != "same" or r.kind not in ("ask", "bid", "auction"):
+                self._take_evidence(r, now, rep)
+        if self.ebay.status().on:
+            # Sales seen through eBay's own API: sold counts that rose on tracked fixed-price listings.
+            from .ebay_sold_watch import check as check_sold_counts
+            try:
+                rep.ebay_sold = asdict(check_sold_counts(self, now, budget=int(self.profile.get("ebay_sold_checks_per_pass", 120))))
+            except Exception as x:
+                rep.errors.append(f"eBay sold counts: {type(x).__name__}: {x}")
         cal = self.ledger.calibration(now)
         book = PriceBook(self.store, self.fx, self.profile, now, bias=cal.resale_bias, reference=self.reference)
         cutoff = (now - GONE_AFTER).isoformat()
@@ -376,12 +422,15 @@ class Engine:
         verified.pop("authenticity_ok", None)
         if r.printing_id:
             base = r.printing_id.split("|")[0]
-            if not any(p.id == base for p in self.catalog.printings):
+            cat = self.catalog_for(r.game)
+            if cat is None or not (base in cat.by_id if r.game == "pkm" else any(p.id == base for p in cat.printings)):
                 rep.errors.append(f"{r.key}: unknown printing_id {r.printing_id}")
                 return
             cands = [r.printing_id]
         else:
-            an = analyze(r.title, self.catalog, description=r.description, verified=verified)
+            if r.game == "pkm" and self.pkm is None:
+                return
+            an = self._analyze(r, verified)
             cands = [p.id for p in an.identity.candidates][:200]
         self._record_observation(r, cands, now, rep)
 

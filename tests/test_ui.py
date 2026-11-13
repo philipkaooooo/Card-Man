@@ -67,7 +67,7 @@ def multipart(fields: dict, filename: str, content: bytes) -> tuple[str, bytes]:
 
 
 def test_deals_and_deal_page_render(app):
-    home = app.get("/deals")                                   # USD by default; the demo FX is 32 TWD per USD
+    home = app.get("/deals?syn=1")                                   # USD by default; the demo FX is 32 TWD per USD
     assert "demo:1" in home and "$500" in home and "pay up to $535" in home and "Buy after checks" in home
     page = app.get(f"/deal/{app.sid}")
     assert "replays exactly" in page and "ACCEPTED_OFFER" in page
@@ -117,7 +117,7 @@ def test_yes_refused_after_identity_invalidated(app):
     Store(app.db).invalidate_printing("p:LOB-EN001:UR:1st", "wrong print found", now=NOW)
     _, _, page = app.post(f"/deal/{app.sid}/decide", {"action": "YES", "rationale": "go"})
     assert "YES refused" in page and Store(app.db).decisions(app.sid) == []
-    assert "identity invalidated" in app.get("/deals").lower()
+    assert "identity invalidated" in app.get("/deals?syn=1").lower()
 
 
 def test_status_event_then_reevaluate_makes_a_new_snapshot(app):
@@ -168,8 +168,9 @@ def app2(tmp_path):
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{srv.server_address[1]}"
 
-    def get(path):
-        with urllib.request.urlopen(base + path) as r:
+    def get(path, cookie=None):
+        req = urllib.request.Request(base + path, headers={"Cookie": cookie} if cookie else {})
+        with urllib.request.urlopen(req) as r:
             return r.read().decode()
 
     def post(path, data):
@@ -182,12 +183,19 @@ def app2(tmp_path):
     srv.shutdown()
 
 
-def test_left_menu_and_currency_next_to_logo(app2):
-    h = app2.get("/deals")
-    assert h.index('class="logo"') < h.index('class="curs"') < h.index("<aside>")
-    for path in ("/scan", "/results", "/evidence", "/import"):
-        assert f'href="{path}"' in h
-    assert 'aria-current="page">Deals' in h
+def test_one_header_with_five_places_and_old_pages_still_reachable(app2):
+    h = app2.get("/deals?syn=1")
+    nav = h[h.index('<nav class="main"'):h.index("</nav>")]
+    assert nav.count("<a ") == 5 and all(x in nav for x in (">Home<", ">Listings<", ">Cards<", ">Add sales<", ">Settings<"))
+    assert 'aria-current="page">Settings' in nav                      # Deals lives under Settings now
+    assert h.index('class="logo"') < h.index("<nav") < h.index('class="curs"')
+    assert "← Settings" in h
+    s = app2.get("/settings")
+    for path in ("/deals", "/scan", "/evidence", "/results", "/opportunities/engine", "/costs"):
+        assert f'href="{path}"' in s
+    for path in ("/scan", "/results", "/evidence", "/import", "/costs", "/opportunities", "/search", "/listings", "/cards",
+                 "/add-sales", "/sales", "/advanced", "/home"):
+        assert "<!doctype" in app2.get(path)
 
 
 def test_scan_page(app2):
@@ -241,3 +249,43 @@ def test_costs_page_saves_your_numbers(app2, tmp_path, monkeypatch):
     assert d["ebay_queries"] == ["yugioh LOB 1st", "遊戯王 レリーフ"] and "_assumed" not in d
     url, h = app2.post("/costs", {**form, "target_return": "abc"})
     assert "Not saved" in h
+
+
+def test_evidence_page_for_a_printing_with_no_records_explains_instead_of_failing(app):
+    page = app.get("/evidence?printing=p%3AEN_TCG%3ANOPE-EN001%3Ax%3Ay%4012345")
+    assert "No records for this printing yet" in page
+
+
+
+def test_demo_valuations_are_hidden_from_deals_unless_asked(app):
+    page = app.get("/deals")
+    assert "No real deals yet" in page and "demo valuation" in page
+
+
+def test_currency_choice_applies_on_every_main_page(app2):
+    for path in ("/", "/opportunities", "/search?q=blue", "/import", "/settings", "/deals?syn=1"):
+        h = app2.get(path, cookie="cur=TWD")
+        assert 'class="on">TWD</a>' in h, path
+        h = app2.get(path)
+        assert 'class="on">USD</a>' in h, path
+
+
+def test_many_images_at_once_are_all_served(tmp_path):
+    """Regression: with the standard 5-connection queue, bursts of image requests were reset."""
+    import concurrent.futures as cf
+    from cardman.cardinfo import ImageCache
+    from cardman.ui import CardManServer, make_handler
+    Store(tmp_path / "s.sqlite").db.close()
+    images = ImageCache(tmp_path / "img", get=lambda u: (b"\xff\xd8x", "image/jpeg"))
+    srv = CardManServer(("127.0.0.1", 0), make_handler(str(tmp_path / "s.sqlite"), "t", images=images))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{srv.server_address[1]}/img/card/89631139.jpg?size=small"
+
+    def one(_):
+        with urllib.request.urlopen(url, timeout=30) as r:
+            return r.read() == b"\xff\xd8x"
+    try:
+        with cf.ThreadPoolExecutor(120) as ex:
+            assert all(ex.map(one, range(240)))
+    finally:
+        srv.shutdown()

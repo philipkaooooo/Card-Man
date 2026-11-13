@@ -285,3 +285,14 @@ def test_reference_prices_are_reused_for_a_week_and_failures_for_a_day(tmp_path)
     assert len(calls) == 3                                 # one failed lookup per day, not one per listing
     r2.price("X-EN001", NOW + timedelta(days=1))
     assert len(calls) == 4
+
+
+def test_an_unchanged_ask_is_recorded_once_not_every_pass(tmp_path):
+    e = make(tmp_path)
+    for i in range(3):
+        drop(tmp_path, f"a{i}.jsonl", [ask("SAME", 400)])
+        e.tick(NOW + timedelta(minutes=15 * i))
+    assert e.store.db.execute("SELECT COUNT(*) FROM observation WHERE listing_id='SAME'").fetchone()[0] == 1
+    drop(tmp_path, "b.jsonl", [ask("SAME", 350)])
+    e.tick(NOW + timedelta(hours=2))
+    assert e.store.db.execute("SELECT COUNT(*) FROM observation WHERE listing_id='SAME'").fetchone()[0] == 2     # a price change is a new fact

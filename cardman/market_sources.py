@@ -32,7 +32,9 @@ MARKET_OF_SOURCE = {"yahoo_auctions_jp": "JP", "yahoo_jp": "JP", "mercari_jp": "
                     "ebay": "INTL", "ebay_browse": "INTL", "tcgplayer": "INTL", "cardmarket": "INTL", "pwcc": "INTL", "goldin": "INTL"}
 KINDS = {"ask": EvidenceType.ACTIVE_ASKING, "bid": EvidenceType.OBSERVED_BID, "auction": EvidenceType.OBSERVED_BID,
          "sold": EvidenceType.MARKETPLACE_MARKED_SOLD, "accepted_offer": EvidenceType.ACCEPTED_OFFER,
-         "transaction": EvidenceType.INDEPENDENT_TRANSACTION, "unsold": EvidenceType.AUCTION_ENDED_UNSOLD}
+         "transaction": EvidenceType.INDEPENDENT_TRANSACTION, "unsold": EvidenceType.AUCTION_ENDED_UNSOLD,
+         # eBay "Best Offer accepted" with the price struck through: the real amount is hidden, the shown one is a ceiling
+         "best_offer_hidden": EvidenceType.SELLER_CLAIM}
 VERIFIED_FIELDS = ("printed_set_code", "verified_rarity", "verified_edition", "verified_product", "card_language")
 
 
@@ -67,6 +69,10 @@ class RawListing:
     verified: dict = field(default_factory=dict)
     raw_ref: str | None = None
     synthetic: bool = False
+    lineage: str | None = None          # e.g. "ebay:123": copies of one sale from different sites count once
+    is_lot: bool = False
+    quantity: int = 1
+    game: str = "ygo"                   # "ygo" | "pkm": which catalog reads it; never mixed
 
     def __post_init__(self):
         self.currency = self.currency.upper()
@@ -89,7 +95,8 @@ class RawListing:
             original_amount=self.price, currency=self.currency, event_time=event, capture_time=captured_at, source_url=self.url,
             printing_candidates=printing_candidates, listing_id=self.listing_id, seller_ref=self.seller, shipping_amount=self.shipping,
             grade_company=self.grade_company, grade=self.grade, observed_condition=self.condition, raw_ref=self.raw_ref,
-            synthetic_fixture=self.synthetic)
+            synthetic_fixture=self.synthetic, upstream_lineage=(self.lineage,) if self.lineage else (), is_lot=self.is_lot,
+            quantity=self.quantity)
 
 
 # -- parsing files ----------------------------------------------------------------------------------------------------
@@ -191,6 +198,22 @@ def parse_saved_html(html: str, *, source: str, url: str = "", raw_ref: str | No
     return out
 
 
+SOURCE_OF_SITE = {"ebay": "ebay", "130point": "130point", "yahoo_auctions_jp": "yahoo_auctions_jp", "mercari_jp": "mercari_jp"}
+
+
+def sold_rows_to_listings(page, raw_ref: str | None) -> list[RawListing]:
+    out = []
+    for r in page.rows:
+        f = r.flags()
+        notes = "; ".join(r.notes)
+        out.append(RawListing(source=SOURCE_OF_SITE.get(r.site, r.site), listing_id=r.item_id, title=r.title, price=r.price,
+                              currency=r.currency, kind=r.kind, url=r.url, description=notes, shipping=r.shipping, seller=None,
+                              event_time=r.sold_at, grade_company=f["grade_company"], grade=f["grade"], condition=f["condition"],
+                              raw_ref=raw_ref, synthetic=page.synthetic, lineage=r.lineage, is_lot=f["is_lot"],
+                              quantity=f["lot_size"] or 1 if f["is_lot"] else 1))
+    return out
+
+
 def parse_bytes(name: str, data: bytes, *, raw_ref: str | None = None) -> tuple[list[RawListing], list[str]]:
     """(listings, row errors). `source` defaults to the file's first dotted name part, e.g. mercari_jp.2026-11.csv."""
     src = Path(name).name.split(".")[0].lower() or "inbox"
@@ -204,7 +227,13 @@ def parse_bytes(name: str, data: bytes, *, raw_ref: str | None = None) -> tuple[
     elif ext == ".json":
         d = json.loads(text)
         rows = d if isinstance(d, list) else (d.get("listings") or [d])
-    elif ext in (".html", ".htm"):
+    elif ext in (".html", ".htm", ".webarchive"):
+        from .sold_pages import read_page
+        page = read_page(name, data, datetime.now(timezone.utc))
+        if page.rows:
+            return sold_rows_to_listings(page, raw_ref), []
+        if ext == ".webarchive":
+            return [], [f"{name}: no sold results recognized in this page"]
         found = parse_saved_html(text, source=src, raw_ref=raw_ref)
         return found, ([] if found else [f"{name}: no schema.org Product data in this page; export a CSV instead"])
     else:
@@ -248,7 +277,13 @@ class InboxAdapter:
             h = hashlib.sha256(data).hexdigest()
             if self.seen(h):        # the same bytes are only ever read once
                 continue
-            ref = self.raw.put("inbox", data, {"file": f.name, "captured_at": now.isoformat()})
+            stored = data
+            if f.suffix.lower() in (".html", ".htm", ".webarchive"):
+                # Saved web pages carry seller names and profiles: only the copy with people removed is kept.
+                from .sold_pages import from_webarchive, parse_html, serialize, strip_people
+                html_text = from_webarchive(data) if f.suffix.lower() == ".webarchive" else data.decode("utf-8", errors="replace")
+                stored = serialize(strip_people(parse_html(html_text))).encode()
+            ref = self.raw.put("inbox", stored, {"file": f.name, "captured_at": now.isoformat(), "sha256_original": h})
             got, errs = parse_bytes(f.name, data, raw_ref=ref)
             listings += got
             errors += errs
@@ -261,8 +296,20 @@ class EbayAdapter:
     name = "ebay"
     capability = "live eBay asks and bids; never sold prices"
 
-    def __init__(self, raw: RawEvidenceStore, queries: list[str], catalog=None):
-        self.raw, self.queries, self.catalog = raw, queries, catalog
+    # eBay files every card game under one category; the "Game" aspect tells them apart.
+    CATEGORY = "183454"
+    ASPECT = {"pkm": "categoryId:183454,Game:{Pokémon TCG}", "ygo": "categoryId:183454,Game:{Yu-Gi-Oh! TCG}"}
+
+    def __init__(self, raw: RawEvidenceStore, queries: list, catalog=None):
+        """queries: plain strings (Yu-Gi-Oh!) or (query, game) pairs. They run alternating between games, so a
+        rate limit or a slow pass never starves one game."""
+        pairs = [q if isinstance(q, tuple) else (q, "ygo") for q in queries]
+        by_game: dict[str, list] = {}
+        for q, g in pairs:
+            by_game.setdefault(g, []).append((q, g))
+        lists = list(by_game.values())
+        self.queries = [lst[i] for i in range(max((len(x) for x in lists), default=0)) for lst in lists if i < len(lst)]
+        self.raw, self.catalog = raw, catalog
 
     def status(self) -> RouteStatus:
         if not (os.environ.get("EBAY_CLIENT_ID") and os.environ.get("EBAY_CLIENT_SECRET")):
@@ -278,9 +325,10 @@ class EbayAdapter:
         from .ebay_browse import EbayBrowse, SourceUnavailable
         client = EbayBrowse(self.raw)
         out, errors, seen = [], [], set()
-        for q in self.queries:
+        for q, game in self.queries:
             try:
-                res = client.search(q, catalog=self.catalog, now=now)
+                res = (client.search(q, catalog=None, category_ids=self.CATEGORY, aspect_filter=self.ASPECT["pkm"], now=now) if game == "pkm"
+                       else client.search(q, catalog=self.catalog, now=now))
             except SourceUnavailable as x:
                 errors.append(f"ebay '{q}': {x}")
                 continue
@@ -291,7 +339,8 @@ class EbayAdapter:
                 out.append(RawListing(source=o.source, listing_id=o.listing_id or o.id, title=res.titles.get(o.id) or q,
                                       price=o.original_amount, currency=o.currency,
                                       kind="bid" if o.evidence_type == EvidenceType.OBSERVED_BID else "ask", url=o.source_url,
-                                      shipping=o.shipping_amount, seller=o.seller_ref, condition=o.observed_condition, raw_ref=o.raw_ref))
+                                      shipping=o.shipping_amount, seller=o.seller_ref, condition=o.observed_condition, raw_ref=o.raw_ref,
+                                      game=game))
         return out, errors
 
 

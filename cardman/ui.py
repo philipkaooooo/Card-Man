@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import argparse
 import html
+import json
 import secrets
 import statistics
 import tempfile
+import threading
 from datetime import datetime, timezone
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal, InvalidOperation
 from email.parser import BytesParser
@@ -33,6 +35,7 @@ from .workflow import Action, Decision
 
 STATUSES = ("CANCELLED", "REFUNDED", "RELISTED", "INVALID", "DUPLICATE", "VALID")
 MAX_UPLOAD = 5 * 1024 * 1024
+MAX_PAGES_UPLOAD = 80 * 1024 * 1024     # saved results pages are a few MB each, several at once
 MIN_COMPS = 3
 SYN = ' <span class="tag syn">synthetic</span>'
 
@@ -273,38 +276,56 @@ CURRENCIES = ("USD", "TWD")
 
 
 ON = ' class="on" aria-current="page"'
-NAV = (("Browse", (("home", "Home", "/"), ("search", "Card search", "/search"))),
-       ("Decide", (("opportunities", "Opportunities", "/opportunities"), ("deals", "Deals", "/deals"),
-                   ("scan", "Scan a listing", "/scan"))),
-       ("Evidence", (("evidence", "Evidence", "/evidence"), ("import", "Import sales", "/import"))),
-       ("Learn", (("results", "Results", "/results"),)),
-       ("Setup", (("costs", "Your costs", "/costs"),)))
+# One header, five places. Every older page still exists and belongs to one of them.
+NAV = (("home", "Home", "/"), ("listings", "Listings", "/opportunities"), ("cards", "Cards", "/search"),
+       ("add", "Add sales", "/import"), ("settings", "Settings", "/settings"))
+NAV_OF = {"home": "home", "opportunities": "listings", "search": "cards", "import": "add", "costs": "settings", "settings": "settings",
+          "deals": "settings", "scan": "settings", "evidence": "settings", "results": "settings", "engine": "settings"}
+SHELL_CSS = """
+body{display:flex;flex-direction:column;min-height:100vh}
+header.top{position:sticky;top:0;z-index:30;background:color-mix(in srgb,var(--surface) 92%,transparent);backdrop-filter:blur(8px);
+border-bottom:1px solid var(--line);padding:0 20px;display:flex;align-items:center;gap:18px;height:58px}
+header.top .logo{font-weight:800;font-size:17px;color:var(--fg);text-decoration:none;letter-spacing:-.01em}
+nav.main{display:flex;gap:2px;align-items:center}nav.main a{color:var(--fg2);text-decoration:none;padding:7px 12px;border-radius:8px;
+font-weight:550;font-size:14px;white-space:nowrap}nav.main a:hover{background:var(--soft);color:var(--fg)}
+nav.main a.on{color:var(--fg);background:var(--soft);box-shadow:inset 0 -2px 0 var(--accent)}
+header.top .hsearch{flex:1;max-width:440px;margin-left:auto}header.top .curs{flex:none}header.top .games a{font-weight:600}
+main.page{width:100%;max-width:1180px;margin:0 auto;padding:22px 20px 40px;flex:1}
+.crumb-back{display:inline-block;margin:0 0 10px;color:var(--fg2);text-decoration:none;font-size:13px}.crumb-back:hover{color:var(--fg)}
+footer.foot{border-top:1px solid var(--line);color:var(--muted);font-size:12px;padding:12px 20px;text-align:center}
+@media(max-width:860px){header.top{flex-wrap:wrap;height:auto;padding:8px 12px;gap:8px}nav.main{order:3;width:100%;overflow-x:auto}
+header.top .hsearch{order:2;flex-basis:100%;max-width:none;margin:0}main.page{padding:14px 12px 30px}}
+"""
 
 
 def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str = "", cur: str = "USD",
-         path: str = "/", theme: str = "market", q: str = "") -> bytes:
+         path: str = "/", theme: str = "market", q: str = "", back: tuple[str, str] | None = None, game: str = "ygo") -> bytes:
     from .ui_home import HOME_CSS, THEMES, header_search
+    from .ui_import import IMPORT_CSS
+    from .ui_listing import LISTING_CSS
+    from .ui_settings import SETTINGS_CSS
+    from .ui_chart import CHART_CSS
     theme = theme if theme in THEMES else "market"
-    themes = ('<span class="themes" role="group" aria-label="Look">' + "".join(
-        f'<a href="/theme?{urlencode({"t": t, "back": path})}" class="{"on" if t == theme else ""}">{t.title()}</a>'
-        for t in THEMES) + '</span>')
-    hsearch = "" if nav == "home" else f'<div class="hsearch">{header_search(q)}</div>'
-    groups = []
-    for label, items in NAV:
-        links = "".join(f'<a href="{h}"{ON if k == nav else ""}>{e(t)}</a>' for k, t, h in items)
-        groups.append(f'<details open><summary>{e(label)}</summary><nav>{links}</nav></details>')
+    where = NAV_OF.get(nav, "")
+    links = "".join(f'<a href="{h}"{ON if k == where else ""}>{e(t)}</a>' for k, t, h in NAV)
     curs = ('<span class="curs" role="group" aria-label="Display currency">' + "".join(
         f'<a href="/currency?{urlencode({"c": c, "back": path})}" class="{"on" if c == cur else ""}">{c}</a>'
         for c in CURRENCIES) + '</span>')
-    here = next((t for _, items in NAV for k, t, _h in items if k == nav), "Menu")
+    hsearch = "" if nav == "home" else f'<div class="hsearch">{header_search(q, game)}</div>'
+    from .games import NAME, scope_links
+    games = ('<span class="curs games" role="group" aria-label="Game">' + "".join(
+        f'<a href="/game?{urlencode({"g": g, "back": path})}" class="{"on" if g == game else ""}">{e(NAME[g])}</a>' for g in ("ygo", "pkm"))
+        + '</span>')
     flash = (f'<div class="note ok">{e(msg)}</div>' if msg else "") + (f'<div class="note bad">{e(err)}</div>' if err else "")
+    crumb = f'<a class="crumb-back" href="{e(back[1])}">← {e(back[0])}</a>' if back else ""
     tz = datetime.now().astimezone().strftime("UTC%z")
     return (f'<!doctype html><html lang="en" data-theme="{"vault" if theme == "vault" else "light"}"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)} · CardMan</title>'
-            f'<style>{CSS}{HOME_CSS}</style></head><body><header><a class="logo" href="/"><b>CardMan</b></a>{curs}{themes}{hsearch}'
-            f'<span class="store">{e(store)} · times {e(tz)}</span></header>'
-            f'<div class="shell"><aside><details class="menu" open><summary>{e(here)}</summary>{"".join(groups)}</details></aside>'
-            f'<main>{flash}{body}</main></div><script src="/static/ui.js"></script></body></html>').encode()
+            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{CHART_CSS}{SHELL_CSS}</style></head><body>'
+            + scope_links(f'<header class="top"><a class="logo" href="/">CardMan</a><nav class="main" aria-label="Main">{links}</nav>{hsearch}'
+                          f'{games}{curs}</header><main class="page">{crumb}{flash}{body}</main>', game) +
+            f'<footer class="foot">Private to this Mac · times {e(tz)} · press <kbd>/</kbd> to search</footer>'
+            f'<script src="/static/ui.js?v={_js_version()}"></script></body></html>').encode()
 
 
 # -- display currency ---------------------------------------------------------------------------
@@ -490,7 +511,7 @@ def gate_icons(gates: list[dict]) -> str:
         f'tabindex="0">{icon(g["passed"])}</span>' for g in gates) + "</span>")
 
 
-def view_deals(st: Store, now: datetime, want: str) -> str:
+def view_deals(st: Store, now: datetime, want: str, show_synthetic: bool = False) -> str:
     models, broken, seen = [], [], {}
     for s in st.snapshots():
         seen[s["listing_ref"]] = seen.get(s["listing_ref"], 0) + 1
@@ -503,6 +524,15 @@ def view_deals(st: Store, now: datetime, want: str) -> str:
             continue
         m["decision"] = s["decision"]
         models.append(m)
+    # Demo and test valuations never sit next to real ones unless asked for.
+    demo = [m for m in models if m["synthetic"]]
+    if not show_synthetic:
+        models = [m for m in models if not m["synthetic"]]
+    if not models and not broken and demo:
+        return ('<h1>Deals</h1><p class="sub">No real deals yet. A deal appears when a listing is confirmed as one exact printing and '
+                'that printing has at least 3 real sales, so the price is backed by evidence.</p>'
+                f'<p class="note">{len(demo)} demo valuation(s) from the setup are hidden: they use made-up sales. '
+                '<a href="/deals?syn=1">Show them</a>.</p>')
     if not models and not broken:
         return ('<h1>Deals</h1><p class="sub">No valuations stored yet. Run '
                 '<code>python -m cardman.slice listing.json [obs.csv] --store PATH</code> to add one.</p>')
@@ -883,6 +913,12 @@ def view_evidence(st: Store, now: datetime, printing: str | None, include_synthe
         return "".join(out)
 
     obs = st.observation_list(printing, as_of=now)
+    if not obs:
+        # Most printings have no records yet: say so and show how to add one, instead of failing.
+        return "".join(out) + (
+            '<section><h2>No records for this printing yet</h2><p class="why">Nothing sold or listed has been recorded against '
+            f'<code>{e(printing)}</code>. Import saved sold-results pages on the <a href="/import">Import</a> page, or use '
+            '"Record a sale" on the card page. A price appears once it has 3 sales.</p></section>')
     comps, verdict = verdicts(printing)
     groups: dict[str, int] = {}
     for o in obs:
@@ -1318,6 +1354,20 @@ class EngineMoney:
         return signed(d, self.cur) if sign else money(d, self.cur)
 
 
+_JSV: list = []
+
+
+def _js_version() -> str:
+    """Changes whenever the script changes, so a browser never keeps running an old copy."""
+    if not _JSV:
+        import hashlib
+        from .ui_chart import CHART_JS
+        from .ui_home import HOME_JS
+        from .ui_import import IMPORT_JS
+        _JSV.append(hashlib.sha256((JS + HOME_JS + IMPORT_JS + CHART_JS).encode()).hexdigest()[:10])
+    return _JSV[0]
+
+
 def _engine_home(st: Store) -> str:
     try:
         from .engine import load_profile
@@ -1621,7 +1671,7 @@ def reevaluate(st: Store, store_path: str, sid: str, now: datetime) -> str:
 
 # -- server -----------------------------------------------------------------------------------
 
-def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezone.utc), catalog=None, cards=None, images=None):
+def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezone.utc), catalog=None, cards=None, images=None, pkm=None):
     """catalog: a zero-argument callable returning the identity Catalog (loaded once), or None."""
     from .cardinfo import CardIndex, ImageCache
     cards = cards or CardIndex(catalog=catalog)
@@ -1637,8 +1687,29 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
         except Exception:
             return None
 
+    _pk: dict = {}
+
+    def pcards():
+        """The Pokémon card index, loaded once (and again after a catalog sync). None until the catalog exists."""
+        if pkm is not None:
+            return pkm
+        from .pkm_catalog import DB, PkmCatalog
+        from .pkm_index import PkmIndex
+        try:
+            m = DB.stat().st_mtime
+        except OSError:
+            return None
+        if _pk.get("m") != m:
+            try:
+                cat = PkmCatalog(DB)
+                _pk.update(m=m, idx=PkmIndex(cat) if len(cat) else None)
+            except Exception:
+                _pk.update(m=m, idx=None)
+        return _pk.get("idx")
+
     class H(BaseHTTPRequestHandler):
         server_version = "CardMan"
+        game = "ygo"
 
         def log_message(self, *a):
             pass
@@ -1678,24 +1749,161 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     return v
             return "market"
 
-        def _page(self, nav, title, body, qs):
+        def _page(self, nav, title, body, qs, crumb=None):
+            if crumb is None and nav in ("deals", "scan", "evidence", "results", "engine", "costs"):
+                crumb = ("Settings", "/settings")
             u = urlsplit(self.path)
             back = u.path + ("?" + urlencode({k: v[0] for k, v in qs.items() if k not in ("msg", "err")})
                              if any(k not in ("msg", "err") for k in qs) else "")
             self._send(200, page(title, body, nav=nav, store=store_path, cur=self._cur(), path=back,
                                  msg=qs.get("msg", [""])[0], err=qs.get("err", [""])[0], theme=self._theme(),
-                                 q=qs.get("q", [""])[0][:120] if nav == "search" else ""))
+                                 q=qs.get("q", [""])[0][:120] if nav == "search" else "", back=crumb, game=self.game))
+
+        def _cookie(self, name: str) -> str:
+            for part in (self.headers.get("Cookie") or "").split(";"):
+                k, _, v = part.strip().partition("=")
+                if k == name:
+                    return v
+            return ""
+
+        def _go(self, to: str):
+            self.send_response(302)
+            self.send_header("Location", to)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def _switch_game(self, qs):
+            """Yu-Gi-Oh! | Pokémon: remembered per browser; the same kind of page in the other game when there is one."""
+            g = qs.get("g", [""])[0]
+            back = qs.get("back", ["/"])[0]
+            if not back.startswith("/") or back.startswith("//"):
+                back = "/"
+            base = (back[4:] if back.startswith("/pkm") else back) or "/"
+            same = base.split("?")[0] in ("/", "/opportunities", "/search")
+            target = base if same else "/"
+            to = ("/pkm" + target) if g == "pkm" else target
+            self.send_response(303)
+            if g in ("ygo", "pkm"):
+                self.send_header("Set-Cookie", f"game={g}; Path=/; SameSite=Lax; Max-Age=31536000")
+            self.send_header("Location", to)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def _pkm_get(self, st, now, parts, qs):
+            """Pokémon pages: Home, Listings, Cards (search), a card, its chart data, pictures and suggestions."""
+            import re as _re
+            from .games import card_href
+            idx = pcards()
+            try:
+                if len(parts) == 3 and parts[:2] == ["img", "pkm"] and parts[2].endswith(".png"):
+                    cid = parts[2][:-4]
+                    size = qs.get("size", ["small"])[0]
+                    url = idx.image_url("pkm-" + cid, "large" if size == "large" else "small") if idx else None
+                    body, ctype = images.pkm(cid, url, "large" if size == "large" else "small")
+                    return self._send(200, body, ctype)
+                if parts == ["api", "suggest"]:
+                    return self._send(200, json.dumps(idx.suggest(qs.get("q", [""])[0][:80])).encode(), "application/json; charset=utf-8")
+                if len(parts) >= 2 and parts[0] == "card" and _re.fullmatch(r"[a-z0-9.]{2,16}-[A-Za-z0-9]{1,8}", parts[1]):
+                    key = "pkm-" + parts[1]
+                    c = idx.card(key)
+                    if not c:
+                        raise KeyError(parts[1])
+                    if len(parts) == 3 and parts[2] in ("history.json", "history.html"):
+                        from .ui_chart import chips, table
+                        from .ui_home import history_for
+                        hist = history_for(st, key, idx.printings(key), now, self._cur(), _engine_home(st), _book(st, now),
+                                           guide=idx.cat.guide_history)
+                        if parts[2] == "history.json":
+                            return self._send(200, json.dumps(hist).encode(), "application/json")
+                        s_ = next((x for x in hist["series"] if x["key"] == qs.get("key", [""])[0]), None)
+                        if s_ is None:
+                            return self._send(404, b"no such series", "text/plain")
+                        return self._send(200, (chips(s_, hist["currency"]) + table(s_, hist["currency"])).encode(), "text/html; charset=utf-8")
+                    if len(parts) == 2:
+                        from .ui_home import view_card
+                        return self._page("search", c["name_en"], view_card(
+                            st, idx, key, now, self._cur(), book=_book(st, now), catalog=idx.cat, home=_engine_home(st), token=token,
+                            filters={k: qs.get(k, [""])[0][:300] for k in ("platform", "graded", "type", "v")}), qs, crumb=("Cards", "/pkm/search"))
+                if parts == ["search"]:
+                    from .ui_home import Money, view_search
+                    q = qs.get("q", [""])[0][:120]
+                    hits = idx.search(q, 2) if q else []
+                    if hits and (len(hits) == 1 and hits[0].score >= 80 or (len(hits) == 2 and hits[0].score >= 100 > hits[1].score + 25)):
+                        return self._go(card_href(hits[0].passcode))
+                    return self._page("search", q or "Card search", view_search(idx, q, st, Money(st, _engine_home(st), self._cur(), now)), qs)
+                if not parts:
+                    from .ui_home import view_home
+                    try:
+                        from .engine import load_profile
+                        assumed = bool(load_profile().get("_assumed"))
+                    except Exception:
+                        assumed = True
+                    EM = EngineMoney(st, _engine_home(st), self._cur(), now) if _engine_ready(st) else None
+                    return self._page("home", "Pokémon", view_home(st, idx, now, self._cur(), self._theme(), assumed_costs=assumed, EM=EM,
+                                                                     game="pkm"), qs)
+                if parts == ["opportunities"]:
+                    from .ui_listing import view_list
+                    if not _engine_ready(st):
+                        return self._page("opportunities", "Listings", '<h1>Listings</h1><p class="empty">No listings checked yet.</p>', qs)
+                    M = EngineMoney(st, _engine_home(st), self._cur(), now)
+                    v = qs.get("v", ["all"])[0]
+                    t = qs.get("t", ["any"])[0]
+                    return self._page("opportunities", "Listings", view_list(
+                        st, idx, now, M, v_filter=v if v in ("all", "BUY", "CHECK", "WATCH", "PASS", "every") else "all",
+                        t_filter=t if t in ("any", "singles", "lots") else "any", home_cur=M.cur,
+                        site=qs.get("site", ["any"])[0] if qs.get("site", ["any"])[0] in ("any", "ebay", "yahoo", "mercari", "other") else "any",
+                        pmin=_num(qs.get("min", [""])[0]), pmax=_num(qs.get("max", [""])[0]), game="pkm"), qs)
+                if parts[:1] in (["opp"], ["import"], ["settings"], ["costs"], ["static"]):
+                    return self._go("/" + "/".join(parts) + (("?" + urlsplit(self.path).query) if urlsplit(self.path).query else ""))
+                return self._send(404, page("Not found", "<h1>Not found</h1>", nav="", store=store_path, game="pkm"))
+            except KeyError as x:
+                return self._send(404, page("Not found", f"<h1>Not found</h1><p>{e(x)}</p>", nav="", store=store_path, game="pkm"))
+            finally:
+                st.db.close()
 
         def do_GET(self):
             u = urlsplit(self.path)
             qs = parse_qs(u.query)
             parts = [p for p in u.path.split("/") if p]
+            self.game = "ygo"
+            if parts[:1] == ["pkm"]:
+                self.game, parts = "pkm", parts[1:]
+            if parts == ["game"]:
+                return self._switch_game(qs)
+            if not parts and self.game == "ygo" and self._cookie("game") == "pkm" and "g" not in qs and not u.query:
+                return self._go("/pkm/")
+            if self.game == "pkm" and pcards() is None and parts[:1] in ([], ["search"], ["card"], ["opportunities"]):
+                return self._send(200, page("Pokémon", '<h1>Pokémon</h1><p class="empty">The Pokémon card catalog is still being '
+                                            'downloaded. This page fills in once it is ready.</p>', nav="home", store=store_path,
+                                            game="pkm", cur=self._cur(), theme=self._theme()))
             st = Store(store_path)
             now = clock()
+            if self.game == "pkm":
+                return self._pkm_get(st, now, parts, qs)
             if parts == ["static", "ui.js"]:
                 st.db.close()
                 from .ui_home import HOME_JS
-                return self._send(200, (JS + HOME_JS).encode(), "text/javascript; charset=utf-8")
+                from .ui_import import IMPORT_JS
+                from .ui_chart import CHART_JS
+                return self._send(200, (JS + HOME_JS + IMPORT_JS + CHART_JS).encode(), "text/javascript; charset=utf-8")
+            if len(parts) == 3 and parts[0] == "card" and parts[1].isdigit() and parts[2] in ("history.json", "history.html"):
+                try:
+                    from .identity import edition_variants
+                    from .ui_chart import chips, table
+                    from .ui_home import history_for
+                    cat = catalog() if catalog else None
+                    vs = [v for p in cards.printings(parts[1]) for v in (edition_variants(p, cat) if cat is not None else [p])]
+                    hist = history_for(st, parts[1], vs, now, self._cur(), _engine_home(st), _book(st, now))
+                finally:
+                    st.db.close()
+                if parts[2] == "history.json":
+                    return self._send(200, json.dumps(hist).encode(), "application/json")
+                k = qs.get("key", [""])[0]
+                s_ = next((x for x in hist["series"] if x["key"] == k), None)
+                if s_ is None:
+                    return self._send(404, b"no such series", "text/plain")
+                return self._send(200, (chips(s_, hist["currency"]) + table(s_, hist["currency"])).encode(),
+                                  "text/html; charset=utf-8")
             if len(parts) == 3 and parts[:2] == ["img", "card"] and parts[2].endswith(".jpg"):
                 st.db.close()
                 body, ctype = images.artwork(parts[2][:-4], qs.get("size", [""])[0])
@@ -1733,12 +1941,39 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                 self.send_header("Location", back)
                 self.send_header("Content-Length", "0")
                 return self.end_headers()
+            ALIASES = {("listings",): "/opportunities", ("cards",): "/search", ("add-sales",): "/import", ("sales",): "/import",
+                       ("advanced",): "/settings#advanced", ("home",): "/"}
+            if tuple(parts) in ALIASES:
+                st.db.close()
+                self.send_response(301)
+                self.send_header("Location", ALIASES[tuple(parts)] + ("?" + u.query if u.query else ""))
+                self.send_header("Content-Length", "0")
+                return self.end_headers()
             try:
-                if not parts:
+                if parts == ["settings"]:
+                    from .ui_settings import view_settings
+                    try:
+                        from .engine import load_profile
+                        prof = load_profile()
+                    except Exception:
+                        prof = None
+                    from .capture import worth_pricing
+                    pc = qs.get("card", [""])[0]
+                    focus = cards.card(pc) if pc.isdigit() else None
+                    self._page("settings", "Settings", view_settings(st, now, self._cur(), self._theme(), prof, ENGINE_STATUS,
+                                                                     fill=worth_pricing(st, cards), focus=focus)
+                               .replace("__TOKEN__", token), qs)
+                elif not parts:
                     from .ui_home import view_home
-                    self._page("home", "Home", view_home(st, cards, now, self._cur(), self._theme()), qs)
+                    try:
+                        from .engine import load_profile
+                        assumed = bool(load_profile().get("_assumed"))
+                    except Exception:
+                        assumed = True
+                    EM = EngineMoney(st, _engine_home(st), self._cur(), now) if _engine_ready(st) else None
+                    self._page("home", "Home", view_home(st, cards, now, self._cur(), self._theme(), assumed_costs=assumed, EM=EM), qs)
                 elif parts == ["deals"]:
-                    self._page("deals", "Deals", view_deals(st, now, self._cur()), qs)
+                    self._page("deals", "Deals", view_deals(st, now, self._cur(), qs.get("syn", [""])[0] == "1"), qs)
                 elif parts == ["search"]:
                     from .ui_home import view_search
                     q = qs.get("q", [""])[0][:120]
@@ -1748,27 +1983,64 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                         self.send_header("Location", f"/card/{hits[0].passcode}")
                         self.send_header("Content-Length", "0")
                         return self.end_headers()
-                    self._page("search", q or "Card search", view_search(cards, q), qs)
+                    from .ui_home import Money
+                    self._page("search", q or "Card search", view_search(cards, q, st, Money(st, _engine_home(st), self._cur(), now)), qs)
                 elif parts[0] == "card" and len(parts) == 2 and parts[1].isdigit():
                     from .ui_home import view_card
                     self._page("search", (cards.card(parts[1]) or {}).get("name_en") or parts[1],
-                               view_card(st, cards, parts[1], now, self._cur(), book=_book(st, now), catalog=catalog() if catalog else None), qs)
+                               view_card(st, cards, parts[1], now, self._cur(), book=_book(st, now), catalog=catalog() if catalog else None,
+                                         token=token, filters={k: qs.get(k, [""])[0][:300] for k in ("platform", "graded", "type", "v")}),
+                               qs, crumb=("Cards", "/search"))
                 elif parts[0] == "deal" and len(parts) == 2:
-                    self._page("deals", parts[1], view_deal(st, parts[1], now, token, self._cur()), qs)
+                    self._page("deals", "Deal", view_deal(st, parts[1], now, token, self._cur()), qs, crumb=("Deals", "/deals"))
                 elif parts == ["evidence"]:
                     self._page("evidence", "Evidence", view_evidence(st, now, qs.get("printing", [""])[0] or None,
                                                                      qs.get("syn", [""])[0] == "1"), qs)
                 elif parts[0] == "obs" and len(parts) == 2:
                     oid = unquote(parts[1])
-                    self._page("evidence", oid, view_obs(st, oid, now, token), qs)
+                    self._page("evidence", "Record", view_obs(st, oid, now, token), qs, crumb=("Evidence", "/evidence"))
                 elif parts == ["import"]:
-                    self._page("import", "Import", view_import(token), qs)
+                    from .ui_import import view_import as view_import_pages
+                    csv_form = view_import(token).replace("<h1>Import</h1>", "<h2>Or a CSV you prepared</h2>", 1)
+                    from .capture import bookmarklet, capture_key, worth_pricing
+                    port = self.server.server_address[1]
+                    self._page("import", "Import", view_import_pages(st, token, qs.get("batch", [""])[0] or None,
+                                                                     catalog() if catalog else None, csv_form,
+                                                                     bookmark=bookmarklet(port, capture_key()), searches=[]), qs)
                 elif parts == ["opportunities"]:
-                    self._page("opportunities", "Opportunities",
-                               view_opportunities(st, now, token, self._cur(), qs.get("show", ["open"])[0]), qs)
+                    if not _engine_ready(st):
+                        self._page("opportunities", "Listings", view_opportunities(st, now, token, self._cur(), "open"), qs)
+                    else:
+                        from .ui_listing import view_list
+                        M = EngineMoney(st, _engine_home(st), self._cur(), now)
+                        v = qs.get("v", ["all"])[0]
+                        t = qs.get("t", ["any"])[0]
+                        tick = (f'<form method="post" action="/engine/tick" class="inline"><input type="hidden" name="t" value="{e(token)}">'
+                                '<button>Check for new listings now</button> <a class="small" href="/opportunities/engine">engine details</a></form>')
+                        self._page("opportunities", "Listings",
+                                   view_list(st, cards, now, M, v_filter=v if v in ("all", "BUY", "CHECK", "WATCH", "PASS", "every") else "all",
+                                             t_filter=t if t in ("any", "singles", "lots") else "any", home_cur=M.cur,
+                                             site=qs.get("site", ["any"])[0] if qs.get("site", ["any"])[0] in ("any", "ebay", "yahoo", "mercari", "other") else "any",
+                                             pmin=_num(qs.get("min", [""])[0]), pmax=_num(qs.get("max", [""])[0])).replace(
+                                       '</p>', '</p>' + tick, 1), qs)
+                elif parts == ["opportunities", "engine"]:
+                    self._page("engine", "Engine details", view_opportunities(st, now, token, self._cur(), qs.get("show", ["open"])[0]), qs)
                 elif parts[0] == "opp" and len(parts) == 2:
+                    from .ui_listing import view_one
                     k = unquote(parts[1])
-                    self._page("opportunities", k, view_opportunity(st, k, now, token, self._cur()), qs)
+                    if not _engine_ready(st):
+                        raise KeyError(k)
+                    try:
+                        from .engine import load_profile
+                        prof = load_profile()
+                    except Exception:
+                        prof = None
+                    row = st.db.execute("SELECT payload_json FROM opportunity WHERE key=?", (k,)).fetchone()
+                    g = (json.loads(row[0]).get("game") if row else None) or "ygo"
+                    self.game = g
+                    idx = (pcards() if g == "pkm" else cards) or cards
+                    self._page("opportunities", "Listing", view_one(st, idx, k, now, token, EngineMoney(st, _engine_home(st), self._cur(), now), prof),
+                               qs, crumb=("Listings", "/pkm/opportunities" if g == "pkm" else "/opportunities"))
                 elif parts == ["costs"]:
                     self._page("costs", "Your costs", view_costs(token), qs)
                 elif parts == ["scan"]:
@@ -1787,11 +2059,12 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
             u = urlsplit(self.path)
             parts = [p for p in u.path.split("/") if p]
             n = int(self.headers.get("Content-Length") or 0)
-            if n > MAX_UPLOAD:
+            if n > (MAX_PAGES_UPLOAD if parts in (["import", "pages"], ["capture"]) else MAX_UPLOAD):   # a full 240-result page is several MB
                 return self._send(413, page("Too large", "<h1>Upload too large</h1>", nav="", store=store_path))
             raw = self.rfile.read(n)
             ctype = self.headers.get("Content-Type", "")
             files: dict[str, tuple[str, bytes]] = {}
+            many: dict[str, list[tuple[str, bytes]]] = {}
             if ctype.startswith("multipart/form-data"):
                 msg = BytesParser(policy=HTTP).parsebytes(b"Content-Type: " + ctype.encode() + b"\r\n\r\n" + raw)
                 form = {}
@@ -1799,10 +2072,31 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     name = part.get_param("name", header="content-disposition")
                     if part.get_filename() is not None:
                         files[name] = (part.get_filename(), part.get_payload(decode=True) or b"")
+                        if files[name][1]:
+                            many.setdefault(name, []).append(files[name])
                     else:
                         form[name] = (part.get_payload(decode=True) or b"").decode()
             else:
                 form = {k: v[0] for k, v in parse_qs(raw.decode(), keep_blank_values=True).items()}
+            if parts == ["capture"]:
+                # The "Send to CardMan" bookmark posts from the marketplace's own page: it carries the capture key, not the
+                # form token, and only ever adds evidence.
+                from .capture import capture_key, file_name_for
+                if not secrets.compare_digest(form.get("k", ""), capture_key()):
+                    return self._send(403, page("Refused", "<h1>Refused</h1><p>This bookmark's key does not match. Add the bookmark "
+                                                "again from the Import page.</p>", nav="", store=store_path))
+                html_text = form.get("html", "")
+                if not html_text:
+                    return self._redirect("/import", err="the bookmark sent an empty page")
+                from .engine import Engine
+                from .sold_import import import_pages
+                try:
+                    eng = Engine(store_path, catalog=catalog() if catalog else None)
+                    res = import_pages(eng, [(file_name_for(form.get("url", "")), html_text.encode("utf-8"))], clock())
+                except Exception as x:
+                    return self._redirect("/import", err=f"Capture failed: {type(x).__name__}: {x}")
+                return self._redirect(f"/import?batch={res['batch']}", msg=f"Captured {res['rows']} sale(s) from the page; {res['new']} new.",
+                                      err="; ".join(res["errors"][:3]))
             if not secrets.compare_digest(form.get("t", ""), token):
                 return self._send(403, page("Refused", "<h1>Refused</h1><p>Form token mismatch. Reload the page.</p>",
                                             nav="", store=store_path))
@@ -1836,10 +2130,15 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                         self._redirect(f"/obs/{quote(oid)}", err=str(x))
                 elif parts == ["engine", "tick"]:
                     try:
-                        from .engine import Engine
-                        eng = Engine(store_path, catalog=catalog() if catalog else None)
-                        rep = eng.tick(now)
-                        eng.db.close()
+                        if not ENGINE_LOCK.acquire(blocking=False):
+                            return self._redirect("/opportunities", msg="A check is already running in the background; refresh in a minute.")
+                        try:
+                            from .engine import Engine
+                            eng = Engine(store_path, catalog=catalog() if catalog else None)
+                            rep = eng.tick(now)
+                            eng.db.close()
+                        finally:
+                            ENGINE_LOCK.release()
                         self._redirect("/opportunities", msg=f"Checked: {rep.new_listings} new, {rep.analyzed} analyzed, "
                                        f"{rep.open_opportunities} open.", err="; ".join(rep.errors[:3]))
                     except Exception as x:
@@ -1868,6 +2167,55 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                         self._redirect("/results", msg=record_outcome(st, form, now))
                     except (ValueError, KeyError) as x:
                         self._redirect("/results", err=f"Not recorded: {x}")
+                elif parts == ["import", "pages"]:
+                    if not many.get("pages"):
+                        return self._redirect("/import", err="choose one or more saved pages")
+                    from .engine import Engine
+                    from .sold_import import import_pages
+                    try:
+                        eng = Engine(store_path, catalog=catalog() if catalog else None)
+                        res = import_pages(eng, many["pages"], now)
+                    except SystemExit as x:
+                        return self._redirect("/import", err=str(x))
+                    except Exception as x:          # nothing half-done is shown as success
+                        return self._redirect("/import", err=f"Import failed: {type(x).__name__}: {x}")
+                    msg = (f"Read {res['rows']} sale(s) from {len(res['pages'])} page(s); {res['new']} new." +
+                           (" Some are synthetic test pages and never price anything." if any(p['synthetic'] for p in res['pages']) else ""))
+                    self._redirect(f"/import?batch={res['batch']}", msg=msg, err="; ".join(res["errors"][:5]))
+                elif len(parts) == 3 and parts[0] == "obs" and parts[2] == "identify":
+                    oid, pid = unquote(parts[1]), form.get("printing", "")
+                    back = form.get("back") or "/import"
+                    if not back.startswith("/") or back.startswith("//"):
+                        back = "/import"
+                    cat = catalog() if catalog else None
+                    known = cat is not None and any(p.id == pid.split("|")[0] for p in cat.printings)
+                    if not known:
+                        return self._redirect(back, err="unknown printing")
+                    try:
+                        st.confirm_identity(oid, pid, actor="ui", now=now)
+                        # The same sale seen on another site (eBay and 130point) is the same card: confirm every copy.
+                        twins = [i for i in st.same_sale(oid) if i != oid]
+                        for i in twins:
+                            st.confirm_identity(i, pid, actor="ui", now=now)
+                        self._redirect(back, msg="Confirmed. That sale now counts for this printing"
+                                       + (f" (and its {len(twins)} copy on another site)." if twins else "."))
+                    except KeyError:
+                        self._redirect(back, err="no such sale")
+                elif len(parts) == 4 and parts[0] == "pkm" and parts[1] == "card" and parts[3] == "sale" and pcards() is not None:
+                    from .ui_home import record_sale
+                    try:
+                        record_sale(st, pcards().cat, "pkm-" + parts[2], form, now)
+                        self._redirect(f"/pkm/card/{parts[2]}", msg="Sale added. It counts toward this version's price from now on.")
+                    except ValueError as x:
+                        self._redirect(f"/pkm/card/{parts[2]}", err=str(x))
+                elif len(parts) == 3 and parts[0] == "card" and parts[2] == "sale" and parts[1].isdigit():
+                    from .ui_home import record_sale
+                    cat = catalog() if catalog else None
+                    try:
+                        oid = record_sale(st, cat, parts[1], form, now)
+                        self._redirect(f"/card/{parts[1]}", msg="Sale added. It counts toward this version's price from now on.")
+                    except ValueError as x:
+                        self._redirect(f"/card/{parts[1]}", err=str(x))
                 elif parts == ["import"]:
                     if "csv" not in files:
                         return self._redirect("/import", err="choose a CSV file")
@@ -1899,16 +2247,62 @@ def catalog_loader(path: str):
     return get
 
 
+def _num(v: str) -> float | None:
+    try:
+        return float(v.replace(",", "")) if v.strip() else None
+    except (ValueError, AttributeError):
+        return None
+
+
+class CardManServer(ThreadingHTTPServer):
+    """A page asks for two dozen card images at once; the standard queue of 5 waiting connections made some of them fail
+    with "connection reset" (a card picture or a search suggestion silently missing)."""
+    request_queue_size = 128
+    daemon_threads = True
+
+
+ENGINE_LOCK = threading.Lock()
+ENGINE_STATUS: dict = {"every_min": 0, "last": None, "next": None, "running": False, "error": None}
+
+
+def background_engine(store_path: str, catalog, every_min: float, stop: "threading.Event") -> None:
+    """While the UI is open, run an engine pass every `every_min` minutes. One pass at a time, shared with the button."""
+    from datetime import timedelta
+    ENGINE_STATUS["every_min"] = every_min
+    while not stop.is_set():
+        if ENGINE_LOCK.acquire(blocking=False):
+            ENGINE_STATUS["running"] = True
+            try:
+                from .engine import Engine
+                eng = Engine(store_path, catalog=catalog() if catalog else None)
+                eng.tick()
+                eng.db.close()
+                ENGINE_STATUS["error"] = None
+            except Exception as x:            # keep the loop alive; the next pass may succeed
+                ENGINE_STATUS["error"] = f"{type(x).__name__}: {x}"
+            finally:
+                ENGINE_STATUS["running"] = False
+                ENGINE_STATUS["last"] = datetime.now(timezone.utc)
+                ENGINE_LOCK.release()
+        ENGINE_STATUS["next"] = datetime.now(timezone.utc) + timedelta(minutes=every_min)
+        stop.wait(every_min * 60)
+
+
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(prog="python -m cardman.ui")
     ap.add_argument("--store", default="data/store/evidence.sqlite")
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--catalog", default="data/cache/identity.sqlite", help="identity cache for the Scan page")
+    ap.add_argument("--engine-every", type=float, default=15, help="minutes between background engine passes; 0 turns them off")
     a = ap.parse_args(argv)
     Store(a.store).db.close()          # create the file and schema up front
-    srv = ThreadingHTTPServer(("127.0.0.1", a.port), make_handler(a.store, secrets.token_urlsafe(24),
+    srv = CardManServer(("127.0.0.1", a.port), make_handler(a.store, secrets.token_urlsafe(24),
                                                                   catalog=catalog_loader(a.catalog)))
     print(f"CardMan UI on http://127.0.0.1:{a.port}  (store {a.store}; Ctrl+C to stop)")
+    if a.engine_every > 0:
+        stop = threading.Event()
+        threading.Thread(target=background_engine, args=(a.store, catalog_loader(a.catalog), a.engine_every, stop), daemon=True,
+                         name="cardman-engine").start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
