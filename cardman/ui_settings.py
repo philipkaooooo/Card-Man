@@ -7,6 +7,8 @@ import os
 from datetime import datetime
 from urllib.parse import urlencode
 
+from .games import card_href
+
 
 def e(v) -> str:
     return html.escape("" if v is None else str(v), quote=True)
@@ -34,6 +36,22 @@ def _row(name: str, state: str, detail: str, ok: bool | None) -> str:
     dot = {True: "good", False: "crit", None: "muted"}[ok]
     return (f'<tr><td><span class="sdot {dot}"></span><b>{e(name)}</b></td><td>{e(state)}</td>'
             f'<td class="fg2">{detail}</td></tr>')
+
+
+def _pkm_row() -> str:
+    """Pokémon catalog status: how many cards, when it was last downloaded."""
+    import sqlite3
+    from .pkm_catalog import DB
+    try:
+        con = sqlite3.connect(DB)
+        n = con.execute("SELECT COUNT(*) FROM pkm_card").fetchone()[0]
+        sets = con.execute("SELECT COUNT(*) FROM pkm_set").fetchone()[0]
+        built = (con.execute("SELECT v FROM pkm_meta WHERE k='built'").fetchone() or [""])[0]
+        con.close()
+    except Exception:
+        n, sets, built = 0, 0, ""
+    return _row("Pokémon cards (English)", f"{n:,} cards in {sets} sets" if n else "not downloaded yet",
+                (f"updated {e(built[:10])} · guide prices from TCGplayer, leads only" if n else "run: python -m cardman.pkm_catalog"), bool(n) or None)
 
 
 def view_settings(st, now: datetime, cur: str, theme: str, profile: dict | None, engine_status: dict, path: str = "/settings",
@@ -81,6 +99,7 @@ def view_settings(st, now: datetime, cur: str, theme: str, profile: dict | None,
              "eBay notifications are drained into your data on every check" if webhook else "deploy it, then set EBAY_DELETIONS_URL and _SECRET", webhook),
         _row("Exchange rates", f"1 USD = {float(fx[0]):.2f} TWD" if fx else "none yet", f"{e(fx[2])}, {e(str(fx[1])[:10])}" if fx else "fetched on each check", bool(fx)),
         _row("Guide prices (YGOPRODeck)", "on" if (routes.get("ygoprodeck") or {}).get("on") else "off", "leads only; never used as a value", None),
+        _pkm_row(),
         _row("Inbox folder", "on", e((routes.get("inbox") or {}).get("detail") or "~/card-man/data/inbox"), None),
     ]
     from .card_market import coverage, coverage_line
@@ -105,7 +124,7 @@ def _past_prices(fill: list[dict], focus: dict | None) -> str:
     def links(name_en, name_ja):
         return " · ".join(f'<a href="{e(u)}" target="_blank" rel="noreferrer noopener">{e(t)}</a>' for t, u in backfill_links(name_en, name_ja))
     top = (f'<p><b>{e(focus.get("name_en") or focus.get("name_ja"))}</b>: {links(focus.get("name_en"), focus.get("name_ja"))}</p>' if focus else "")
-    rows = "".join(f'<li><a href="/card/{e(c["passcode"])}">{e(c["name"])}</a>: {links(c["name"], c.get("ja"))}</li>' for c in fill)
+    rows = "".join(f'<li><a href="{e(card_href(c["passcode"]))}">{e(c["name"])}</a>: {links(c["name"], c.get("ja"))}</li>' for c in fill)
     return ('<section id="past"><h2>Fill in past prices</h2><p class="why">eBay and Yahoo! Auctions show the last 3 to 4 months of sales on '
             'their own websites. Open a link, scroll to the end of the results, then click your <b>Send to CardMan</b> bookmark '
             '(set it up once on <a href="/import">Add sales</a>). Each sale keeps its real date, and a sale seen on two sites counts once. '

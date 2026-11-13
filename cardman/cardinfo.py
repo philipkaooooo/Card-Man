@@ -319,6 +319,15 @@ class ImageCache:
         got = self._cached(path, ARTWORK_URL.format(size=f"_{size}" if size else "", passcode=passcode), ("image/jpeg",))
         return got or (PLACEHOLDER, "image/svg+xml")
 
+    def pkm(self, card_id: str, url: str | None, size: str = "small") -> tuple[bytes, str]:
+        """A Pokémon card picture from images.pokemontcg.io, cached like the Yu-Gi-Oh! artwork."""
+        if not re.fullmatch(r"[a-z0-9.]{2,16}-[A-Za-z0-9]{1,8}", card_id or "") or size not in ("small", "large") \
+                or not (url or "").startswith("https://images.pokemontcg.io/"):
+            return PLACEHOLDER, "image/svg+xml"
+        path = self.root / "pkm" / size / f"{card_id}.png"
+        got = self._cached(path, url, ("image/png",))
+        return got or (PLACEHOLDER, "image/svg+xml")
+
     def scan(self, filename: str) -> tuple[bytes, str]:
         if not re.fullmatch(r"[A-Za-z0-9!'(),._&+-]{3,200}\.(png|jpg)", filename):
             return PLACEHOLDER, "image/svg+xml"

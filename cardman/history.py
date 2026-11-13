@@ -253,7 +253,8 @@ class Variant:
     rarity: str | None = None
 
 
-def build(st, variants: list, now: datetime, conv: Converter) -> dict:
+def build(st, variants: list, now: datetime, conv: Converter, guide_fn=None) -> dict:
+    """guide_fn: optional printing id -> [(day, usd)] (Pokémon: the TCGplayer market price of that version, a guide only)."""
     """Everything the chart and the text table show, in the display currency."""
     lab = {v.id: " · ".join(x for x in (getattr(v, "set_code", None) or "no code", getattr(v, "rarity", None),
                                          getattr(v, "edition", None)) if x) for v in variants}
@@ -302,7 +303,12 @@ def build(st, variants: list, now: datetime, conv: Converter) -> dict:
                          "orig": f"{o.original_amount} {o.currency}" if o.currency != conv.display else None})
         guide = []
         v = by_id.get(pid)
-        if not gc and v is not None and getattr(v, "set_code", None) and "reference_price" in have:
+        if not gc and guide_fn is not None and pid.startswith("pk:"):
+            for day, usd in guide_fn(pid):
+                g = conv(Decimal(str(usd)), "USD", min(datetime.fromisoformat(day).replace(hour=12, tzinfo=UTC), now), fetch=False)
+                if g is not None:
+                    guide.append({"d": day, "v": round(g, 2)})
+        elif not gc and v is not None and getattr(v, "set_code", None) and "reference_price" in have:
             for day, usd, rar in st.db.execute("SELECT day, usd, rarity FROM reference_price WHERE code=? AND usd<>'' ORDER BY day",
                                                (v.set_code,)):
                 if (rar or "").lower() == (getattr(v, "rarity", "") or "").lower():
@@ -372,7 +378,7 @@ def sparks(st, now: datetime, home: str = "TWD") -> dict[str, str]:
 _BUILD_CACHE: dict = {}
 
 
-def cached_build(st, passcode: str, variants: list, now: datetime, conv: Converter) -> dict:
+def cached_build(st, passcode: str, variants: list, now: datetime, conv: Converter, guide_fn=None) -> dict:
     """build() memoized until sales, asks, guide prices or rates change (and at most for the day)."""
     have = {r[0] for r in st.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     m = [st.db.execute(f"SELECT COUNT(*), MAX(recorded_at) FROM observation WHERE synthetic=0 AND evidence_type IN {SOLD_TYPES}").fetchone(),
@@ -383,7 +389,7 @@ def cached_build(st, passcode: str, variants: list, now: datetime, conv: Convert
     if k not in _BUILD_CACHE:
         if len(_BUILD_CACHE) > 64:
             _BUILD_CACHE.clear()
-        _BUILD_CACHE[k] = build(st, variants, now, conv)
+        _BUILD_CACHE[k] = build(st, variants, now, conv, guide_fn=guide_fn)
     return _BUILD_CACHE[k]
 
 

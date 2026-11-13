@@ -8,6 +8,7 @@ from datetime import date
 from urllib.parse import quote
 
 from . import charts
+from .games import card_href
 
 
 def e(v) -> str:
@@ -66,7 +67,7 @@ def section(passcode: str, h: dict, printing_id: str | None) -> str:
     s0 = max(mine, key=lambda s: (len(s["sales"]), len(s["asks"]), s["grade"] == "Raw"))
     note = (f'<p class="hnote">CardMan started tracking this card on {e(_day(since))}. The chart fills in as it sells.</p>'
             if len(s0["sales"]) < 3 and since else "")
-    return (head + f'<div data-hchart="/card/{quote(passcode)}/history.json" data-printing="{e(printing_id)}" data-default="{e(s0["key"])}" '
+    return (head + f'<div data-hchart="{card_href(passcode)}/history.json" data-printing="{e(printing_id)}" data-default="{e(s0["key"])}" '
             f'data-cur="{e(cur)}">' + chips(s0, cur) + note
             + '<noscript><p class="muted small">Turn on scripts to see the chart; the numbers are below.</p></noscript>'
             + table(s0, cur) + '</div></section>')

@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from urllib.parse import quote
 
+from .games import card_href
+
 BUY, CHECK, WATCH, PASS = "BUY", "CHECK", "WATCH", "PASS"
 ORDER = {BUY: 0, CHECK: 1, WATCH: 2, PASS: 3}
 LABEL = {BUY: "Buy", CHECK: "Check first", WATCH: "Watch", PASS: "Skip"}
@@ -127,8 +129,8 @@ def conf_meter(v: Verdict) -> str:
 
 
 def _passcode(s: dict | None) -> str | None:
-    m = re.search(r"@(\d+)", (s or {}).get("printing_id") or "")
-    return m.group(1) if m else None
+    from .games import card_key
+    return card_key((s or {}).get("printing_id"))
 
 
 def _art(d: dict, v: Verdict, size: str = "small", cls: str = "card") -> str:
@@ -198,11 +200,13 @@ def row_html(key: str, d: dict, v: Verdict, cards, M, now: datetime, sparks: dic
             f'<span class="lr-meta">{conf_meter(v)} <span class="muted small">{e(_left(d.get("ends_at"), now))}</span></span></span></a>')
 
 
-def decisions(st, M) -> list[tuple]:
-    """Every listing with its verdict: (key, status, payload, verdict)."""
+def decisions(st, M, game: str | None = None) -> list[tuple]:
+    """Every listing of one game (or all) with its verdict: (key, status, payload, verdict). Games never mix."""
     out = []
     for key, status, pj in st.db.execute("SELECT key, status, payload_json FROM opportunity"):
         d = json.loads(pj)
+        if game and d.get("game", "ygo") != game:
+            continue
         out.append((key, status, d, verdict(d, status, M)))
     return out
 
@@ -216,8 +220,8 @@ def site_of(key: str) -> str:
 
 
 def view_list(st, cards, now, M, *, v_filter: str, t_filter: str, home_cur: str, site: str = "any",
-              pmin: float | None = None, pmax: float | None = None) -> str:
-    items = decisions(st, M)
+              pmin: float | None = None, pmax: float | None = None, game: str = "ygo") -> str:
+    items = decisions(st, M, game)
     counts = {c: sum(1 for i in items if i[3].code == c) for c in ORDER}
     is_lot = lambda d: "LOT" in (d.get("kinds") or [])
     shown = [i for i in items if (v_filter == "all" and i[3].code != PASS) or i[3].code == v_filter or v_filter == "every"]
@@ -317,7 +321,7 @@ def view_one(st, cards, key: str, now: datetime, token: str, M, profile: dict | 
     if v.code == CHECK or not settled:
         actions.append('<a class="btn ghost" href="#confirm">Tell us which version it is</a>')
     if c:
-        actions.append(f'<a class="btn ghost" href="/card/{e(pc)}">See this card\'s prices</a>')
+        actions.append(f'<a class="btn ghost" href="{e(card_href(pc))}">See this card\'s prices</a>')
     if sid:
         actions.append(f'<a class="btn ghost" href="/deal/{e(sid)}">Full math</a>')
 

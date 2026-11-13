@@ -289,7 +289,7 @@ header.top .logo{font-weight:800;font-size:17px;color:var(--fg);text-decoration:
 nav.main{display:flex;gap:2px;align-items:center}nav.main a{color:var(--fg2);text-decoration:none;padding:7px 12px;border-radius:8px;
 font-weight:550;font-size:14px;white-space:nowrap}nav.main a:hover{background:var(--soft);color:var(--fg)}
 nav.main a.on{color:var(--fg);background:var(--soft);box-shadow:inset 0 -2px 0 var(--accent)}
-header.top .hsearch{flex:1;max-width:440px;margin-left:auto}header.top .curs{flex:none}
+header.top .hsearch{flex:1;max-width:440px;margin-left:auto}header.top .curs{flex:none}header.top .games a{font-weight:600}
 main.page{width:100%;max-width:1180px;margin:0 auto;padding:22px 20px 40px;flex:1}
 .crumb-back{display:inline-block;margin:0 0 10px;color:var(--fg2);text-decoration:none;font-size:13px}.crumb-back:hover{color:var(--fg)}
 footer.foot{border-top:1px solid var(--line);color:var(--muted);font-size:12px;padding:12px 20px;text-align:center}
@@ -299,7 +299,7 @@ header.top .hsearch{order:2;flex-basis:100%;max-width:none;margin:0}main.page{pa
 
 
 def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str = "", cur: str = "USD",
-         path: str = "/", theme: str = "market", q: str = "", back: tuple[str, str] | None = None) -> bytes:
+         path: str = "/", theme: str = "market", q: str = "", back: tuple[str, str] | None = None, game: str = "ygo") -> bytes:
     from .ui_home import HOME_CSS, THEMES, header_search
     from .ui_import import IMPORT_CSS
     from .ui_listing import LISTING_CSS
@@ -311,15 +311,19 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     curs = ('<span class="curs" role="group" aria-label="Display currency">' + "".join(
         f'<a href="/currency?{urlencode({"c": c, "back": path})}" class="{"on" if c == cur else ""}">{c}</a>'
         for c in CURRENCIES) + '</span>')
-    hsearch = "" if nav == "home" else f'<div class="hsearch">{header_search(q)}</div>'
+    hsearch = "" if nav == "home" else f'<div class="hsearch">{header_search(q, game)}</div>'
+    from .games import NAME, scope_links
+    games = ('<span class="curs games" role="group" aria-label="Game">' + "".join(
+        f'<a href="/game?{urlencode({"g": g, "back": path})}" class="{"on" if g == game else ""}">{e(NAME[g])}</a>' for g in ("ygo", "pkm"))
+        + '</span>')
     flash = (f'<div class="note ok">{e(msg)}</div>' if msg else "") + (f'<div class="note bad">{e(err)}</div>' if err else "")
     crumb = f'<a class="crumb-back" href="{e(back[1])}">← {e(back[0])}</a>' if back else ""
     tz = datetime.now().astimezone().strftime("UTC%z")
     return (f'<!doctype html><html lang="en" data-theme="{"vault" if theme == "vault" else "light"}"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)} · CardMan</title>'
             f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{CHART_CSS}{SHELL_CSS}</style></head><body>'
-            f'<header class="top"><a class="logo" href="/">CardMan</a><nav class="main" aria-label="Main">{links}</nav>{hsearch}{curs}</header>'
-            f'<main class="page">{crumb}{flash}{body}</main>'
+            + scope_links(f'<header class="top"><a class="logo" href="/">CardMan</a><nav class="main" aria-label="Main">{links}</nav>{hsearch}'
+                          f'{games}{curs}</header><main class="page">{crumb}{flash}{body}</main>', game) +
             f'<footer class="foot">Private to this Mac · times {e(tz)} · press <kbd>/</kbd> to search</footer>'
             f'<script src="/static/ui.js?v={_js_version()}"></script></body></html>').encode()
 
@@ -1667,7 +1671,7 @@ def reevaluate(st: Store, store_path: str, sid: str, now: datetime) -> str:
 
 # -- server -----------------------------------------------------------------------------------
 
-def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezone.utc), catalog=None, cards=None, images=None):
+def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezone.utc), catalog=None, cards=None, images=None, pkm=None):
     """catalog: a zero-argument callable returning the identity Catalog (loaded once), or None."""
     from .cardinfo import CardIndex, ImageCache
     cards = cards or CardIndex(catalog=catalog)
@@ -1683,8 +1687,29 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
         except Exception:
             return None
 
+    _pk: dict = {}
+
+    def pcards():
+        """The Pokémon card index, loaded once (and again after a catalog sync). None until the catalog exists."""
+        if pkm is not None:
+            return pkm
+        from .pkm_catalog import DB, PkmCatalog
+        from .pkm_index import PkmIndex
+        try:
+            m = DB.stat().st_mtime
+        except OSError:
+            return None
+        if _pk.get("m") != m:
+            try:
+                cat = PkmCatalog(DB)
+                _pk.update(m=m, idx=PkmIndex(cat) if len(cat) else None)
+            except Exception:
+                _pk.update(m=m, idx=None)
+        return _pk.get("idx")
+
     class H(BaseHTTPRequestHandler):
         server_version = "CardMan"
+        game = "ygo"
 
         def log_message(self, *a):
             pass
@@ -1732,14 +1757,129 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                              if any(k not in ("msg", "err") for k in qs) else "")
             self._send(200, page(title, body, nav=nav, store=store_path, cur=self._cur(), path=back,
                                  msg=qs.get("msg", [""])[0], err=qs.get("err", [""])[0], theme=self._theme(),
-                                 q=qs.get("q", [""])[0][:120] if nav == "search" else "", back=crumb))
+                                 q=qs.get("q", [""])[0][:120] if nav == "search" else "", back=crumb, game=self.game))
+
+        def _cookie(self, name: str) -> str:
+            for part in (self.headers.get("Cookie") or "").split(";"):
+                k, _, v = part.strip().partition("=")
+                if k == name:
+                    return v
+            return ""
+
+        def _go(self, to: str):
+            self.send_response(302)
+            self.send_header("Location", to)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def _switch_game(self, qs):
+            """Yu-Gi-Oh! | Pokémon: remembered per browser; the same kind of page in the other game when there is one."""
+            g = qs.get("g", [""])[0]
+            back = qs.get("back", ["/"])[0]
+            if not back.startswith("/") or back.startswith("//"):
+                back = "/"
+            base = (back[4:] if back.startswith("/pkm") else back) or "/"
+            same = base.split("?")[0] in ("/", "/opportunities", "/search")
+            target = base if same else "/"
+            to = ("/pkm" + target) if g == "pkm" else target
+            self.send_response(303)
+            if g in ("ygo", "pkm"):
+                self.send_header("Set-Cookie", f"game={g}; Path=/; SameSite=Lax; Max-Age=31536000")
+            self.send_header("Location", to)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def _pkm_get(self, st, now, parts, qs):
+            """Pokémon pages: Home, Listings, Cards (search), a card, its chart data, pictures and suggestions."""
+            import re as _re
+            from .games import card_href
+            idx = pcards()
+            try:
+                if len(parts) == 3 and parts[:2] == ["img", "pkm"] and parts[2].endswith(".png"):
+                    cid = parts[2][:-4]
+                    size = qs.get("size", ["small"])[0]
+                    url = idx.image_url("pkm-" + cid, "large" if size == "large" else "small") if idx else None
+                    body, ctype = images.pkm(cid, url, "large" if size == "large" else "small")
+                    return self._send(200, body, ctype)
+                if parts == ["api", "suggest"]:
+                    return self._send(200, json.dumps(idx.suggest(qs.get("q", [""])[0][:80])).encode(), "application/json; charset=utf-8")
+                if len(parts) >= 2 and parts[0] == "card" and _re.fullmatch(r"[a-z0-9.]{2,16}-[A-Za-z0-9]{1,8}", parts[1]):
+                    key = "pkm-" + parts[1]
+                    c = idx.card(key)
+                    if not c:
+                        raise KeyError(parts[1])
+                    if len(parts) == 3 and parts[2] in ("history.json", "history.html"):
+                        from .ui_chart import chips, table
+                        from .ui_home import history_for
+                        hist = history_for(st, key, idx.printings(key), now, self._cur(), _engine_home(st), _book(st, now),
+                                           guide=idx.cat.guide_history)
+                        if parts[2] == "history.json":
+                            return self._send(200, json.dumps(hist).encode(), "application/json")
+                        s_ = next((x for x in hist["series"] if x["key"] == qs.get("key", [""])[0]), None)
+                        if s_ is None:
+                            return self._send(404, b"no such series", "text/plain")
+                        return self._send(200, (chips(s_, hist["currency"]) + table(s_, hist["currency"])).encode(), "text/html; charset=utf-8")
+                    if len(parts) == 2:
+                        from .ui_home import view_card
+                        return self._page("search", c["name_en"], view_card(
+                            st, idx, key, now, self._cur(), book=_book(st, now), catalog=idx.cat, home=_engine_home(st), token=token,
+                            filters={k: qs.get(k, [""])[0][:300] for k in ("platform", "graded", "type", "v")}), qs, crumb=("Cards", "/pkm/search"))
+                if parts == ["search"]:
+                    from .ui_home import Money, view_search
+                    q = qs.get("q", [""])[0][:120]
+                    hits = idx.search(q, 2) if q else []
+                    if hits and (len(hits) == 1 and hits[0].score >= 80 or (len(hits) == 2 and hits[0].score >= 100 > hits[1].score + 25)):
+                        return self._go(card_href(hits[0].passcode))
+                    return self._page("search", q or "Card search", view_search(idx, q, st, Money(st, _engine_home(st), self._cur(), now)), qs)
+                if not parts:
+                    from .ui_home import view_home
+                    try:
+                        from .engine import load_profile
+                        assumed = bool(load_profile().get("_assumed"))
+                    except Exception:
+                        assumed = True
+                    EM = EngineMoney(st, _engine_home(st), self._cur(), now) if _engine_ready(st) else None
+                    return self._page("home", "Pokémon", view_home(st, idx, now, self._cur(), self._theme(), assumed_costs=assumed, EM=EM,
+                                                                     game="pkm"), qs)
+                if parts == ["opportunities"]:
+                    from .ui_listing import view_list
+                    if not _engine_ready(st):
+                        return self._page("opportunities", "Listings", '<h1>Listings</h1><p class="empty">No listings checked yet.</p>', qs)
+                    M = EngineMoney(st, _engine_home(st), self._cur(), now)
+                    v = qs.get("v", ["all"])[0]
+                    t = qs.get("t", ["any"])[0]
+                    return self._page("opportunities", "Listings", view_list(
+                        st, idx, now, M, v_filter=v if v in ("all", "BUY", "CHECK", "WATCH", "PASS", "every") else "all",
+                        t_filter=t if t in ("any", "singles", "lots") else "any", home_cur=M.cur,
+                        site=qs.get("site", ["any"])[0] if qs.get("site", ["any"])[0] in ("any", "ebay", "yahoo", "mercari", "other") else "any",
+                        pmin=_num(qs.get("min", [""])[0]), pmax=_num(qs.get("max", [""])[0]), game="pkm"), qs)
+                if parts[:1] in (["opp"], ["import"], ["settings"], ["costs"], ["static"]):
+                    return self._go("/" + "/".join(parts) + (("?" + urlsplit(self.path).query) if urlsplit(self.path).query else ""))
+                return self._send(404, page("Not found", "<h1>Not found</h1>", nav="", store=store_path, game="pkm"))
+            except KeyError as x:
+                return self._send(404, page("Not found", f"<h1>Not found</h1><p>{e(x)}</p>", nav="", store=store_path, game="pkm"))
+            finally:
+                st.db.close()
 
         def do_GET(self):
             u = urlsplit(self.path)
             qs = parse_qs(u.query)
             parts = [p for p in u.path.split("/") if p]
+            self.game = "ygo"
+            if parts[:1] == ["pkm"]:
+                self.game, parts = "pkm", parts[1:]
+            if parts == ["game"]:
+                return self._switch_game(qs)
+            if not parts and self.game == "ygo" and self._cookie("game") == "pkm" and "g" not in qs and not u.query:
+                return self._go("/pkm/")
+            if self.game == "pkm" and pcards() is None and parts[:1] in ([], ["search"], ["card"], ["opportunities"]):
+                return self._send(200, page("Pokémon", '<h1>Pokémon</h1><p class="empty">The Pokémon card catalog is still being '
+                                            'downloaded. This page fills in once it is ready.</p>', nav="home", store=store_path,
+                                            game="pkm", cur=self._cur(), theme=self._theme()))
             st = Store(store_path)
             now = clock()
+            if self.game == "pkm":
+                return self._pkm_get(st, now, parts, qs)
             if parts == ["static", "ui.js"]:
                 st.db.close()
                 from .ui_home import HOME_JS
@@ -1895,7 +2035,12 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                         prof = load_profile()
                     except Exception:
                         prof = None
-                    self._page("opportunities", "Listing", view_one(st, cards, k, now, token, EngineMoney(st, _engine_home(st), self._cur(), now), prof), qs, crumb=("Listings", "/opportunities"))
+                    row = st.db.execute("SELECT payload_json FROM opportunity WHERE key=?", (k,)).fetchone()
+                    g = (json.loads(row[0]).get("game") if row else None) or "ygo"
+                    self.game = g
+                    idx = (pcards() if g == "pkm" else cards) or cards
+                    self._page("opportunities", "Listing", view_one(st, idx, k, now, token, EngineMoney(st, _engine_home(st), self._cur(), now), prof),
+                               qs, crumb=("Listings", "/pkm/opportunities" if g == "pkm" else "/opportunities"))
                 elif parts == ["costs"]:
                     self._page("costs", "Your costs", view_costs(token), qs)
                 elif parts == ["scan"]:
@@ -2056,6 +2201,13 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                                        + (f" (and its {len(twins)} copy on another site)." if twins else "."))
                     except KeyError:
                         self._redirect(back, err="no such sale")
+                elif len(parts) == 4 and parts[0] == "pkm" and parts[1] == "card" and parts[3] == "sale" and pcards() is not None:
+                    from .ui_home import record_sale
+                    try:
+                        record_sale(st, pcards().cat, "pkm-" + parts[2], form, now)
+                        self._redirect(f"/pkm/card/{parts[2]}", msg="Sale added. It counts toward this version's price from now on.")
+                    except ValueError as x:
+                        self._redirect(f"/pkm/card/{parts[2]}", err=str(x))
                 elif len(parts) == 3 and parts[0] == "card" and parts[2] == "sale" and parts[1].isdigit():
                     from .ui_home import record_sale
                     cat = catalog() if catalog else None

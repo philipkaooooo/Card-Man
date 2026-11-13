@@ -14,11 +14,12 @@ from decimal import Decimal
 from urllib.parse import quote, urlencode
 
 from . import charts
+from .games import card_href
 from .fx import FxTable, StaleRateError
 
 VAULT_MIN_HOME = Decimal("9000")      # about USD 280 at 32 TWD/USD: where the high-end view starts
 THEMES = ("market", "vault")
-_PC = re.compile(r"@(\d+)")
+_PC = re.compile(r"@([^@|]+)")                  # passcode or pkm-<card id>: see games.py
 
 
 def e(v) -> str:
@@ -34,6 +35,9 @@ def img(passcode: str | None, size: str = "small", alt: str = "", cls: str = "ca
     if not passcode:
         return f'<span class="{cls} ph" role="img" aria-label="No exact card yet"><span>?</span></span>'
     q = f"?size={size}" if size else ""
+    if passcode.startswith("pkm-"):
+        src = f"/img/pkm/{e(passcode[4:])}.png?size={'large' if size in ('', 'large') else 'small'}"
+        return f'<img class="{cls} pkm" src="{src}" alt="{e(alt)}" loading="lazy" decoding="async">'
     return f'<img class="{cls}" src="/img/card/{e(passcode)}.jpg{q}" alt="{e(alt)}" loading="lazy" decoding="async">'
 
 
@@ -64,15 +68,17 @@ def _tables(st) -> set[str]:
     return {r[0] for r in st.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
 
 
-def _search_box(q: str = "", big: bool = False) -> str:
+def _search_box(q: str = "", big: bool = False, game: str = "ygo") -> str:
+    hint = ("Search any Pokémon card: name, set, or number like 199/165" if game == "pkm"
+            else "Search any card: name, 日本語, set code (LOB-EN001) or card number")
     return (f'<form class="search{" big" if big else ""}" action="/search" method="get" role="search">'
-            f'<input name="q" value="{e(q)}" placeholder="Search any card: name, 日本語, set code (LOB-EN001) or card number" '
+            f'<input name="q" value="{e(q)}" placeholder="{e(hint)}" '
             f'autocomplete="off" spellcheck="false" data-suggest aria-label="Search cards"{" autofocus" if big else ""}>'
             f'<button aria-label="Search">Search</button><div class="sugg" role="listbox" hidden></div></form>')
 
 
-def header_search(q: str = "") -> str:
-    return _search_box(q)
+def header_search(q: str = "", game: str = "ygo") -> str:
+    return _search_box(q, game=game)
 
 
 _SELLER = re.compile(r"seller:[0-9a-f]{8,}")
@@ -120,7 +126,7 @@ def _tile(key, title, price, currency, payload, M, *, ask_home=None, sub="") -> 
             f'<span class="tl-sub">{sub}</span>{note}</span></a>')
 
 
-def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", assumed_costs: bool = True, EM=None) -> str:
+def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", assumed_costs: bool = True, EM=None, game: str = "ygo") -> str:
     """Search, then what needs you: Buy and Check first, then a few Watch singles. New singles and recent sales below."""
     from .ui_listing import BUY, CHECK, WATCH, decisions, row_html
     M = Money(st, home, cur, now)
@@ -128,14 +134,16 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", a
     have = _tables(st)
     out = [('<section class="hero slim">'
             f'<h1>{"The Vault" if vault else "Find the exact card."}</h1>'
-            + _search_box(big=True) +
-            '<p class="try">Try <a href="/search?q=Blue-Eyes+White+Dragon">Blue-Eyes White Dragon</a> · '
-            '<a href="/search?q=%E9%9D%92%E7%9C%BC%E3%81%AE%E7%99%BD%E9%BE%8D">青眼の白龍</a> · <a href="/search?q=LOB-EN001">LOB-EN001</a></p></section>')]
+            + _search_box(big=True, game=game) +
+            ('<p class="try">Try <a href="/search?q=Charizard+ex">Charizard ex</a> · <a href="/search?q=199%2F165">199/165</a> · '
+             '<a href="/search?q=Pikachu+Base">Pikachu Base</a></p></section>' if game == "pkm" else
+             '<p class="try">Try <a href="/search?q=Blue-Eyes+White+Dragon">Blue-Eyes White Dragon</a> · '
+             '<a href="/search?q=%E9%9D%92%E7%9C%BC%E3%81%AE%E7%99%BD%E9%BE%8D">青眼の白龍</a> · <a href="/search?q=LOB-EN001">LOB-EN001</a></p></section>'))]
     if assumed_costs:
         out.append('<p class="note slimnote">"Worth paying up to" prices use <b>starter</b> costs. <a href="/settings">Set your real fees and shipping</a>.</p>')
 
     if "opportunity" in have and EM is not None:
-        items = decisions(st, EM)
+        items = decisions(st, EM, game)
         high = lambda d: (d.get("ask_home") or 0) >= float(VAULT_MIN_HOME) or re.search(r"\b(PSA|BGS|CGC|ARS|SGC)\s*\d", d.get("title") or "", re.I)
         if vault:
             items = [i for i in items if high(i[2])]
@@ -167,6 +175,8 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", a
         rt = []
         for key, title, price, currency, pj in recent:
             p = json.loads(pj) if pj else None
+            if (p or {}).get("game", "ygo") != game:
+                continue
             ah = (p or {}).get("ask_home")
             if vault and not ((ah or 0) >= float(VAULT_MIN_HOME)):
                 continue
@@ -180,14 +190,19 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", a
 
     sold = st.db.execute(
         "SELECT o.id FROM observation o WHERE o.synthetic=0 AND o.evidence_type IN "
-        "('MARKETPLACE_MARKED_SOLD','ACCEPTED_OFFER','INDEPENDENT_TRANSACTION') ORDER BY o.event_time DESC LIMIT 6").fetchall()
+        "('MARKETPLACE_MARKED_SOLD','ACCEPTED_OFFER','INDEPENDENT_TRANSACTION') ORDER BY o.event_time DESC LIMIT 200").fetchall()
     srows = []
+    from .games import game_of
     for (oid,) in sold:
+        if len(srows) == 6:
+            break
         try:
             o = st.effective(oid)          # decoded record, with any confirmed printing applied
         except Exception:
             continue
         cands = o.printing_candidates
+        if not cands or game_of(cands[0]) != game:
+            continue
         pc = passcode_of(cands[0]) if len(cands) == 1 else None
         title = st.db.execute("SELECT title FROM listing WHERE listing_id=? LIMIT 1", (o.listing_id,)).fetchone() if "listing" in have else None
         name = ((idx.card(pc) or {}).get("name_en") if (pc and idx is not None) else None) or (title[0] if title else o.listing_id or oid)
@@ -215,7 +230,7 @@ def view_search(idx, q: str, st=None, M=None) -> str:
         try:
             sp = _sparks(st, M.now, M.home)
             for pid, svg in sp.items():
-                pc = pid.rsplit("@", 1)[-1].split("|")[0]
+                pc = pid.rsplit("@", 1)[-1].split("|")[0]          # passcode or pkm-<card id>
                 sparks.setdefault(pc, svg)
         except Exception:
             sparks = {}
@@ -232,7 +247,16 @@ def view_search(idx, q: str, st=None, M=None) -> str:
         prints = idx.printings(h.passcode)
         codes = sorted({p.set_code for p in prints if p.set_code})
         stat = " / ".join(str(x) for x in (c.get("atk"), c.get("def")) if x is not None)
-        tiles.append(f'<a class="ctile" href="/card/{e(h.passcode)}">{img(h.passcode, "small", h.name)}'
+        if c.get("game") == "pkm":
+            tiles.append(f'<a class="ctile" href="{e(card_href(h.passcode))}">{img(h.passcode, "small", h.name)}'
+                         f'<span class="ct-name">{e(h.name)}</span>'
+                         f'<span class="ct-meta">{e(c.get("set_name") or "")} · {e(c.get("number"))}/{e(c.get("printed_total"))}</span>'
+                         f'<span class="ct-meta">{e(c.get("rarity") or "")}{" · " + e((c.get("release") or "")[:4]) if c.get("release") else ""}</span>'
+                         + (f'<span class="ct-mkt">{mkt[h.passcode][0]} listing{"s" if mkt[h.passcode][0] != 1 else ""} · from {M(mkt[h.passcode][1])}</span>'
+                            if h.passcode in mkt and M is not None else "")
+                         + (f'<span class="ct-spark">{sparks[h.passcode]}</span>' if h.passcode in sparks else "") + '</a>')
+            continue
+        tiles.append(f'<a class="ctile" href="{e(card_href(h.passcode))}">{img(h.passcode, "small", h.name)}'
                      f'<span class="ct-name">{e(h.name)}</span>'
                      + (f'<span class="ct-ja">{e(h.name_ja)}</span>' if h.name_ja and h.name_ja != h.name else "")
                      + f'<span class="ct-meta">{e(c.get("type_line") or c.get("card_type") or "")}{(" · " + e(stat)) if stat else ""}</span>'
@@ -280,7 +304,8 @@ def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalo
     f = filters or {}
     M = Money(st, home, cur, now)
     from .identity import edition_variants
-    all_v = [v for p in idx.printings(passcode) for v in (edition_variants(p, catalog) if catalog is not None else [p])]
+    pkm = c.get("game") == "pkm"
+    all_v = [v for p in idx.printings(passcode) for v in (edition_variants(p, catalog) if (catalog is not None and not pkm) else [p])]
     ids = [v.id for v in all_v]
     seen: dict[str, int] = {}
     for i in range(0, len(ids), 500):
@@ -309,7 +334,7 @@ def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalo
     if chosen is None and all_v:
         chosen = max(all_v, key=lambda v: (len(getattr(value.get(v.id), "sales", []) or []), seen.get(v.id, 0), len(listed.get(v.id, [])))).id
     v = by_id.get(chosen)
-    hist = history_for(st, passcode, all_v, now, cur, home, book)
+    hist = history_for(st, passcode, all_v, now, cur, home, book, guide=getattr(getattr(idx, "cat", None), "guide_history", None))
 
     picker = _version_picker(passcode, all_v, chosen, seen, listed)
     price = _price_line(v, value.get(chosen), listed.get(chosen, []), hist, M)
@@ -319,6 +344,19 @@ def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalo
         (f"Tournament status ({k.upper()})", lim) for k, lim in limits.items() if k in ("tcg", "ocg")]
     pend = f'<div class="pend"><small>Pendulum effect</small>{_para(c.get("pend_en"))}</div>' if c.get("pend_en") else ""
     from .ui_chart import section
+    if pkm:
+        top = (f'<p class="crumb">{e(c.get("card_type") or "")}{" · " + e(c["type_line"]) if c.get("type_line") else ""}</p>'
+               f'<h1 class="cname">{e(c["name_en"])}</h1>'
+               f'<p class="cja">{e(c.get("set_name"))} · {e(c.get("number"))}/{e(c.get("printed_total"))} · {e(c.get("rarity") or "")}</p>')
+        return (
+            f'<div class="cardpage"><div class="cp-img">{img(passcode, "", c.get("name_en") or "", cls="card big")}</div>'
+            f'<div class="cp-info">{top}' + picker + price + _pkm_details(c) + '</div></div>'
+            + section(passcode, hist, chosen).replace(
+                '</section>', f'<p class="small"><a href="/settings?card={e(passcode)}#past">Fill in past prices for this card</a></p></section>', 1)
+            + _market_section(passcode, market, chosen, by_id, M, now, f)
+            + _sold_panel(st, all_v, chosen, M)
+            + _versions_table(passcode, all_v, chosen, value, listed, M)
+            + (_sale_form(passcode, all_v, chosen, token, now) if token else ""))
     return (
         f'<div class="cardpage"><div class="cp-img">{img(passcode, "", c.get("name_en") or "", cls="card big")}</div>'
         f'<div class="cp-info"><p class="crumb">{e(c.get("card_type") or "")}{" · " + e(c["type_line"]) if c.get("type_line") else ""}</p>'
@@ -337,7 +375,37 @@ def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalo
         + (_sale_form(passcode, all_v, chosen, token, now) if token else ""))
 
 
+def _pkm_details(c: dict) -> str:
+    """What a Pokémon collector reads off the card: HP and type, abilities and attacks, weakness, resistance, retreat,
+    then the set details. Nothing about where the data comes from."""
+    stats = [("HP", c.get("hp")), ("Type", " / ".join(c.get("types") or []) or None),
+             ("Weakness", ", ".join(f'{w.get("type")} {w.get("value")}' for w in c.get("weaknesses") or []) or None),
+             ("Resistance", ", ".join(f'{w.get("type")} {w.get("value")}' for w in c.get("resistances") or []) or None),
+             ("Retreat", c.get("retreat") if c.get("card_type") == "Pokémon" else None)]
+    out = '<div class="stats">' + "".join(f'<div class="stat"><small>{e(k)}</small><b>{e(v)}</b></div>' for k, v in stats
+                                          if v not in (None, "")) + '</div>'
+    moves = []
+    for a in c.get("abilities") or []:
+        moves.append(f'<div class="move"><b><span class="mtag">{e(a.get("type") or "Ability")}</span> {e(a.get("name"))}</b>'
+                     f'<p>{e(a.get("text"))}</p></div>')
+    for a in c.get("attacks") or []:
+        cost = " ".join(a.get("cost") or [])
+        moves.append(f'<div class="move"><b>{e(a.get("name"))}<span class="mdmg">{e(a.get("damage") or "")}</span></b>'
+                     f'<span class="muted small">{e(cost)}</span>' + (f'<p>{e(a.get("text"))}</p>' if a.get("text") else "") + '</div>')
+    rules = "".join(f'<p class="small">{e(r)}</p>' for r in c.get("rules") or [])
+    legal = ", ".join(k.title() for k, v in (c.get("legalities") or {}).items() if v == "Legal")
+    details = [("Set", c.get("set_name")), ("Series", c.get("series")), ("Number", f'{c.get("number")}/{c.get("printed_total")}'),
+               ("Rarity", c.get("rarity")), ("Artist", c.get("artist")), ("Regulation mark", c.get("regulation_mark")),
+               ("Released", c.get("release")), ("Evolves from", c.get("evolves_from")), ("Legal in", legal or None)]
+    return (out + (f'<div class="moves">{"".join(moves)}</div>' if moves else "") + rules
+            + (f'<p class="ctext"><i>{e(c["flavor"])}</i></p>' if c.get("flavor") else "")
+            + '<details open><summary>Card details</summary><dl class="ids">'
+            + "".join(f"<dt>{e(k)}</dt><dd>{e(x)}</dd>" for k, x in details if x) + '</dl></details>')
+
+
 def _vlabel(v) -> str:
+    if v.id.startswith("pk:"):
+        return v.edition or "Standard"
     region = {"EN_TCG": "", "JP_OCG": " (Japanese)"}.get(v.region.value, "")
     return " · ".join(x for x in (v.set_code or v.product_name, v.rarity, v.edition) if x) + region
 
@@ -350,7 +418,7 @@ def _version_picker(passcode, all_v, chosen, seen, listed) -> str:
     opt = lambda v: f'<option value="{e(v.id)}"{" selected" if v.id == chosen else ""}>{e(_vlabel(v))}</option>'
     body = ((f'<optgroup label="Selling or for sale now">{"".join(opt(v) for v in sorted(active, key=_vlabel))}</optgroup>' if active else "")
             + f'<optgroup label="All other versions">{"".join(opt(v) for v in sorted(rest, key=_vlabel))}</optgroup>')
-    return (f'<form class="vpick" method="get" action="/card/{e(passcode)}"><label>Version <select name="v">{body}</select></label>'
+    return (f'<form class="vpick" method="get" action="{e(card_href(passcode))}"><label>Version <select name="v">{body}</select></label>'
             '<button>Show</button></form>')
 
 
@@ -372,9 +440,9 @@ def _price_line(v, val, here, hist, M) -> str:
     return '<div class="pricebox none"><b>No price yet</b><span>CardMan hasn\'t seen this version sell or listed for sale yet.</span></div>'
 
 
-def history_for(st, passcode, variants, now, cur, home, book) -> dict:
+def history_for(st, passcode, variants, now, cur, home, book, guide=None) -> dict:
     from .history import Converter, cached_build
-    return cached_build(st, passcode, variants, now, Converter(st, home, cur, getattr(book, "fx", None)))
+    return cached_build(st, passcode, variants, now, Converter(st, home, cur, getattr(book, "fx", None)), guide_fn=guide)
 
 
 GRADED = re.compile(r"\b(PSA|BGS|CGC|ARS|SGC|TAG)\b", re.I)
@@ -428,7 +496,7 @@ def _market_section(passcode, market, chosen, by_id, M, now, f: dict) -> str:
     def chip(param, val, text):
         q = {**{k: x for k, x in f.items() if x}, param: val}
         q = {k: x for k, x in q.items() if x}
-        return f'<a class="fchip{" on" if f.get(param, "") == val else ""}" href="/card/{e(passcode)}?{e(urlencode(q))}#market">{e(text)}</a>'
+        return f'<a class="fchip{" on" if f.get(param, "") == val else ""}" href="{e(card_href(passcode))}?{e(urlencode(q))}#market">{e(text)}</a>'
     sites = sorted({r["site"] for r, _, _ in rows_in} | {r["site"] for r in market if not r["lot"]})
     chips = ('<div class="fchips">' + chip("platform", "", "All sites") + "".join(chip("platform", s_, SITE_NAME.get(s_, "Other")) for s_ in sites)
              + '<span class="sep"></span>' + chip("graded", "", "Any condition") + chip("graded", "raw", "Ungraded") + chip("graded", "graded", "Graded")
@@ -492,7 +560,7 @@ def _versions_table(passcode, all_v, chosen, value, listed, M) -> str:
         n = len(getattr(value.get(v.id), "sales", []) or [])
         here = listed.get(v.id, [])
         cheapest = min((r["all_in"] for r in here if r["all_in"] is not None), default=None)
-        rows.append(f'<tr{" class=on" if v.id == chosen else ""}><td><a href="/card/{e(passcode)}?{e(urlencode({"v": v.id}))}">{e(v.set_code or "—")}</a></td>'
+        rows.append(f'<tr{" class=on" if v.id == chosen else ""}><td><a href="{e(card_href(passcode))}?{e(urlencode({"v": v.id}))}">{e(v.set_code or "—")}</a></td>'
                     f'<td>{e(v.product_name or "")}</td><td>{e(v.rarity)}</td><td>{e(v.edition or "")}</td>'
                     f'<td>{"Japanese" if v.region.value == "JP_OCG" else "English"}</td>'
                     f'<td class="n">{n or "—"}</td><td class="n">{M(est.mid) if est else "—"}</td>'
@@ -506,7 +574,7 @@ def _sale_form(passcode: str, variants, chosen, token: str, now: datetime) -> st
     opts = "".join(f'<option value="{e(v.id)}"{" selected" if v.id == chosen else ""}>{e(_vlabel(v))}</option>' for v in variants)
     return (f'<section id="record"><details><summary>Know a sale of this card? Add it</summary>'
             '<p class="why">Your own sale, a private deal, or one you saw at a show. It counts like any other sale.</p>'
-            f'<form method="post" action="/card/{e(passcode)}/sale" class="inline sale"><input type="hidden" name="t" value="{e(token)}">'
+            f'<form method="post" action="{e(card_href(passcode))}/sale" class="inline sale"><input type="hidden" name="t" value="{e(token)}">'
             f'<label>Version<select name="printing" required>{opts}</select></label>'
             '<label>Price<input name="amount" inputmode="decimal" required size="9"></label>'
             '<label>Currency<select name="currency"><option>USD</option><option>TWD</option><option>JPY</option><option>EUR</option>'
@@ -526,7 +594,11 @@ def record_sale(st, catalog, passcode: str, form: dict, now: datetime) -> str:
     from .models import EvidenceType, MarketObservation
     pid = form.get("printing", "")
     base = pid.split("|")[0]
-    if catalog is None or not any(p.id == base and p.artwork_id == f"art:pw{passcode}" for p in catalog.printings):
+    if passcode.startswith("pkm-"):
+        # Pokémon: the version must belong to exactly this card (set + number).
+        if catalog is None or getattr(catalog, "game", "") != "pkm" or catalog.by_id.get(pid) is None or not pid.endswith("@" + passcode):
+            raise ValueError("pick a version of this card")
+    elif catalog is None or not any(p.id == base and p.artwork_id == f"art:pw{passcode}" for p in catalog.printings):
         raise ValueError("pick a printing of this card")
     try:
         amount = Decimal(str(form.get("amount", "")).replace(",", "").strip())
@@ -604,6 +676,7 @@ font-weight:800;font-size:13px;letter-spacing:.08em;color:var(--fg2)}.card.lotph
 .plat{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:5px;border:1px solid var(--axis);white-space:nowrap}
 .plat.ebay{color:#0064d2}.plat.yahoo{color:#b3261e}.plat.mercari{color:#d24a4a}table.mkt tr.maybe td{opacity:.85}
 select{max-width:100%}.vpick{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}form.vpick label{display:flex;flex-direction:row;gap:8px;align-items:center;font-weight:600;min-width:0;max-width:100%;margin:0}form.vpick button{margin:0}.vpick select{min-width:0;width:auto;max-width:min(440px,62vw);font-weight:400;margin:0}table.prints tr.on td{background:var(--bg2,rgba(127,127,127,.08))}.pricebox b{display:block}.pricebox span{display:block}form.sale{flex-wrap:wrap}form.sale label{min-width:0;max-width:100%}form.sale label select{width:100%}.pfilter{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 10px}#market .pfilter label{display:flex;flex-direction:row;gap:6px;align-items:center;min-width:0;max-width:100%;font-size:13px;color:var(--fg2);margin:0}#market .pfilter select{min-width:0;width:auto;max-width:min(520px,70vw);margin:0}#market .pfilter button{margin:0}
+.moves{display:grid;gap:8px;margin:10px 0}.move{border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:var(--surface)}.move p{margin:4px 0 0;font-size:13px}.mdmg{float:right;font-weight:700}.mtag{font-size:11px;color:var(--accent);margin-right:4px}img.card.pkm{border-radius:4.5%}
 .method{margin:4px 0 8px;padding-left:18px}.method li{margin:4px 0}.soldlist li .plat{justify-self:start}
 .cardpage{display:grid;grid-template-columns:minmax(220px,340px) minmax(0,1fr);gap:28px;margin:0 0 22px}
 @media(max-width:760px){.cardpage{grid-template-columns:1fr}.cp-img{max-width:300px}}
@@ -644,7 +717,7 @@ sm.textContent=[c.ja&&c.ja!==c.name?c.ja:'',c.type||'',c.matched&&c.matched!=='n
 s.appendChild(sm);a.appendChild(im);a.appendChild(s);box.appendChild(a);items.push(a)});box.hidden=false}
 function mark(i){items.forEach(function(a,j){a.classList.toggle('on',j===i)});sel=i}
 inp.addEventListener('input',function(){clearTimeout(t);var q=inp.value.trim();if(q.length<2){render([]);return}
-t=setTimeout(function(){if(q===last)return;last=q;fetch('/api/suggest?q='+encodeURIComponent(q)).then(function(r){return r.json()})
+t=setTimeout(function(){if(q===last)return;last=q;fetch((location.pathname.indexOf('/pkm')===0?'/pkm':'')+'/api/suggest?q='+encodeURIComponent(q)).then(function(r){return r.json()})
 .then(function(d){if(inp.value.trim()===q)render(d.results||[])}).catch(function(){})},110)});
 inp.addEventListener('keydown',function(ev){if(box.hidden)return;if(ev.key==='ArrowDown'){ev.preventDefault();mark(Math.min(sel+1,items.length-1))}
 else if(ev.key==='ArrowUp'){ev.preventDefault();mark(Math.max(sel-1,-1))}else if(ev.key==='Enter'&&sel>=0){ev.preventDefault();location.href=items[sel].href}
