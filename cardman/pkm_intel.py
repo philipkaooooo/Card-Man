@@ -155,7 +155,7 @@ def analyze(title: str, cat: PkmCatalog, *, description: str = "", verified: dic
         elif names and weak_number:
             named = [cid for nm in names[:1] for cid in cat.by_name.get(nm, [])]
             cards = [c for c in named if sid and cat._cards[c][3] == sid] or named    # a bare "#256" is weaker than the name
-        elif names and not reprint:
+        elif names and not reprint and not other:          # a Japanese or Chinese card's number follows other sets
             pool = [c for c in by_number if sid and cat._cards[c][3] == sid] or by_number
             owner = ", ".join(sorted({cat.card_name(c) for c in pool}))
             findings.append(Finding("CODE_NAME_MISMATCH", WARN, f"Card number {p['numbers'][0][0]}"
