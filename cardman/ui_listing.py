@@ -399,11 +399,16 @@ def view_one(st, cards, key: str, now: datetime, token: str, M, profile: dict | 
     form = (f'<section id="confirm" class="confirm{" open" if v.code == CHECK else ""}"><h2>Which version is it?</h2>'
             '<p class="why">Look at the card or a clear photo and fill in only what you can see. Then we can price it from real sales.</p>'
             f'<form method="post" action="/opp/{quote(key, safe="")}/confirm" class="scanform"><input type="hidden" name="t" value="{e(token)}">'
-            '<div class="row"><label>Set code printed on the card<input name="printed_set_code" size="12" placeholder="LOB-EN001"></label>'
-            '<label>Rarity (from the shine)<input name="verified_rarity" size="16" placeholder="Ultra Rare"></label>'
-            '<label>Edition<select name="verified_edition"><option value=""></option><option value="1st">1st Edition</option><option>Unlimited</option>'
-            '<option>Limited</option></select></label><label>Language<select name="card_language"><option value=""></option>'
-            '<option value="ja">Japanese</option><option value="en">English</option></select></label>'
+            + ('<div class="row"><label>Card number printed at the bottom<input name="printed_set_code" size="12" placeholder="199/165"></label>'
+               '<label>Rarity<input name="verified_rarity" size="20" placeholder="Special Illustration Rare"></label>'
+               '<label>Version<select name="verified_edition"><option value=""></option><option>Normal</option><option>Holo</option>'
+               '<option>Reverse Holo</option><option value="1st Edition">1st Edition stamp</option><option>Shadowless</option><option>Unlimited</option>'
+               '</select></label><label>Language<select name="card_language"><option value=""></option>' if d.get("game") == "pkm" else
+               '<div class="row"><label>Set code printed on the card<input name="printed_set_code" size="12" placeholder="LOB-EN001"></label>'
+               '<label>Rarity (from the shine)<input name="verified_rarity" size="16" placeholder="Ultra Rare"></label>'
+               '<label>Edition<select name="verified_edition"><option value=""></option><option value="1st">1st Edition</option><option>Unlimited</option>'
+               '<option>Limited</option></select></label><label>Language<select name="card_language"><option value=""></option>')
+            + '<option value="ja">Japanese</option><option value="en">English</option></select></label>'
             '<label>Real card?<select name="authenticity_ok"><option value=""></option><option value="yes">Looks real</option>'
             '<option value="no">Fake or not sure</option></select></label></div>'
             '<div class="row"><button>Save</button><span class="muted small">We\'ll update the price on the next check.</span></div></form></section>')

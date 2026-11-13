@@ -295,3 +295,10 @@ def test_names_sellers_shorten_or_reorder_still_confirm_the_number(cat):
     from cardman.pkm_catalog import versions_of
     assert versions_of({"set": {"id": "neo1"}, "rarity": "Rare Holo", "tcgplayer": {"prices": {"unlimitedHolofoil": {}}}}, {}) == \
         ["1st Edition Holo", "Unlimited Holo"]
+
+
+def test_more_languages_and_a_person_s_reading_of_the_number(cat):
+    assert "OUT_OF_SCOPE" in kinds(pkm_intel.analyze("Pokemon Card Indonesia Charizard ex 199/165 SAR", cat))
+    assert "OUT_OF_SCOPE" in kinds(pkm_intel.analyze("Pokemon S-Chinese Umbreon VMAX 215/203", cat))
+    an = pkm_intel.analyze("Pikachu pokemon card 151", cat, verified={"printed_set_code": "025/165", "verified_edition": "Reverse Holo"})
+    assert [c.id for c in an.identity.candidates] == ["pk:EN:sv3pt5-25:reverse-holo@pkm-sv3pt5-25"]

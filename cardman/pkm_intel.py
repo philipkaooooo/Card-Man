@@ -31,7 +31,8 @@ SEALED = ("booster box", "booster pack", "booster bundle", "elite trainer box", 
           "sealed case", "theme deck")
 LOT = ("lot", "bundle", "bulk", "collection of", "cards total", "random cards", "mystery")
 OTHER_LANG = {"japanese": "ja", "japan": "ja", "jpn": "ja", "日本": "ja", "korean": "ko", "chinese": "zh", "thai": "th",
-              "indonesian": "id", "german": "de", "deutsch": "de", "french": "fr", "francais": "fr", "italian": "it", "italiano": "it",
+              "indonesian": "id", "indonesia": "id", "s-chinese": "zh", "t-chinese": "zh", "simplified chinese": "zh",
+              "traditional chinese": "zh", "thailand": "th", "german": "de", "deutsch": "de", "french": "fr", "francais": "fr", "italian": "it", "italiano": "it",
               "spanish": "es", "espanol": "es", "portuguese": "pt"}
 RARITY = (("Special Illustration Rare", r"\bsir\b|special illustration"), ("Illustration Rare", r"(?<!special )\bir\b|(?<!special )illustration rare"),
           ("Hyper Rare", r"hyper rare|\bgold\b(?! star)|\bhr\b"), ("Secret Rare", r"secret rare|\bsecret\b"),
@@ -103,7 +104,13 @@ def _set_of(p: dict, cat: PkmCatalog) -> str | None:
 
 
 def analyze(title: str, cat: PkmCatalog, *, description: str = "", verified: dict | None = None, ocr_codes=()) -> ListingAnalysis:
+    verified = dict(verified or {})
+    if verified.get("printed_set_code"):              # the number a person read off the card settles which card it is
+        title = f"{title} {verified['printed_set_code']}"
     p = parse(f"{title} {description}" if description else title)
+    if verified.get("printed_set_code"):
+        n = _NUM.search(str(verified["printed_set_code"]))
+        p["numbers"] = [(n.group(1), n.group(2))] if n else p["numbers"]
     findings: list[Finding] = []
     if p["fake"]:
         findings.append(Finding("COUNTERFEIT_CUE", BLOCK, "Not a real card (" + ", ".join(p["fake"]) + ")."))
