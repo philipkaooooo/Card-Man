@@ -1,0 +1,6 @@
+{
+  "_note": "Versions the Pokémon TCG API does not list. Base Set (base1) holo and rare cards also exist as Shadowless (1999, no drop shadow on the art box).",
+  "extra_versions": {
+    "base1": [{"version": "Shadowless", "rarity_contains": "Rare"}]
+  }
+}
