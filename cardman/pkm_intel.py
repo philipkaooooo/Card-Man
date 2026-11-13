@@ -137,30 +137,39 @@ def analyze(title: str, cat: PkmCatalog, *, description: str = "", verified: dic
         by_number = [c for c in by_number if cat._cards[c][3] in rs]
         findings.append(Finding("REPRINT", WARN, "A later reprint (Celebrations or Classic), not the original card: priced apart."))
         sid = sid if sid in rs else None
-    if sid:
-        by_number = [c for c in by_number if cat._cards[c][3] == sid] or by_number
-    named = [cid for nm in names[:1] for cid in cat.by_name.get(nm, [])]
-    if reprint:
-        named = [c for c in named if cat._cards[c][3] in ("cel25c", "cel25")]
-    if sid:
-        named = [c for c in named if cat._cards[c][3] == sid] or named
+    def name_ok(cid: str) -> bool:
+        """The title names this card: its exact name, or the name without the ex / V / GX / VMAX ending sellers drop."""
+        cn = cat._cards[cid][2]
+        cw = set(cn.split())
+        return any(cn == n or cn.startswith(n + " ") or n.startswith(cn + " ") or (len(n.split()) > 1 and set(n.split()) <= cw)
+                   for n in names) or (len(cw) > 1 and cw <= set(tn.split()))
 
     cards: list[str]
     weak_number = all(t is None for _, t in p["numbers"]) and not _PROMO_NO.search(p["text"])
-    if by_number and named:
-        both = [c for c in by_number if c in named]
-        if both:
-            cards = both
-        elif weak_number:
-            cards = named                      # a bare "#256" is weaker than the name: no accusation
-        else:
-            owner = ", ".join(sorted({cat.card_name(c) for c in by_number}))
+    if by_number:
+        # The number decides the card; the name only confirms it. The set word is a tie-break, never a veto
+        # ("Zapdos 15/62 Base Set" is the Fossil Zapdos: sellers call every early set "Base Set").
+        match = [c for c in by_number if name_ok(c)]
+        if match:
+            cards = [c for c in match if sid and cat._cards[c][3] == sid] or match
+        elif names and weak_number:
+            named = [cid for nm in names[:1] for cid in cat.by_name.get(nm, [])]
+            cards = [c for c in named if sid and cat._cards[c][3] == sid] or named    # a bare "#256" is weaker than the name
+        elif names and not reprint:
+            pool = [c for c in by_number if sid and cat._cards[c][3] == sid] or by_number
+            owner = ", ".join(sorted({cat.card_name(c) for c in pool}))
             findings.append(Finding("CODE_NAME_MISMATCH", WARN, f"Card number {p['numbers'][0][0]}"
                                     f"{'/' + p['numbers'][0][1] if p['numbers'][0][1] else ''} belongs to {owner}, not the card named "
                                     "in the title. The seller has the name or the number wrong: check the photo."))
-            cards = by_number + named[:6]
+            named = [cid for nm in names[:1] for cid in cat.by_name.get(nm, [])]
+            cards = pool + ([c for c in named if sid and cat._cards[c][3] == sid] or named)[:6]
+        else:
+            cards = [c for c in by_number if sid and cat._cards[c][3] == sid] or by_number
     else:
-        cards = by_number or named
+        named = [cid for nm in names[:1] for cid in cat.by_name.get(nm, [])]
+        if reprint:
+            named = [c for c in named if cat._cards[c][3] in ("cel25c", "cel25")]
+        cards = [c for c in named if sid and cat._cards[c][3] == sid] or named
     if len(cards) > 40:                        # a bare name like "Pikachu": too many to weigh
         cards = sorted(cards, key=lambda c: cat._cards[c][9] or "", reverse=True)[:40]
 

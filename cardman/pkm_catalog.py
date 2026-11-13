@@ -53,7 +53,8 @@ def slug(s: str) -> str:
 
 
 def norm(s: str) -> str:
-    s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode().lower()
+    s = re.sub(r"['’`´]", "", s or "")                     # Rocket's = Rocket’s = Rockets
+    s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode().lower()
     return re.sub(r"[^a-z0-9]+", " ", s).strip()
 
 
@@ -172,6 +173,11 @@ def versions_of(card: dict, rules: dict | None = None) -> list[str]:
         out = out or ["Promo"]
     if not out:
         out = _inferred_versions(card)
+    if sid in WOTC_FIRST_ED:
+        # Early Wizards sets were all printed in 1st Edition and Unlimited; the source sometimes lists only one.
+        holo = any("Holo" in v for v in out) or "holo" in (card.get("rarity") or "").lower()
+        out += ["1st Edition Holo", "Unlimited Holo"] if holo else ["1st Edition", "Unlimited"]
+        out = [v for v in out if v not in ("Holo", "Normal")]
     seen = []
     for v in out:
         if v not in seen:

@@ -286,3 +286,12 @@ def test_a_bare_hash_number_does_not_beat_the_name(cat):
     assert top(an) == "pk:EN:swshp-SWSH050:holo@pkm-swshp-SWSH050" and "CODE_NAME_MISMATCH" not in kinds(an)
     an = pkm_intel.analyze("Umbreon VMAX #4 Evolving Skies", cat)
     assert {c.id.split(":")[2] for c in an.identity.candidates} == {"swsh7-215", "swsh7-95"} and "CODE_NAME_MISMATCH" not in kinds(an)
+
+
+def test_names_sellers_shorten_or_reorder_still_confirm_the_number(cat):
+    # sellers drop "ex", put the form name after, or use a curly apostrophe
+    assert "CODE_NAME_MISMATCH" not in kinds(pkm_intel.analyze("Charizard 199/165 SIR 151", cat))
+    assert "CODE_NAME_MISMATCH" not in kinds(pkm_intel.analyze("Research Professor’s 190/165 151", cat))
+    from cardman.pkm_catalog import versions_of
+    assert versions_of({"set": {"id": "neo1"}, "rarity": "Rare Holo", "tcgplayer": {"prices": {"unlimitedHolofoil": {}}}}, {}) == \
+        ["1st Edition Holo", "Unlimited Holo"]

@@ -21,7 +21,7 @@ from .models import IdentityStatus, MarketObservation
 from .verify import assess, filter_comps
 
 # Bump when the rules change, so the engine re-analyzes listings it would otherwise skip as unchanged.
-ANALYSIS_VERSION = "2026-11-13.1"   # Pokémon reader fixes
+ANALYSIS_VERSION = "2026-11-13.2"   # Pokémon reader fixes
 MAX_SCENARIOS = 40
 UNDERPRICED_SHARE = 0.8
 MIN_PRICED_SHARE = 0.5        # below this, a priced minority of the possibilities does not speak for the listing
@@ -299,8 +299,9 @@ def evaluate_listing(raw: RawListing, an: ListingAnalysis, book: PriceBook, cata
         reasons.append("Ask is well under a public aggregate price. An aggregate is a lead only: no sale backs it yet.")
 
     lot_rows, gr = [], None
-    if an.parsed.is_lot and getattr(catalog, "game", "ygo") == "ygo":
-        lot_rows = lot_contents(f"{raw.title}\n{raw.description}", catalog)
+    if an.parsed.is_lot:
+        # Itemizing a lot's card list needs the Yu-Gi-Oh! catalog's name matching; a Pokémon lot stays a lot.
+        lot_rows = lot_contents(f"{raw.title}\n{raw.description}", catalog) if getattr(catalog, "game", "ygo") == "ygo" else []
         total = 0.0
         net_total = 0.0
         for row in lot_rows:
