@@ -35,6 +35,8 @@ RAW = ROOT / "data" / "cache" / "pkm"
 DB = ROOT / "data" / "cache" / "pkm.sqlite"
 RULES = ROOT / "data" / "pkm_variant_rules.json"
 API = "https://api.pokemontcg.io/v2"
+# The same data, published by the API's own project as plain files: fast to fetch, but no prices.
+GITHUB = "https://raw.githubusercontent.com/PokemonTCG/pokemon-tcg-data/master"
 UA = "CardMan/0.1 (private, single-user catalog sync)"
 PACE_S = 2.2
 
@@ -123,6 +125,28 @@ def sync(raw: Path = RAW, *, log=print, get=_get, pace: float = PACE_S, only: li
     return n
 
 
+def sync_files(raw: Path = RAW, *, log=print, get=_get, pace: float = 0.3) -> int:
+    """Every English set and card from the project's published data files (no prices). Sets the API has already
+    delivered keep the API's richer copy; this fills the rest in minutes instead of hours."""
+    raw.mkdir(parents=True, exist_ok=True)
+    sets = get(f"{GITHUB}/sets/en.json")
+    (raw / "files-sets.json.gz").write_bytes(gzip.compress(json.dumps({"data": sets}).encode()))
+    n = 0
+    for st in sets:
+        out = raw / f"files-{st['id']}.json.gz"
+        if not out.exists():
+            time.sleep(pace)
+            try:
+                cards = get(f"{GITHUB}/cards/en/{st['id']}.json")
+            except Exception as x:
+                log(f"{st['id']}: {type(x).__name__}")
+                continue
+            out.write_bytes(gzip.compress(json.dumps({"data": cards}).encode()))
+        n += len(json.loads(gzip.decompress(out.read_bytes()))["data"])
+    log(f"{len(sets)} sets, {n} cards from the published files")
+    return n
+
+
 # -- versions ---------------------------------------------------------------------------------------------------------
 
 def _rules(path: Path = RULES) -> dict:
@@ -147,13 +171,36 @@ def versions_of(card: dict, rules: dict | None = None) -> list[str]:
     if (card.get("set") or {}).get("series") == "Promo" or "Promo" in (card.get("rarity") or ""):
         out = out or ["Promo"]
     if not out:
-        rar = (card.get("rarity") or "").lower()
-        out = ["Holo" if ("holo" in rar or "rare" in rar and "common" not in rar) else "Normal"]
+        out = _inferred_versions(card)
     seen = []
     for v in out:
         if v not in seen:
             seen.append(v)
     return sorted(seen, key=lambda v: ORDER.index(v) if v in ORDER else 99)
+
+
+WOTC_FIRST_ED = {"base1", "base2", "base3", "base5", "gym1", "gym2", "neo1", "neo2", "neo3", "neo4"}
+
+
+def _inferred_versions(card: dict) -> list[str]:
+    """When the source lists no versions for a card: what that era printed. Marked as inferred on the version."""
+    sid = (card.get("set") or {}).get("id", "")
+    series = (card.get("set") or {}).get("series", "")
+    rar = (card.get("rarity") or "").lower()
+    holo = "holo" in rar or any(k in rar for k in ("ultra", "secret", "illustration", "special", "hyper", "shiny", "rainbow", "amazing",
+                                                    "radiant", "double rare", "ace spec", "legend", "prime", "star", "lv.x", "break"))
+    if series == "Promo" or "promo" in rar:
+        return ["Promo"]
+    if sid in WOTC_FIRST_ED:
+        return ["1st Edition Holo", "Unlimited Holo"] if "holo" in rar else ["1st Edition", "Unlimited"]
+    if sid in ("base4",):                                   # Base Set 2: no 1st Edition, no reverse holo
+        return ["Holo"] if "holo" in rar else ["Normal"]
+    plain = rar in ("common", "uncommon", "rare") or rar == ""
+    if plain:
+        return ["Normal", "Reverse Holo"]
+    if "rare holo" == rar:
+        return ["Holo", "Reverse Holo"]
+    return ["Holo"] if holo else ["Normal"]
 
 
 # -- index ------------------------------------------------------------------------------------------------------------
@@ -177,10 +224,25 @@ def build(raw: Path = RAW, db: Path = DB, rules: dict | None = None) -> int:
     rules = rules if rules is not None else _rules()
     con = sqlite3.connect(db)
     con.executescript(_SCHEMA)
-    sets = json.loads(gzip.decompress((raw / "sets.json.gz").read_bytes()))["data"]
-    cards, guide = [], []
+    sets = []
+    if (raw / "sets.json.gz").exists():
+        sets = json.loads(gzip.decompress((raw / "sets.json.gz").read_bytes()))["data"]
+    if (raw / "files-sets.json.gz").exists():
+        have = {s_["id"] for s_ in sets}
+        sets += [s_ for s_ in json.loads(gzip.decompress((raw / "files-sets.json.gz").read_bytes()))["data"] if s_["id"] not in have]
+    by_set = {s_["id"]: s_ for s_ in sets}
+    cards, guide, api_sets = [], [], set()
     for f in sorted(raw.glob("set-*.json.gz")) + sorted(raw.glob("cards-*.json.gz")):
         for c in json.loads(gzip.decompress(f.read_bytes()))["data"]:
+            cards.append(c)
+            api_sets.add((c.get("set") or {}).get("id"))
+    for f in sorted(raw.glob("files-*.json.gz")):
+        if f.name == "files-sets.json.gz" or f.name[6:-8] in api_sets:
+            continue
+        st_ = by_set.get(f.name[6:-8]) or {}
+        for c in json.loads(gzip.decompress(f.read_bytes()))["data"]:
+            c["set"] = {k: st_.get(k) for k in ("id", "name", "series", "printedTotal", "total", "releaseDate")}
+            c["_versions_inferred"] = True
             cards.append(c)
     with con:
         con.execute("DELETE FROM pkm_set")
@@ -371,8 +433,11 @@ def main(argv: list[str] | None = None) -> None:
     import argparse
     ap = argparse.ArgumentParser(description="Sync the Pokémon TCG catalog into data/cache/pkm.sqlite")
     ap.add_argument("--build-only", action="store_true", help="rebuild the index from pages already downloaded")
+    ap.add_argument("--files", action="store_true", help="fetch the published data files (fast, no prices) instead of the API")
     a = ap.parse_args(argv)
-    if not a.build_only:
+    if a.files:
+        sync_files()
+    elif not a.build_only:
         sync()
     print(f"indexed {build()} cards")
 

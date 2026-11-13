@@ -337,7 +337,7 @@ def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalo
     hist = history_for(st, passcode, all_v, now, cur, home, book, guide=getattr(getattr(idx, "cat", None), "guide_history", None))
 
     picker = _version_picker(passcode, all_v, chosen, seen, listed)
-    price = _price_line(v, value.get(chosen), listed.get(chosen, []), hist, M)
+    price = _price_line(v, value.get(chosen), listed.get(chosen, []), hist, M, guide=getattr(getattr(idx, 'cat', None), 'guide', None))
     ja = c.get("name_ja")
     limits = c.get("limits") or {}
     details = [("Card number", c["passcode"]), ("Konami ID", c.get("konami_id"))] + [
@@ -422,7 +422,7 @@ def _version_picker(passcode, all_v, chosen, seen, listed) -> str:
             '<button>Show</button></form>')
 
 
-def _price_line(v, val, here, hist, M) -> str:
+def _price_line(v, val, here, hist, M, guide=None) -> str:
     """One sentence: what it sells for, or what it is listed for when there are too few sales."""
     from .history import plain_trend
     est = getattr(val, "estimate", None)
@@ -437,6 +437,10 @@ def _price_line(v, val, here, hist, M) -> str:
     if cheapest is not None:
         return (f'<div class="pricebox"><b>Listed from {M(cheapest)} total</b><span>Not enough sales yet to say what it really sells for. '
                 '"Total" includes shipping and your buying costs.</span></div>')
+    g = guide(v.id) if (guide and v is not None) else None
+    if g:
+        return (f'<div class="pricebox none"><b>No sales seen yet</b><span>Price guides say about {e(charts.fmt(g[0], "USD"))} '
+                f'(TCGplayer, {e(g[1])}). That is a guide, not a real sale.</span></div>')
     return '<div class="pricebox none"><b>No price yet</b><span>CardMan hasn\'t seen this version sell or listed for sale yet.</span></div>'
 
 

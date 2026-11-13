@@ -20,7 +20,9 @@ from .models import IdentityStatus
 from .pkm_catalog import PkmCatalog, norm
 
 FAKE = ("proxy", "custom", "orica", "fan art", "fanart", "replica", "fake", "not real", "unofficial", "metal card", "gold metal",
-        "metal pokemon", "24k", "gold plated", "gold foil card", "reprint card", "handmade", "art card", "playtest")
+        "metal pokemon", "24k", "gold plated", "gold foil card", "reprint card", "handmade", "playtest")
+# "art card" alone is a custom display card; "Alt Art Card" / "Full Art Card" are real cards.
+ART_CARD = re.compile(r"(?<!alt )(?<!full )(?<!alternate )(?<!alt-)\bart card")
 JUMBO = ("jumbo", "oversized", "oversize", "big card", "large card", "giant card", "burger king", "gold card", "gold cards")
 REPRINT = r"celebrations|classic collection|pok[eé]mon tcg classic|\bclassic\b.*\b(?:deck|box)\b|25th anniversary"
 CODE = ("code card", "online code", "ptcgo code", "tcg live code", "tcgo code", "digital code", "unused code")
@@ -43,7 +45,7 @@ STAMP = r"prerelease|pre-release|staff|league|stamped|stamp|winner|championship|
 CONDITION = (("NM", r"\bnm\b|near mint|\bmint\b"), ("LP", r"\blp\b|lightly played"), ("MP", r"\bmp\b|moderately played"),
              ("HP", r"\bhp\b(?!\s*\d)|heavily played"), ("DMG", r"\bdmg\b|damaged|creased"))
 _NUM = re.compile(r"(?<![\w/])#?\s*([A-Z]{0,4}\d{1,3}[a-z]?)\s*/\s*([A-Z]{0,4}\d{1,3})(?![\w/])", re.I)
-_PROMO_NO = re.compile(r"\b(SWSH|SM|XY|BW|SVP|SV-P|DP|HGSS)\s*-?\s*(\d{2,3})\b", re.I)
+_PROMO_NO = re.compile(r"\b(SWSH|SM|XY|BW|SVP|SV-P|DP|HGSS)\s*-?\s*#?\s*(\d{2,3})\b", re.I)
 _HASH = re.compile(r"#\s*(\d{1,3})\b")
 
 
@@ -70,7 +72,7 @@ def parse(title: str) -> dict:
         "versions": tuple(n for n, p in VERSION if re.search(p, low)),
         "stamped": bool(re.search(STAMP, low)),
         "condition": None if gc else next((n for n, p in CONDITION if re.search(p, low)), None),
-        "fake": _has(low, FAKE), "jumbo": _has(low, JUMBO), "code": _has(low, CODE),
+        "fake": _has(low, FAKE) + (("art card",) if ART_CARD.search(low) else ()), "jumbo": _has(low, JUMBO), "code": _has(low, CODE),
         "sealed": _has(low, SEALED) if not nums else (),
         "lot": bool(_has(low, LOT) or (lot_n and int(lot_n.group(1)) > 1)), "lot_size": int(lot_n.group(1)) if lot_n else None,
         "languages": tuple(sorted(langs)),
@@ -144,10 +146,13 @@ def analyze(title: str, cat: PkmCatalog, *, description: str = "", verified: dic
         named = [c for c in named if cat._cards[c][3] == sid] or named
 
     cards: list[str]
+    weak_number = all(t is None for _, t in p["numbers"]) and not _PROMO_NO.search(p["text"])
     if by_number and named:
         both = [c for c in by_number if c in named]
         if both:
             cards = both
+        elif weak_number:
+            cards = named                      # a bare "#256" is weaker than the name: no accusation
         else:
             owner = ", ".join(sorted({cat.card_name(c) for c in by_number}))
             findings.append(Finding("CODE_NAME_MISMATCH", WARN, f"Card number {p['numbers'][0][0]}"

@@ -260,3 +260,29 @@ def test_reprints_and_restaurant_promos_never_pass_as_the_original(cat):
     bk = pkm_intel.analyze("1999 BURGER KING POKEMON GOLD CARDS CHARIZARD PSA 9", cat)
     assert bk.blocked and "NOT_A_CARD" in kinds(bk)
     assert top(pkm_intel.analyze("1999 POKEMON BASE SET UNLIMITED #4 CHARIZARD-HOLO PSA 1", cat)) == "pk:EN:base1-4:unlimited-holo@pkm-base1-4"
+
+
+def test_versions_by_era_when_the_source_lists_none():
+    from cardman.pkm_catalog import _inferred_versions as inf
+    c = lambda sid, rar, series="Scarlet & Violet": {"set": {"id": sid, "series": series}, "rarity": rar}
+    assert inf(c("neo1", "Rare Holo", "Neo")) == ["1st Edition Holo", "Unlimited Holo"]
+    assert inf(c("base2", "Common", "Base")) == ["1st Edition", "Unlimited"]
+    assert inf(c("base4", "Rare Holo", "Base")) == ["Holo"]
+    assert inf(c("sv3pt5", "Common")) == ["Normal", "Reverse Holo"]
+    assert inf(c("swsh7", "Rare Holo", "Sword & Shield")) == ["Holo", "Reverse Holo"]
+    assert inf(c("sv3pt5", "Special Illustration Rare")) == ["Holo"]
+    assert inf(c("swshp", "Promo", "Promo")) == ["Promo"]
+
+
+def test_alt_art_cards_are_real_and_custom_art_cards_are_not(cat):
+    ok = pkm_intel.analyze("2021 SWSH Pokemon Evolving Skies Umbreon VMAX Alt Art Card 215/203 NM", cat)
+    assert not ok.blocked and top(ok) == "pk:EN:swsh7-215:holo@pkm-swsh7-215"
+    assert not pkm_intel.analyze("Umbreon VMAX 215/203 Full Art Card", cat).blocked
+    assert "COUNTERFEIT_CUE" in kinds(pkm_intel.analyze("Lucario EX Pokemon Card FULL ART Display Art Card", cat))
+
+
+def test_a_bare_hash_number_does_not_beat_the_name(cat):
+    an = pkm_intel.analyze("Pokemon Pikachu V BLACK STAR PROMO SWSH #050 PSA 10", cat)
+    assert top(an) == "pk:EN:swshp-SWSH050:holo@pkm-swshp-SWSH050" and "CODE_NAME_MISMATCH" not in kinds(an)
+    an = pkm_intel.analyze("Umbreon VMAX #4 Evolving Skies", cat)
+    assert {c.id.split(":")[2] for c in an.identity.candidates} == {"swsh7-215", "swsh7-95"} and "CODE_NAME_MISMATCH" not in kinds(an)
