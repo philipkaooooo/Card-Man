@@ -137,6 +137,10 @@ def versions_of(card: dict, rules: dict | None = None) -> list[str]:
     keys = list(((card.get("tcgplayer") or {}).get("prices") or {}).keys())
     out = [PRICE_KEYS[k] for k in keys if k in PRICE_KEYS]
     sid = (card.get("set") or {}).get("id", "")
+    rep = (rules.get("replace_versions") or {}).get(sid)
+    if rep:
+        holo = "holo" in (card.get("rarity") or "").lower() or "holofoil" in keys
+        return list(rep["holo" if holo else "plain"])
     for extra in (rules.get("extra_versions") or {}).get(sid, []):
         if extra.get("rarity_contains", "").lower() in (card.get("rarity") or "").lower():
             out.append(extra["version"])
@@ -196,9 +200,10 @@ def build(raw: Path = RAW, db: Path = DB, rules: dict | None = None) -> int:
                 vers.append((printing_id(c["id"], v), c["id"], v))
             tp = c.get("tcgplayer") or {}
             day = (tp.get("updatedAt") or "")[:10].replace("/", "-")
+            as_ = (rules.get("guide_as") or {}).get(st.get("id"), {})
             for k, p in (tp.get("prices") or {}).items():
                 if k in PRICE_KEYS and day and (p or {}).get("market"):
-                    guide.append((c["id"], PRICE_KEYS[k], day, float(p["market"])))
+                    guide.append((c["id"], as_.get(k, PRICE_KEYS[k]), day, float(p["market"])))
         con.executemany("INSERT OR REPLACE INTO pkm_card VALUES (?,?,?,?,?,?,?,?,?,?,?)", rows)
         con.executemany("INSERT OR REPLACE INTO pkm_version VALUES (?,?,?)", vers)
         con.executemany("INSERT OR IGNORE INTO pkm_guide VALUES (?,?,?,?)", guide)
@@ -242,6 +247,9 @@ class PkmCatalog:
         for cid, r in self._cards.items():
             self.by_number.setdefault(_num(r[4]), []).append(cid)
         self.set_names = {norm(s["name"]): sid for sid, s in self._sets.items()}
+        for alias, sid in (_rules().get("set_aliases") or {}).items():
+            if sid in self._sets:
+                self.set_names.setdefault(norm(alias), sid)
         self.set_codes = {s["ptcgo"].upper(): sid for sid, s in self._sets.items() if s.get("ptcgo")}
 
     def _printing(self, pid: str, cid: str, ver: str) -> Printing | None:
@@ -312,7 +320,7 @@ class PkmCatalog:
                 s = self._sets.get(self._cards[cid][3]) or {}
                 if s.get("printed_total") == tot:
                     scored[cid] = 80
-        name_words = [w for w in words if not w.isdigit() and not re.fullmatch(r"\d+[a-z]?", w)]
+        name_words = [w for w in words if not w.isdigit() and not re.fullmatch(r"\d+[a-z]?", w) and w not in _STOP]
         if set_hit:
             sw = set(norm(self._sets[set_hit]["name"]).split())
             name_words = [w for w in name_words if w not in sw and w.upper() not in self.set_codes]
@@ -349,6 +357,10 @@ class PkmCatalog:
         c = self.card(card_id)
         imgs = (c or {}).get("images") or {}
         return imgs.get("large" if size == "large" else "small")
+
+
+_STOP = {"set", "pokemon", "card", "cards", "tcg", "holo", "rare", "english", "nm", "mint", "the", "of", "1st", "edition",
+         "unlimited", "shadowless", "reverse", "promo", "psa", "bgs", "cgc", "lp", "mp", "hp"}
 
 
 def _num(n: str | None) -> str:

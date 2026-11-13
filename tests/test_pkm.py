@@ -16,13 +16,16 @@ def test_catalog_loads_sets_cards_and_real_versions(cat):
     assert len(cat) == 13
     ids = lambda cid: [p.edition for p in cat.versions(cid)]
     assert ids("base1-4") == ["1st Edition Holo", "Shadowless", "Unlimited Holo"]
-    assert ids("base1-58") == ["1st Edition", "Unlimited"]                 # a common: no Shadowless rule for it
+    assert ids("base1-58") == ["1st Edition", "Shadowless", "Unlimited"]   # Base Set commons exist in all three too
     assert ids("sv3pt5-25") == ["Normal", "Reverse Holo"]
     assert ids("sv3pt5-199") == ["Holo"]
     assert ids("swshp-SWSH050") == ["Holo"]
     p = cat.versions("sv3pt5-199")[0]
     assert p.id == "pk:EN:sv3pt5-199:holo@pkm-sv3pt5-199" and p.set_code == "199/165" and p.product_name == "151"
     assert cat.guide(p.id) == (320.0, "2026-11-12")
+    assert cat.guide("pk:EN:base1-4:unlimited-holo@pkm-base1-4") == (450.0, "2026-11-12")      # the one Base Set price is Unlimited
+    assert cat.guide("pk:EN:base1-4:shadowless@pkm-base1-4") is None
+    assert [h["card_id"] for h in cat.search("Base Set Charizard")] == ["base1-4"]
 
 
 def test_ids_say_which_game_they_are():
@@ -71,6 +74,7 @@ CASES = [
     ("PSA 9 Pokemon Charizard Base Set 4/102 Holo", "pk:EN:base1-4:unlimited-holo@pkm-base1-4", "CANDIDATES", ("PSA", "9")),
     ("BGS 10 Pristine Charizard ex 199/165", "pk:EN:sv3pt5-199:holo@pkm-sv3pt5-199", "RESOLVED", ("BGS", "10")),
     ("Pokémon Pikachu 58/102 Base Set Red Cheeks", "pk:EN:base1-58:unlimited@pkm-base1-58", "CANDIDATES", None),
+    ("Base Set Charizard 4/102 Holo Shadowless PSA 7", "pk:EN:base1-4:shadowless@pkm-base1-4", "CANDIDATES", ("PSA", "7")),
     ("Charizard ex 199/165 151 NM/M Pack Fresh", "pk:EN:sv3pt5-199:holo@pkm-sv3pt5-199", "RESOLVED", None),
     ("Bulbasaur 166/165 Illustration Rare 151 IR", "pk:EN:sv3pt5-166:holo@pkm-sv3pt5-166", "RESOLVED", None),
     ("Professor's Research 190/165 Full Art 151", "pk:EN:sv3pt5-190:holo@pkm-sv3pt5-190", "RESOLVED", None),

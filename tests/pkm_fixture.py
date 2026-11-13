@@ -59,6 +59,6 @@ def write_raw(raw: Path) -> Path:
 def catalog(tmp: Path):
     from cardman.pkm_catalog import PkmCatalog, build
     raw = write_raw(tmp / "pkm_raw")
-    rules = {"extra_versions": {"base1": [{"version": "Shadowless", "rarity_contains": "Rare"}]}}
-    build(raw, tmp / "pkm.sqlite", rules=rules)
+    from cardman.pkm_catalog import RULES
+    build(raw, tmp / "pkm.sqlite", rules=json.loads(RULES.read_text()))      # the real rule file
     return PkmCatalog(tmp / "pkm.sqlite")
