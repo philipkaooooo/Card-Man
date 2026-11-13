@@ -158,6 +158,8 @@ def costs_for(profile: dict, market: str, shipping_home: Decimal = Decimal(0)) -
 
 
 def _label(p) -> str:
+    if p.id.startswith("pk:"):                        # Pokémon: "151 199/165 · Special Illustration Rare · Holo"
+        return " · ".join(x for x in (f"{p.product_name or ''} {p.set_code or ''}".strip(), p.rarity, p.edition) if x)
     bits = [p.set_code or "no code", p.rarity]
     if p.edition:
         bits.append(p.edition)
@@ -203,7 +205,7 @@ def evaluate_listing(raw: RawListing, an: ListingAnalysis, book: PriceBook, cata
     by_id, weights = {}, {}
     base_w = an.weights or {}
     for c in an.identity.candidates:
-        variants = edition_variants(c, catalog) if catalog is not None else [c]
+        variants = edition_variants(c, catalog) if (catalog is not None and getattr(catalog, "game", "ygo") == "ygo") else [c]
         for v in variants:
             by_id[v.id] = v
             # The seller's edition claim tilts the weights but is not proof: 2/3 to the claimed edition.
@@ -235,8 +237,19 @@ def evaluate_listing(raw: RawListing, an: ListingAnalysis, book: PriceBook, cata
             sc.profit_low = float(ex.net(Decimal(str(round(v.estimate.low, 2))))) - all_in - carry
             sc.profit_mid = float(ex.net(Decimal(str(round(v.estimate.mid, 2))))) - all_in - carry
             sc.max_buy, sc.p_loss, sc.risk_adjusted, sc.months_to_sell = (float(rv.max_buy) if rv.max_buy else None), rv.p_loss, rv.risk_adjusted_profit, rv.months_held
+        elif getattr(catalog, "game", "ygo") == "pkm" and len(scenarios) < 5 and not graded:
+            # Pokémon: the TCGplayer market price for this exact version, a guide only (never a sale, never a max buy).
+            g = catalog.guide(pid)
+            if g:
+                try:
+                    usd = book.to_home(Decimal(str(g[0])), "USD", now)
+                    sc.basis, sc.resale_mid, sc.resale_low = "reference", float(usd), float(usd) * 0.6
+                    sc.profit_mid = float(ex.net(usd)) - all_in
+                    sc.profit_low = float(ex.net(usd * Decimal("0.6"))) - all_in
+                except StaleRateError:
+                    pass
         elif (book.reference and p.set_code and p.region.value == "EN_TCG" and len(scenarios) < 5 and not graded
-              and not japanese):
+              and not japanese and getattr(catalog, "game", "ygo") == "ygo"):
             # A guide price is for an ungraded English card: never for a slab or a Japanese listing.
             ref = book.reference.price(p.set_code, now)
             if ref and ref[1].lower() == p.rarity.lower():
@@ -286,7 +299,7 @@ def evaluate_listing(raw: RawListing, an: ListingAnalysis, book: PriceBook, cata
         reasons.append("Ask is well under a public aggregate price. An aggregate is a lead only: no sale backs it yet.")
 
     lot_rows, gr = [], None
-    if an.parsed.is_lot:
+    if an.parsed.is_lot and getattr(catalog, "game", "ygo") == "ygo":
         lot_rows = lot_contents(f"{raw.title}\n{raw.description}", catalog)
         total = 0.0
         net_total = 0.0

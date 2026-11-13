@@ -13,7 +13,7 @@ import json
 import re
 
 THIS_CARD = 0.95
-_PC = re.compile(r"@(\d+)")
+_PC = re.compile(r"@([^@|]+)")   # passcode (Yu-Gi-Oh!) or pkm-<card id> (Pokémon); see games.py
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS card_listing (passcode TEXT NOT NULL, key TEXT NOT NULL, card_prob REAL NOT NULL, printing_id TEXT,
   printing_prob REAL, label TEXT, all_in REAL, status TEXT, lot INTEGER NOT NULL, PRIMARY KEY (passcode, key));

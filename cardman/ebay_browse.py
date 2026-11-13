@@ -157,7 +157,7 @@ class EbayBrowse:
         self._token = (body["access_token"], time.time() + int(body.get("expires_in", 7200)))
         return self._token[0]
 
-    def search(self, q: str, *, catalog: Catalog | None = None, category_ids: str | None = None,
+    def search(self, q: str, *, catalog: Catalog | None = None, category_ids: str | None = None, aspect_filter: str | None = None,
                limit: int = 50, max_pages: int = 3, now: datetime | None = None,
                synthetic: bool = False) -> SearchResult:
         """Paginated search. Raw pages are stored before parsing; an error raises, never returns []."""
@@ -166,6 +166,8 @@ class EbayBrowse:
         params = {"q": q, "limit": str(limit), "offset": "0"}
         if category_ids:
             params["category_ids"] = category_ids
+        if aspect_filter:
+            params["aspect_filter"] = aspect_filter
         url = f"{SEARCH_URL}?{urllib.parse.urlencode(params)}"
         obs, refs, total, pages = [], [], None, 0
         seen: set[str] = set()

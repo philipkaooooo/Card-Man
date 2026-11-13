@@ -133,7 +133,17 @@ def record_units(engine, key: str, item_id: str, before: int, after: int, price:
     title = item.get("title") or ""
     verified = engine.reviews(key)
     verified.pop("authenticity_ok", None)
-    cands = tuple(p.id for p in analyze(title, engine.catalog, verified=verified).identity.candidates[:200])
+    try:
+        r = engine.listing_from_row(key) if hasattr(engine, "listing_from_row") else None
+    except Exception:
+        r = None
+    if r is not None and getattr(r, "game", "ygo") == "pkm":
+        if getattr(engine, "pkm", None) is None:
+            return 0
+        from .pkm_intel import analyze as pkm_analyze
+        cands = tuple(p.id for p in pkm_analyze(title, engine.pkm, verified=verified).identity.candidates[:200])
+    else:
+        cands = tuple(p.id for p in analyze(title, engine.catalog, verified=verified).identity.candidates[:200])
     kind = EvidenceType.SELLER_CLAIM if best_offer else EvidenceType.MARKETPLACE_MARKED_SOLD
     note = ("sold between checks; listing also takes Best Offers, so the real price may be lower (upper bound only)" if best_offer
             else "sold between checks at the unchanged listing price, from eBay's sold count")

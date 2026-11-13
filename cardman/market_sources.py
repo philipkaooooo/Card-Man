@@ -72,6 +72,7 @@ class RawListing:
     lineage: str | None = None          # e.g. "ebay:123": copies of one sale from different sites count once
     is_lot: bool = False
     quantity: int = 1
+    game: str = "ygo"                   # "ygo" | "pkm": which catalog reads it; never mixed
 
     def __post_init__(self):
         self.currency = self.currency.upper()
@@ -295,8 +296,20 @@ class EbayAdapter:
     name = "ebay"
     capability = "live eBay asks and bids; never sold prices"
 
-    def __init__(self, raw: RawEvidenceStore, queries: list[str], catalog=None):
-        self.raw, self.queries, self.catalog = raw, queries, catalog
+    # eBay files every card game under one category; the "Game" aspect tells them apart.
+    CATEGORY = "183454"
+    ASPECT = {"pkm": "categoryId:183454,Game:{Pokémon TCG}", "ygo": "categoryId:183454,Game:{Yu-Gi-Oh! TCG}"}
+
+    def __init__(self, raw: RawEvidenceStore, queries: list, catalog=None):
+        """queries: plain strings (Yu-Gi-Oh!) or (query, game) pairs. They run alternating between games, so a
+        rate limit or a slow pass never starves one game."""
+        pairs = [q if isinstance(q, tuple) else (q, "ygo") for q in queries]
+        by_game: dict[str, list] = {}
+        for q, g in pairs:
+            by_game.setdefault(g, []).append((q, g))
+        lists = list(by_game.values())
+        self.queries = [lst[i] for i in range(max((len(x) for x in lists), default=0)) for lst in lists if i < len(lst)]
+        self.raw, self.catalog = raw, catalog
 
     def status(self) -> RouteStatus:
         if not (os.environ.get("EBAY_CLIENT_ID") and os.environ.get("EBAY_CLIENT_SECRET")):
@@ -312,9 +325,10 @@ class EbayAdapter:
         from .ebay_browse import EbayBrowse, SourceUnavailable
         client = EbayBrowse(self.raw)
         out, errors, seen = [], [], set()
-        for q in self.queries:
+        for q, game in self.queries:
             try:
-                res = client.search(q, catalog=self.catalog, now=now)
+                res = (client.search(q, catalog=None, category_ids=self.CATEGORY, aspect_filter=self.ASPECT["pkm"], now=now) if game == "pkm"
+                       else client.search(q, catalog=self.catalog, now=now))
             except SourceUnavailable as x:
                 errors.append(f"ebay '{q}': {x}")
                 continue
@@ -325,7 +339,8 @@ class EbayAdapter:
                 out.append(RawListing(source=o.source, listing_id=o.listing_id or o.id, title=res.titles.get(o.id) or q,
                                       price=o.original_amount, currency=o.currency,
                                       kind="bid" if o.evidence_type == EvidenceType.OBSERVED_BID else "ask", url=o.source_url,
-                                      shipping=o.shipping_amount, seller=o.seller_ref, condition=o.observed_condition, raw_ref=o.raw_ref))
+                                      shipping=o.shipping_amount, seller=o.seller_ref, condition=o.observed_condition, raw_ref=o.raw_ref,
+                                      game=game))
         return out, errors
 
 
