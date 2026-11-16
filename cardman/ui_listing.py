@@ -291,13 +291,25 @@ def row_html(key: str, d: dict, v: Verdict, cards, M, now: datetime, sparks: dic
             f'<span class="lr-meta">{conf_meter(v)}</span></span></a>')
 
 
+_DECODED: dict = {}
+
+
+def _decoded(st, game: str | None) -> list[tuple]:
+    """The engine's results, decoded once per check (they only change when a check writes them)."""
+    marker = (str(getattr(st, "path", "")), game, st.db.execute("SELECT COUNT(*), MAX(updated_at) FROM opportunity").fetchone())
+    if marker not in _DECODED:
+        if len(_DECODED) > 8:
+            _DECODED.clear()
+        rows = st.db.execute("SELECT key, status, payload_json FROM opportunity" +
+                             (" WHERE COALESCE(json_extract(payload_json,'$.game'),'ygo')=?" if game else ""), (game,) if game else ()).fetchall()
+        _DECODED[marker] = [(k, s, json.loads(pj)) for k, s, pj in rows]
+    return _DECODED[marker]
+
+
 def decisions(st, M, game: str | None = None) -> list[tuple]:
     """Every listing of one game (or all) with its verdict: (key, status, payload, verdict). Games never mix."""
     out = []
-    for key, status, pj in st.db.execute("SELECT key, status, payload_json FROM opportunity"):
-        d = json.loads(pj)
-        if game and d.get("game", "ygo") != game:
-            continue
+    for key, status, d in _decoded(st, game):
         out.append((key, status, d, verdict(d, status, M)))
     return out
 

@@ -1694,13 +1694,24 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
     cards = cards or CardIndex(catalog=catalog)
     images = images or ImageCache()
 
+    _books: dict = {}
+
     def _book(st, now):
-        """Sold-evidence pricing for card pages; None if costs or rates are not set up yet."""
+        """Sold-evidence pricing for card pages; None if costs or rates are not set up yet. One per state of the
+        evidence: kept while no sale, rate or status changes, so a card page does not re-value everything per view."""
         try:
             from .engine import load_profile
             from .fx_store import FxStore
             from .opportunity import PriceBook
-            return PriceBook(st, FxStore(store_path), load_profile(), now)
+            marker = (st.db.execute("SELECT COUNT(*), MAX(recorded_at) FROM observation").fetchone(),
+                      st.db.execute("SELECT COUNT(*) FROM observation_status").fetchone(),
+                      st.db.execute("SELECT COUNT(*), MAX(as_of) FROM fx_rate").fetchone(), now.strftime("%Y-%m-%d %H"))
+            if _books.get("m") != marker:
+                _books.clear()
+                _books.update(m=marker, cache={})
+            book = PriceBook(st, FxStore(store_path), load_profile(), now)
+            book.cache = _books["cache"]          # finished valuations are plain data: shared until the evidence changes
+            return book
         except Exception:
             return None
 
