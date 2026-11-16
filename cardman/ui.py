@@ -289,7 +289,7 @@ header.top .logo{font-weight:800;font-size:17px;color:var(--fg);text-decoration:
 nav.main{display:flex;gap:2px;align-items:center}nav.main a{color:var(--fg2);text-decoration:none;padding:7px 12px;border-radius:8px;
 font-weight:550;font-size:14px;white-space:nowrap}nav.main a:hover{background:var(--soft);color:var(--fg)}
 nav.main a.on{color:var(--fg);background:var(--soft);box-shadow:inset 0 -2px 0 var(--accent)}
-header.top .hsearch{flex:1;max-width:440px;margin-left:auto}header.top .curs{flex:none}header.top .games a{font-weight:600}
+header.top .hsearch{flex:1;max-width:440px;margin-left:auto}header.top .curs{flex:none}header.top .games a{font-weight:600}header.top .games{margin-left:auto}header.top .hsearch+.games{margin-left:0}@media(max-width:1100px){header.top .hsearch{max-width:300px}}
 main.page{width:100%;max-width:1180px;margin:0 auto;padding:22px 20px 40px;flex:1}
 .crumb-back{display:inline-block;margin:0 0 10px;color:var(--fg2);text-decoration:none;font-size:13px}.crumb-back:hover{color:var(--fg)}
 footer.foot{border-top:1px solid var(--line);color:var(--muted);font-size:12px;padding:12px 20px;text-align:center}

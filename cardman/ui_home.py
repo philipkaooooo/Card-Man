@@ -36,7 +36,7 @@ def img(passcode: str | None, size: str = "small", alt: str = "", cls: str = "ca
         return f'<span class="{cls} ph" role="img" aria-label="No exact card yet"><span>?</span></span>'
     q = f"?size={size}" if size else ""
     if passcode.startswith("pkm-"):
-        src = f"/img/pkm/{e(passcode[4:])}.png?size={'large' if size in ('', 'large') else 'small'}"
+        src = f"/pkm/img/pkm/{e(passcode[4:])}.png?size={'large' if size in ('', 'large') else 'small'}"
         return f'<img class="{cls} pkm" src="{src}" alt="{e(alt)}" loading="lazy" decoding="async">'
     return f'<img class="{cls}" src="/img/card/{e(passcode)}.jpg{q}" alt="{e(alt)}" loading="lazy" decoding="async">'
 
