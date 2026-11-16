@@ -103,7 +103,7 @@ def verdict(d: dict, status: str, M) -> Verdict:
             return V(PASS, "Skip", f"Costs more than it usually sells for: {M(all_in)} to you, but it's only worth up to {M(top['max_buy'])}.")
     if kinds & IDENTITY_KINDS:
         if "MISIDENTIFIED" in kinds:
-            f = next((f["text"] for f in d.get("findings") or [] if f.get("kind") in ("CODE_NAME_MISMATCH", "PHOTO_CONTRADICTS_SELLER")), None)
+            f = next((f["text"] for f in d.get("findings") or [] if f.get("kind") in ("ASPECT_CONFLICT", "CODE_NAME_MISMATCH", "PHOTO_CONTRADICTS_SELLER")), None)
             return V(CHECK, "Check first", f or "The title and the card don't match. Check the photos to see which card it really is.")
         return V(CHECK, "Check first", "Can't tell which version this is, and they sell for different prices. Check the photos.")
     if "REFERENCE_GAP" in kinds or ref:
@@ -115,10 +115,16 @@ def verdict(d: dict, status: str, M) -> Verdict:
     return V(PASS, "Skip", "Not cheaper than it usually sells for.")
 
 
+VTIP = {BUY: "Buy: cheaper than it usually sells for, backed by real sales", CHECK: "Check first: look at the photos before buying",
+        WATCH: "Watch: might be interesting, not enough sales to be sure", PASS: "Skip: not cheaper than it usually sells for"}
+
+
 def badge(v: Verdict, big: bool = False) -> str:
-    icon = {BUY: "✓", CHECK: "?", WATCH: "◔", PASS: "✕"}[v.code]
+    from .ui_icons import SVG_USE
+    name = {BUY: "buy", CHECK: "check", WATCH: "watch", PASS: "skip"}[v.code]
     text = v.headline if v.code == BUY else LABEL[v.code]
-    return f'<span class="vbadge {CLS[v.code]}{" big" if big else ""}"><span class="vi">{icon}</span>{e(text)}</span>'
+    return (f'<span class="vbadge {CLS[v.code]}{" big" if big else ""}" data-tip="{e(VTIP[v.code])}" title="{e(VTIP[v.code])}">'
+            f'<span class="vi">{SVG_USE(name)}</span>{e(text)}</span>')
 
 
 def conf_meter(v: Verdict) -> str:
@@ -178,7 +184,92 @@ def _likely(d: dict) -> dict | None:
     return max(sc, key=lambda s: s.get("weight") or 0) if sc else None
 
 
-def row_html(key: str, d: dict, v: Verdict, cards, M, now: datetime, sparks: dict | None = None) -> str:
+def item_id_of(key: str, d: dict | None = None) -> str | None:
+    """The eBay item id behind a listing key (ebay_browse:EBAY_US:<id>), if it is an eBay listing."""
+    iid = (d or {}).get("listing_id") or (key.rsplit(":", 1)[-1] if key.startswith("ebay") else None)
+    return iid if iid and iid.isdigit() else None
+
+
+def photo_counts(st, item_ids) -> dict[str, int]:
+    """How many of its own photos each listing has (0 = none, then the reference art stands in)."""
+    ids = [i for i in item_ids if i]
+    out: dict[str, int] = {}
+    try:
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            for iid, imgs in st.db.execute(f"SELECT item_id, images_json FROM listing_detail WHERE item_id IN ({','.join('?' * len(chunk))})", chunk):
+                out[iid] = len(json.loads(imgs or "[]"))
+    except Exception:
+        pass
+    return out
+
+
+def lphoto(iid: str, n: int = 0, size: str = "m", alt: str = "", cls: str = "lphoto") -> str:
+    return (f'<img class="{cls}" src="/img/listing/{e(iid)}/{n}.jpg?s={size}" alt="{e(alt)}" loading="lazy" decoding="async">')
+
+
+def _art_with_ref(key: str, d: dict, v, photos: dict | None, size: str = "m") -> str:
+    """The seller's own photo first, with the catalog picture as a small reference beside it."""
+    from .ui_home import _listing_art, img
+    iid = item_id_of(key, d)
+    if iid and (photos or {}).get(iid):
+        pc = _listing_art(d)
+        ref = (f'<span class="refart" data-tip="What this version looks like (reference picture, not the listing)" tabindex="0">'
+               f'{img(pc, "small", "Reference picture")}</span>') if pc and "LOT" not in (d.get("kinds") or []) else ""
+        return f'<span class="artbox">{lphoto(iid, 0, size, d.get("title") or "")}{ref}</span>'
+    return _art(d, v)
+
+
+def listing_icons(d: dict, now: datetime, detail: dict | None = None) -> str:
+    """What you are dealing with, as icons with plain-words tips."""
+    from .ui_icons import icon
+    out = []
+    src = (d.get("listing_key") or "").lower()
+    site = "ebay" if src.startswith("ebay") else "yahoo" if src.startswith("yahoo") else "mercari" if src.startswith("mercari") else None
+    if site:
+        out.append(icon(site, {"ebay": "Listed on eBay", "yahoo": "Listed on Yahoo! Auctions", "mercari": "Listed on Mercari"}[site]))
+    kind = d.get("kind")
+    buying = ((detail or {}).get("aspects") or {}).get("_buying", "")
+    if kind in ("bid", "auction") or ("AUCTION" in buying and "FIXED_PRICE" not in buying):
+        b = d.get("bids")
+        out.append(icon("auction", f"Auction{f' · {b} bids so far' if b else ''}"))
+    elif kind == "ask":
+        out.append(icon("bin", "Buy it now"))
+    if "BEST_OFFER" in buying:
+        out.append(icon("offer", "Accepts offers: you can ask for a lower price"))
+    if "LOT" in (d.get("kinds") or []):
+        out.append(icon("lot", "A lot: several cards sold together"))
+    elif d.get("grade_company"):
+        out.append(icon("graded", f"Graded by {d['grade_company']}: {d.get('grade') or '?'}"))
+    else:
+        out.append(icon("raw", "Ungraded card"))
+    top = _likely(d) or {}
+    lab = (top.get("label") or "").lower()
+    pid = top.get("printing_id") or ""
+    if "1st" in lab:
+        out.append(icon("first", "1st Edition" + ("" if d.get("printing_id") else " (probably)")))
+    elif "shadowless" in lab:
+        out.append(icon("shadowless", "Shadowless (1999 Base Set)" + ("" if d.get("printing_id") else " (probably)")))
+    elif "reverse holo" in lab:
+        out.append(icon("reverse", "Reverse Holo" + ("" if d.get("printing_id") else " (probably)")))
+    elif "unlimited" in lab:
+        out.append(icon("unlimited", "Unlimited edition" + ("" if d.get("printing_id") else " (probably)")))
+    if pid.startswith("p:JP_OCG"):
+        out.append(icon("ja", "Japanese card"))
+    elif pid.startswith(("p:EN_TCG", "pk:EN")):
+        out.append(icon("en", "English card"))
+    if any(f.get("kind") == "ASPECTS_CONFIRM" for f in d.get("findings") or []):
+        out.append(icon("confirmed", "eBay's item details confirm this version", "good"))
+    ship = d.get("shipping")
+    if ship not in (None, "", "None"):
+        out.append(icon("free", "Free shipping") if float(ship) == 0 else icon("ship", f"Shipping {ship} {d.get('currency') or ''}".strip()))
+    left = _left(d.get("ends_at"), now)
+    if left:
+        out.append(icon("time", left[0].upper() + left[1:]))
+    return '<span class="icons">' + "".join(out) + '</span>'
+
+
+def row_html(key: str, d: dict, v: Verdict, cards, M, now: datetime, sparks: dict | None = None, photos: dict | None = None) -> str:
     """One listing as one line: picture, card, verdict, all-in vs max buy, confidence, time left. Shared by Home and Listings."""
     top = v.top
     lot = "LOT" in (d.get("kinds") or [])
@@ -192,12 +283,12 @@ def row_html(key: str, d: dict, v: Verdict, cards, M, now: datetime, sparks: dic
         sub = " · ".join(likely["label"].split(" · ")[:3]) + ("" if d.get("printing_id") else " (probably)")
     mb = top.get("max_buy") if top and top.get("basis") == "sales" else None
     sp = (sparks or {}).get(d.get("printing_id") or "") if not lot else ""
-    return (f'<a class="lrow" href="/opp/{quote(key, safe="")}">{_art(d, v)}'
+    return (f'<a class="lrow" href="/opp/{quote(key, safe="")}">{_art_with_ref(key, d, v, photos)}'
             f'<span class="lr-main"><span class="lr-title">{e(name)}</span><span class="lr-sub">{e(sub) or e(d.get("market") or "")}</span>'
-            f'<span class="lr-reason">{e(v.reason)}</span>{sp or ""}</span>'
-            f'<span class="lr-side">{badge(v)}<span class="lr-money"><small>Total</small> {M(d.get("all_in_home"))}'
-            f'{"<small> · worth up to</small> " + M(mb) if mb is not None else ""}</span>'
-            f'<span class="lr-meta">{conf_meter(v)} <span class="muted small">{e(_left(d.get("ends_at"), now))}</span></span></span></a>')
+            f'{listing_icons(d, now)}<span class="lr-reason">{e(v.reason)}</span>{sp or ""}</span>'
+            f'<span class="lr-side">{badge(v)}<span class="lr-money"><b>{M(d.get("all_in_home"))}</b><small>total to you</small></span>'
+            f'{"<span class=lr-max><b>" + M(mb) + "</b><small>worth paying up to</small></span>" if mb is not None else ""}'
+            f'<span class="lr-meta">{conf_meter(v)}</span></span></a>')
 
 
 def decisions(st, M, game: str | None = None) -> list[tuple]:
@@ -262,7 +353,8 @@ def view_list(st, cards, now, M, *, v_filter: str, t_filter: str, home_cur: str,
            + '</form></div>')
     from .history import sparks as _sparks
     sp = _sparks(st, now, home_cur)
-    rows = [row_html(key, d, v, cards, M, now, sp) for key, status, d, v in shown[:150]]
+    ph = photo_counts(st, [item_id_of(key, d) for key, _s, d, _v in shown[:150]])
+    rows = [row_html(key, d, v, cards, M, now, sp, ph) for key, status, d, v in shown[:150]]
     hidden = "" if v_filter in (PASS, "every") else f'<p class="muted small">{counts[PASS]} skipped listings are hidden. <a href="{e(href(v=PASS))}">Show them</a>.</p>'
     more = f'<p class="muted small">Showing the first 150 of {len(shown)}. Narrow the filters to see the rest.</p>' if len(shown) > 150 else ""
     return ('<h1>Listings</h1><p class="sub">Every listing with our take. We only say Buy when real sales back the price.</p>'
@@ -325,8 +417,25 @@ def view_one(st, cards, key: str, now: datetime, token: str, M, profile: dict | 
     if sid:
         actions.append(f'<a class="btn ghost" href="/deal/{e(sid)}">Full math</a>')
 
-    hero = (f'<section class="lhero vcard-{CLS[v.code]}"><div class="lh-art">{_art(d, v, "", "card big")}</div><div class="lh-body">'
-            f'{badge(v, big=True)}<p class="lh-reason">{e(v.reason)}</p>'
+    from . import listing_detail
+    iid = item_id_of(key, d)
+    det = listing_detail.get(st.db, iid) if iid else {}
+    n = len(det.get("images") or [])
+    if n:
+        from .ui_home import _listing_art, img
+        pc = _listing_art(d)
+        thumbs = "".join(f'<button type="button" data-src="/img/listing/{e(iid)}/{i}.jpg?s=m" data-big="/img/listing/{e(iid)}/{i}.jpg?s=l" '
+                         f'aria-label="Photo {i + 1} of {n}" aria-current="{str(i == 0).lower()}">{lphoto(iid, i, "s", f"Photo {i + 1}")}</button>'
+                         for i in range(min(n, 12)))
+        ref = (f'<div class="gref">{img(pc, "small", "Reference picture")}<span><b>Reference</b><br>What this version looks like. '
+               'Compare it with the seller\'s photos.</span></div>') if pc and not lot else ""
+        art = (f'<div class="gallery" data-gallery><div class="gmain"><img src="/img/listing/{e(iid)}/0.jpg?s=m" alt="Photo 1 of {n}" '
+               f'tabindex="0" role="button" aria-label="Seller\'s photo 1 of {n}. Press Enter to enlarge."></div>'
+               + (f'<div class="gthumbs">{thumbs}</div>' if n > 1 else "") + ref + '</div>')
+    else:
+        art = _art(d, v, "", "card big")
+    hero = (f'<section class="lhero vcard-{CLS[v.code]}"><div class="lh-art">{art}</div><div class="lh-body">'
+            f'{badge(v, big=True)}<p class="lh-reason">{e(v.reason)}</p>{listing_icons(d, now, det)}'
             f'<h1 class="lh-title">{e((c or {}).get("name_en") if (c and settled and not lot) else d.get("title") or key)}</h1>'
             f'<p class="lh-card">{e(card_line)}</p>'
             + (f'<p class="lh-seller muted small">Listed as: {e(d.get("title"))}</p>' if (c and settled and not lot) else "")

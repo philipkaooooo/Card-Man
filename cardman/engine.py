@@ -444,6 +444,16 @@ class Engine:
             except Exception as x:
                 rep.errors.append(f"{k}: {type(x).__name__}: {x}")
         rep.errors += list(dict.fromkeys(book.notes))[:20]
+        try:
+            # Photos for what people will look at first: listings worth a look, newest first. Ended ones are cleaned up.
+            from . import listing_detail
+            want = [r[0] for r in self.db.execute(
+                "SELECT l.listing_id FROM opportunity o JOIN listing l ON l.key=o.key WHERE l.ended_at IS NULL AND o.status<>'REJECTED' "
+                "AND l.source LIKE 'ebay%' ORDER BY (o.status='SHELVED'), o.priority DESC, l.first_seen DESC LIMIT 400")]
+            listing_detail.warm(self.db, want, limit=150)
+            listing_detail.evict(self.db, now)
+        except Exception as x:
+            rep.errors.append(f"photos: {type(x).__name__}")
         rep.signals = self.scan_market(book, now)
         rep.open_opportunities = self.db.execute("SELECT COUNT(*) FROM opportunity WHERE status=?", (OPEN,)).fetchone()[0]
         rep.seconds = round(time.monotonic() - started, 3)

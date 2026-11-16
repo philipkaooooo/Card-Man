@@ -268,7 +268,23 @@ if(el)show(el,ev.clientX,ev.clientY);else tip.style.display='none'});
 document.addEventListener('focusin',function(ev){var el=ev.target.closest&&ev.target.closest('[data-tip]');
 if(el){var r=el.getBoundingClientRect();show(el,r.right,r.top)}});
 document.addEventListener('focusout',function(){tip.style.display='none'});
-var m=document.querySelector('aside .menu');if(m&&window.matchMedia('(max-width:800px)').matches)m.open=false;})();
+var m=document.querySelector('aside .menu');if(m&&window.matchMedia('(max-width:800px)').matches)m.open=false;
+document.querySelectorAll('[data-tip][title]').forEach(function(el){el.removeAttribute('title')});})();
+(function(){document.querySelectorAll('[data-gallery]').forEach(function(g){var main=g.querySelector('.gmain img'),
+ thumbs=[].slice.call(g.querySelectorAll('.gthumbs button')),i=0,zoom=null;if(!main||!thumbs.length)return;
+ function go(n){i=(n+thumbs.length)%thumbs.length;var b=thumbs[i];main.classList.add('swap');
+  setTimeout(function(){main.src=b.getAttribute('data-src');main.alt=b.getAttribute('aria-label');main.classList.remove('swap')},120);
+  thumbs.forEach(function(t,k){t.setAttribute('aria-current',String(k===i))});if(zoom)zoom.querySelector('img').src=b.getAttribute('data-big')}
+ thumbs.forEach(function(b,k){b.addEventListener('click',function(){go(k)})});
+ function open(){if(zoom)return;zoom=document.createElement('div');zoom.className='gzoom';zoom.setAttribute('role','dialog');
+  zoom.setAttribute('aria-label','Photo, enlarged. Arrow keys for the next photo, Escape to close.');zoom.tabIndex=-1;
+  var im=document.createElement('img');im.src=thumbs[i].getAttribute('data-big');im.alt=main.alt;zoom.appendChild(im);
+  zoom.addEventListener('click',close);document.body.appendChild(zoom);zoom.focus()}
+ function close(){if(zoom){zoom.remove();zoom=null;main.focus()}}
+ main.addEventListener('click',open);main.addEventListener('keydown',function(ev){if(ev.key==='Enter'||ev.key===' '){ev.preventDefault();open()}});
+ document.addEventListener('keydown',function(ev){if(!g.isConnected)return;var inG=g.contains(document.activeElement)||zoom;
+  if(!inG)return;if(ev.key==='ArrowRight'){go(i+1);ev.preventDefault()}else if(ev.key==='ArrowLeft'){go(i-1);ev.preventDefault()}
+  else if(ev.key==='Escape')close()})})})();
 """
 
 
@@ -305,6 +321,7 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     from .ui_listing import LISTING_CSS
     from .ui_settings import SETTINGS_CSS
     from .ui_chart import CHART_CSS
+    from .ui_icons import EFFECTS_CSS, ICON_CSS, SPRITE
     theme = theme if theme in THEMES else "market"
     where = NAV_OF.get(nav, "")
     links = "".join(f'<a href="{h}"{ON if k == where else ""}>{e(t)}</a>' for k, t, h in NAV)
@@ -321,7 +338,7 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     tz = datetime.now().astimezone().strftime("UTC%z")
     return (f'<!doctype html><html lang="en" data-theme="{"vault" if theme == "vault" else "light"}"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)} · CardMan</title>'
-            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{CHART_CSS}{SHELL_CSS}</style></head><body>'
+            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{CHART_CSS}{ICON_CSS}{EFFECTS_CSS}{SHELL_CSS}</style></head><body>{SPRITE}'
             + scope_links(f'<header class="top"><a class="logo" href="/">CardMan</a><nav class="main" aria-label="Main">{links}</nav>{hsearch}'
                           f'{games}{curs}</header><main class="page">{crumb}{flash}{body}</main>', game) +
             f'<footer class="foot">Private to this Mac · times {e(tz)} · press <kbd>/</kbd> to search</footer>'
@@ -1908,6 +1925,17 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                 st.db.close()
                 body, ctype = images.artwork(parts[2][:-4], qs.get("size", [""])[0])
                 return self._send(200, body, ctype)
+            if len(parts) == 4 and parts[:2] == ["img", "listing"] and parts[3].endswith(".jpg") and parts[3][:-4].isdigit():
+                # A listing's own photo, served from CardMan's cache (fetched once from eBay's image host).
+                from . import listing_detail
+                try:
+                    got = listing_detail.photo(st.db, parts[2], int(parts[3][:-4]), qs.get("s", ["m"])[0])
+                finally:
+                    st.db.close()
+                if not got:
+                    from .cardinfo import PLACEHOLDER
+                    return self._send(200, PLACEHOLDER, "image/svg+xml")
+                return self._send(200, got[0], got[1])
             if len(parts) == 3 and parts[:2] == ["img", "scan"]:
                 st.db.close()
                 name = unquote(parts[2])

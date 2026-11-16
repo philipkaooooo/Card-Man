@@ -23,8 +23,9 @@ from tests.test_store import NOW
 
 def readable(page: str) -> str:
     page = re.sub(r"<script.*?</script>|<style.*?</style>", " ", page, flags=re.S | re.I)
-    page = re.sub(r'\s(?:href|src|action|name|value|class|id|for|type|data-(?!tip)[a-z-]+)="[^"]*"', " ", page)
-    return page
+    # keep only what people read: text, and the tip / title / label / alt / placeholder attributes
+    kept = " ".join(re.findall(r'\s(?:data-tip|title|aria-label|alt|placeholder)="([^"]*)"', page))
+    return re.sub(r"<[^>]*>", " ", page) + " " + kept
 
 
 def _opps(st):

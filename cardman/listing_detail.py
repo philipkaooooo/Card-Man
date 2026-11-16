@@ -128,28 +128,46 @@ def backfill(db, raw_dir: Path | str, now: datetime, *, log=print) -> tuple[int,
 
 # -- photos served by CardMan --------------------------------------------------------------------------------------------
 
-_gate = threading.Lock()
+_gate = threading.BoundedSemaphore(3)          # at most three photo downloads at once
+_pace = threading.Lock()
 _last = [0.0]
 
 
 def _fetch(url: str) -> tuple[bytes, str]:
-    with _gate:                                   # one photo at a time, a few per second at most
-        wait = 0.15 - (time.monotonic() - _last[0])
-        if wait > 0:
-            time.sleep(wait)
-        _last[0] = time.monotonic()
+    with _gate:
+        with _pace:                               # and no more than ~10 starts a second
+            wait = 0.1 - (time.monotonic() - _last[0])
+            if wait > 0:
+                time.sleep(wait)
+            _last[0] = time.monotonic()
         req = urllib.request.Request(url, headers={"User-Agent": UA})
         with urllib.request.urlopen(req, timeout=20) as r:
             body = r.read(MAX_BYTES + 1)
             return body, r.headers.get("Content-Type") or ""
 
 
+def warm(db, item_ids, *, sizes=("m", "s"), limit: int = 150, root: Path | None = None, fetch=None) -> int:
+    """Fetch the first photo of listings people will look at, before they look. Already cached ones cost nothing."""
+    root = Path(root) if root is not None else CACHE
+    done = 0
+    for iid in item_ids:
+        if done >= limit:
+            break
+        for sz in sizes:
+            k = cache_key(iid, 0, sz)
+            if not (root / k[:2] / f"{k}.img").exists() and photo(db, iid, 0, sz, root=root, fetch=fetch):
+                done += 1
+    return done
+
+
 def cache_key(item_id: str, n: int, size: str) -> str:
     return hashlib.sha256(f"{item_id}:{n}:{size}".encode()).hexdigest()[:32]
 
 
-def photo(db, item_id: str, n: int, size: str = "m", *, root: Path = CACHE, fetch=_fetch) -> tuple[bytes, str] | None:
+def photo(db, item_id: str, n: int, size: str = "m", *, root: Path | None = None, fetch=None) -> tuple[bytes, str] | None:
     """The n-th photo of a listing at a size ('s' 225 px, 'm' 500 px, 'l' 1600 px), from cache or fetched once."""
+    root = Path(root) if root is not None else CACHE
+    fetch = fetch or _fetch
     if size not in SIZES or not re.fullmatch(r"\d{6,20}", item_id or "") or not 0 <= n < 24:
         return None
     imgs = get(db, item_id).get("images") or []
@@ -185,8 +203,9 @@ def photo(db, item_id: str, n: int, size: str = "m", *, root: Path = CACHE, fetc
     return body, ctype
 
 
-def evict(db, now: datetime, *, root: Path = CACHE) -> int:
+def evict(db, now: datetime, *, root: Path | None = None) -> int:
     """Delete cached photos of listings that ended more than 30 days ago."""
+    root = Path(root) if root is not None else CACHE
     idx = root / "index.tsv"
     if not idx.exists():
         return 0

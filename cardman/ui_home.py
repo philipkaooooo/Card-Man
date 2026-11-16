@@ -111,15 +111,18 @@ def _lot_art(n: int | None) -> str:
             f'{f"<small>{n} cards</small>" if n else ""}</span>')
 
 
-def _tile(key, title, price, currency, payload, M, *, ask_home=None, sub="") -> str:
+def _tile(key, title, price, currency, payload, M, *, ask_home=None, sub="", photo=False) -> str:
     pc = _listing_art(payload)
     is_lot = "LOT" in ((payload or {}).get("kinds") or [])
     lot_n = None
     if is_lot:
         from .listing_parser import parse_listing_text
         lot_n = parse_listing_text(title or "").lot_size
-    art = _lot_art(lot_n) if is_lot else img(pc, "small", title)
-    note = "" if pc or is_lot else "<span class=tl-note>could be several printings: artwork once the exact card is known</span>"
+    from .ui_listing import _art_with_ref, item_id_of
+    iid = item_id_of(key, payload)
+    art = (_lot_art(lot_n) if is_lot and not photo else
+           _art_with_ref(key, payload or {}, None, {iid: 1} if photo and iid else {}) if photo else img(pc, "small", title))
+    note = ""
     return (f'<a class="tile-l" href="/opp/{quote(key, safe="")}">{art}'
             f'<span class="tl-body"><span class="tl-title">{e(title)}</span>'
             f'<span class="tl-price"><small>Listed at</small> {M(ask_home, original=(price, currency)) if ask_home is not None else e(charts.fmt(float(price), currency)) if price else "—"}</span>'
@@ -154,8 +157,10 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", a
         top = sorted(buy, key=rank) + sorted(check, key=rank)
         from .history import sparks as _sparks
         sp = _sparks(st, now, getattr(M, 'home', 'TWD'))
-        rows = [row_html(k, d, v, idx, EM, now, sp) for k, _s, d, v in top[:6]]
-        rows += [row_html(k, d, v, idx, EM, now, sp) for k, _s, d, v in sorted(watch, key=rank)[:max(0, 8 - len(rows))]]
+        from .ui_listing import item_id_of, photo_counts
+        shown = top[:6] + sorted(watch, key=rank)[:max(0, 8 - len(top[:6]))]
+        ph = photo_counts(st, [item_id_of(k, d) for k, _s, d, v in shown])
+        rows = [row_html(k, d, v, idx, EM, now, sp, ph) for k, _s, d, v in shown]
         chips = ('<div class="fchips">'
                  f'<a class="fchip" href="/opportunities?v=BUY">Buy <b>{len(buy)}</b></a>'
                  f'<a class="fchip" href="/opportunities?v=CHECK">Check first <b>{len(check)}</b></a>'
@@ -181,12 +186,15 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", a
             if vault and not ((ah or 0) >= float(VAULT_MIN_HOME)):
                 continue
             if "LOT" not in ((p or {}).get("kinds") or []) and _listing_art(p):
-                rt.append(_tile(key, title, price, currency, p, M, ask_home=ah))
+                rt.append((key, title, price, currency, p, ah))
             if len(rt) == 6:
                 break
         if rt:
+            from .ui_listing import item_id_of, photo_counts
+            ph = photo_counts(st, [item_id_of(k, p) for k, _t, _pr, _c, p, _a in rt])
+            tiles = [_tile(k, t, pr, c, p, M, ask_home=a, photo=bool(ph.get(item_id_of(k, p) or ""))) for k, t, pr, c, p, a in rt]
             out.append('<section class="shelf"><div class="shelf-h"><h2>New single cards</h2><a href="/opportunities?t=singles">More →</a></div>'
-                       f'<div class="tiles-l">{"".join(rt)}</div></section>')
+                       f'<div class="tiles-l">{"".join(tiles)}</div></section>')
 
     sold = st.db.execute(
         "SELECT o.id FROM observation o WHERE o.synthetic=0 AND o.evidence_type IN "
@@ -482,8 +490,13 @@ def _market_section(passcode, market, chosen, by_id, M, now, f: dict) -> str:
         unsure = "" if r["payload"].get("printing_id") else " · version not certain"
         cond = " ".join(x for x in (r["grade_company"], r["grade"]) if x) or ("Graded" if graded else "Ungraded")
         ship = r["shipping"]
-        return (f'<tr><td><span class="plat {e(r["site"])}">{e(SITE_NAME.get(r["site"], "Other"))}</span></td>'
-                f'<td><a href="/opp/{quote(r["key"], safe="")}">{e(r["title"])}</a><br><span class="muted small">{e(what)}{unsure} · {e(cond)}</span></td>'
+        from .ui_listing import item_id_of, lphoto
+        iid = item_id_of(r["key"], r["payload"])
+        pic = lphoto(iid, 0, "s", r["title"], "mthumb") if iid else ""
+        from .ui_icons import icon
+        site_ic = icon(r["site"], f'Listed on {SITE_NAME.get(r["site"], "another site")}') if r["site"] in ("ebay", "yahoo", "mercari") else ""
+        return (f'<tr><td>{pic}</td>'
+                f'<td>{site_ic} <a href="/opp/{quote(r["key"], safe="")}">{e(r["title"])}</a><br><span class="muted small">{e(what)}{unsure} · {e(cond)}</span></td>'
                 f'<td class="n">{e(charts.fmt(float(r["price"]), r["currency"]))}</td>'
                 f'<td class="n">{e(charts.fmt(float(ship), r["currency"])) if ship not in (None, "", "0") else "—"}</td>'
                 f'<td class="n"><b>{M(r["all_in"])}</b></td><td>{"Auction" if auction else "Buy it now"}<br><span class="muted small">'
@@ -492,7 +505,7 @@ def _market_section(passcode, market, chosen, by_id, M, now, f: dict) -> str:
                 + '</tr>')
 
     def table(items):
-        head = ('<tr><th>Where</th><th>Listing</th><th class="n">Price</th><th class="n">Shipping</th><th class="n">Total to you</th><th>Type</th>'
+        head = ('<tr><th><span class="sr">Photo</span></th><th>Listing</th><th class="n">Price</th><th class="n">Shipping</th><th class="n">Total to you</th><th>Type</th>'
                 '<th>Our take</th><th></th></tr>')
         return (f'<div class="wrap"><table class="mkt">{head}{"".join(tr(*x) for x in items[:60])}</table></div>'
                 + (f'<p class="muted small">Showing the cheapest 60 of {len(items)}.</p>' if len(items) > 60 else ""))
@@ -680,6 +693,7 @@ font-weight:800;font-size:13px;letter-spacing:.08em;color:var(--fg2)}.card.lotph
 .plat{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:5px;border:1px solid var(--axis);white-space:nowrap}
 .plat.ebay{color:#0064d2}.plat.yahoo{color:#b3261e}.plat.mercari{color:#d24a4a}table.mkt tr.maybe td{opacity:.85}
 select{max-width:100%}.vpick{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}form.vpick label{display:flex;flex-direction:row;gap:8px;align-items:center;font-weight:600;min-width:0;max-width:100%;margin:0}form.vpick button{margin:0}.vpick select{min-width:0;width:auto;max-width:min(440px,62vw);font-weight:400;margin:0}table.prints tr.on td{background:var(--bg2,rgba(127,127,127,.08))}.pricebox b{display:block}.pricebox span{display:block}form.sale{flex-wrap:wrap}form.sale label{min-width:0;max-width:100%}form.sale label select{width:100%}.pfilter{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 10px}#market .pfilter label{display:flex;flex-direction:row;gap:6px;align-items:center;min-width:0;max-width:100%;font-size:13px;color:var(--fg2);margin:0}#market .pfilter select{min-width:0;width:auto;max-width:min(520px,70vw);margin:0}#market .pfilter button{margin:0}
+img.mthumb{width:44px;height:58px;object-fit:cover;border-radius:6px;background:var(--soft);display:block}.sr{position:absolute;left:-9999px}
 .moves{display:grid;gap:8px;margin:10px 0}.move{border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:var(--surface)}.move p{margin:4px 0 0;font-size:13px}.mdmg{float:right;font-weight:700}.mtag{font-size:11px;color:var(--accent);margin-right:4px}img.card.pkm{border-radius:4.5%}
 .method{margin:4px 0 8px;padding-left:18px}.method li{margin:4px 0}.soldlist li .plat{justify-self:start}
 .cardpage{display:grid;grid-template-columns:minmax(220px,340px) minmax(0,1fr);gap:28px;margin:0 0 22px}
