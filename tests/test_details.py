@@ -179,3 +179,9 @@ def test_a_chase_rarity_on_a_plain_card_is_left_for_a_person(pcat):
     assert an.identity.printing is None
     an = analyze("Charizard ex 151", pcat, verified={"printed_set_code": "199/165", "rarity_hint": "Special Illustration Rare", "from_details": True})
     assert an.identity.printing is not None
+
+
+def test_no_false_alarms_for_titles_that_name_no_card_or_spell_a_number_differently(pcat):
+    assert aspect_identity.pkm("1st Edition - Old Pokemon Cards - 100% Vintage", {"name": "Charizard"}, pcat).conflict is None
+    assert aspect_identity.pkm("Charzard sir 151", {"name": "Charizard ex", "number": "199/165"}, pcat).conflict is None
+    assert aspect_identity.pkm("Pikachu V SWSH050 Black Star Promo", {"number": "050"}, pcat).conflict is None

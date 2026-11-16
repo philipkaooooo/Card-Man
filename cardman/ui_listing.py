@@ -284,7 +284,7 @@ def row_html(key: str, d: dict, v: Verdict, cards, M, now: datetime, sparks: dic
     mb = top.get("max_buy") if top and top.get("basis") == "sales" else None
     sp = (sparks or {}).get(d.get("printing_id") or "") if not lot else ""
     return (f'<a class="lrow" href="/opp/{quote(key, safe="")}">{_art_with_ref(key, d, v, photos)}'
-            f'<span class="lr-main"><span class="lr-title">{e(name)}</span><span class="lr-sub">{e(sub) or e(d.get("market") or "")}</span>'
+            f'<span class="lr-main"><span class="lr-title">{e(name)}</span>{f"<span class=lr-sub>{e(sub)}</span>" if sub else ""}'
             f'{listing_icons(d, now)}<span class="lr-reason">{e(v.reason)}</span>{sp or ""}</span>'
             f'<span class="lr-side">{badge(v)}<span class="lr-money"><b>{M(d.get("all_in_home"))}</b><small>total to you</small></span>'
             f'{"<span class=lr-max><b>" + M(mb) + "</b><small>worth paying up to</small></span>" if mb is not None else ""}'
@@ -553,14 +553,14 @@ background:var(--line);display:inline-block}.conf-m i.on{background:var(--fg2)}.
 @media(max-width:860px){.filterbar{top:0;position:static}}.fchips .sep{width:10px}
 .fchip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:4px 12px;font-size:13px;color:var(--fg2);text-decoration:none}
 .fchip.on{background:var(--fg);color:var(--surface);border-color:var(--fg)}.fchip b{font-weight:700}
-.lrows{display:grid;gap:8px}.lrow{display:grid;grid-template-columns:56px minmax(0,1fr) auto;gap:14px;align-items:center;padding:10px 14px;
+.lrows{display:grid;gap:8px}.lrow{display:grid;grid-template-columns:70px minmax(0,1fr) auto;gap:14px;align-items:center;padding:10px 14px;
 background:var(--surface);border:1px solid var(--line);border-radius:12px;color:var(--fg);text-decoration:none}
 .lrow:hover{box-shadow:0 6px 18px rgba(0,0,0,.07)}.lrow .card{width:56px;height:82px}
 .lr-main{display:flex;flex-direction:column;gap:2px;min-width:0}.lr-title{font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .lr-sub{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.lr-reason{font-size:13px;color:var(--fg2)}
 .lr-side{display:flex;flex-direction:column;align-items:flex-end;gap:4px;text-align:right}.lr-money{font-variant-numeric:tabular-nums;font-weight:650}
 .lr-money small{font-weight:500;color:var(--muted);font-size:11px}
-@media(max-width:700px){.lrow{grid-template-columns:48px minmax(0,1fr)}.lrow .card{width:48px;height:70px}.lr-side{grid-column:1/-1;flex-direction:row;
+@media(max-width:700px){.lrow{grid-template-columns:64px minmax(0,1fr)}.lrow .card{width:56px;height:82px}.lr-side{grid-column:1/-1;flex-direction:row;
 flex-wrap:wrap;justify-content:space-between;align-items:center}}
 .lhero{display:grid;grid-template-columns:minmax(160px,240px) minmax(0,1fr);gap:24px;align-items:start;border-left-width:5px}
 .lhero.vcard-good{border-left-color:var(--good)}.lhero.vcard-warn{border-left-color:var(--warn)}.lhero.vcard-info{border-left-color:var(--accent)}

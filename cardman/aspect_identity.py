@@ -146,9 +146,10 @@ def pkm(title: str, sig: dict, cat) -> Hint:
     alone = _an(title, cat)
     t_cards = {c.id.split(":")[2] for c in alone.identity.candidates}
     title_sure = len(t_cards) == 1 and bool(p["numbers"]) and not alone.has("CODE_NAME_MISMATCH")
+    digits = lambda x: re.sub(r"\D", "", x).lstrip("0") or "0"
     if number:
-        n_asp = _num(number.split("/")[0])
-        t_nums = [_num(a) for a, _ in p["numbers"]]
+        n_asp = digits(_num(number.split("/")[0]))                   # "SWSH136" and "136" are the same number
+        t_nums = [digits(_num(a)) for a, _ in p["numbers"]]
         if t_nums and n_asp and n_asp not in t_nums:
             if title_sure:
                 h.ignored = f"eBay's item details say {number}, but the title's number matches the card it names: going by the title."
@@ -157,8 +158,11 @@ def pkm(title: str, sig: dict, cat) -> Hint:
             return h
         if _NUM.search(number) or _PROMO_NO.search(number) or re.fullmatch(r"[A-Za-z]{0,5}\d{1,3}[a-z]?", number.strip()):
             h.verified["printed_set_code"] = number.strip()
+    from .pkm_catalog import norm
+    from .pkm_intel import _names_in
     name = sig.get("name") or ""
-    if name and title and not (_words(name) & _words(title)):
+    # Only a title that names a card can contradict the details ("Old Pokemon Cards", "Charzard sir" name none).
+    if name and title and _names_in(norm(title), cat) and not (_words(name) & _words(title)):
         if title_sure:
             h.ignored = f"eBay's item details name {name}, but the title's number and name agree: going by the title."
             h.verified = {}
