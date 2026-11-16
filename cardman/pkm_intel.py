@@ -24,7 +24,9 @@ FAKE = ("proxy", "custom", "orica", "fan art", "fanart", "replica", "fake", "not
         "metal pokemon", "24k", "gold plated", "gold foil card", "reprint card", "handmade", "playtest")
 # "art card" alone is a custom display card; "Alt Art Card" / "Full Art Card" are real cards.
 ART_CARD = re.compile(r"(?<!alt )(?<!full )(?<!alternate )(?<!alt-)\bart card")
-JUMBO = ("jumbo", "oversized", "oversize", "big card", "large card", "giant card", "burger king", "gold card", "gold cards")
+JUMBO = ("jumbo", "oversized", "oversize", "big card", "large card", "giant card", "burger king", "gold card", "gold cards",
+         "keychain", "key chain", "keyring", "mini slab", "mini graded", "acrylic", "magnet", "sticker", "display case", "figure",
+         "plush", "coin", "pin badge", "sleeves", "playmat", "binder", "toploader only")
 REPRINT = r"celebrations|classic collection|pok[eé]mon tcg classic|\bclassic\b.*\b(?:deck|box)\b|25th anniversary"
 CODE = ("code card", "online code", "ptcgo code", "tcg live code", "tcgo code", "digital code", "unused code")
 SEALED = ("booster box", "booster pack", "booster bundle", "elite trainer box", "etb", "blister", "sealed pack", "sealed box",

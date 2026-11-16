@@ -302,3 +302,8 @@ def test_more_languages_and_a_person_s_reading_of_the_number(cat):
     assert "OUT_OF_SCOPE" in kinds(pkm_intel.analyze("Pokemon S-Chinese Umbreon VMAX 215/203", cat))
     an = pkm_intel.analyze("Pikachu pokemon card 151", cat, verified={"printed_set_code": "025/165", "verified_edition": "Reverse Holo"})
     assert [c.id for c in an.identity.candidates] == ["pk:EN:sv3pt5-25:reverse-holo@pkm-sv3pt5-25"]
+
+
+def test_keychains_and_accessories_are_not_cards(cat):
+    an = pkm_intel.analyze("Mini Gift Keychain 2021 Pokemon Umbreon VMAX Evolving Skies Alt Art #215", cat)
+    assert an.blocked and "NOT_A_CARD" in kinds(an)
