@@ -121,12 +121,39 @@ class Engine:
         return self.pkm if game == "pkm" else self.catalog
 
     def _analyze(self, r: RawListing, verified: dict, *, ocr: bool = False):
+        """Title, then eBay's item details as strong evidence when they agree, then what a person confirmed (wins)."""
+        from . import aspect_identity, listing_detail
+        from .intel import BLOCK, INFO, WARN, Finding
+        sig = listing_detail.signals((listing_detail.get(self.db, r.listing_id).get("aspects") or {})) if r.source.startswith("ebay") else {}
         if r.game == "pkm":
             from .pkm_intel import analyze as pkm_analyze
             if self.pkm is None:
                 raise RuntimeError("Pokémon catalog not synced")
-            return pkm_analyze(r.title, self.pkm, description=r.description, verified=verified)
-        return analyze(r.title, self.catalog, description=r.description, verified=verified, ocr_codes=self._ocr(r) if ocr else ())
+            hint = aspect_identity.pkm(r.title, sig, self.pkm) if sig else aspect_identity.Hint()
+            use = {**hint.verified, "from_details": True} if (hint.verified and not hint.conflict) else {}
+            an = pkm_analyze(r.title, self.pkm, description=r.description, verified={**use, **verified})
+        else:
+            hint = aspect_identity.ygo(r.title, sig, self.catalog) if sig else aspect_identity.Hint()
+            use = hint.verified if not hint.conflict else {}
+            an = analyze(r.title, self.catalog, description=r.description, verified={**use, **verified},
+                         ocr_codes=self._ocr(r) if ocr else ())
+        if hint.other_game:
+            from .games import NAME
+            an.findings.append(Finding("OUT_OF_SCOPE", BLOCK, f"eBay lists this as a {NAME[hint.other_game]} card."))
+        if hint.language and r.game == "pkm":
+            an.findings.append(Finding("OUT_OF_SCOPE", BLOCK, "eBay's item details say it is not an English card."))
+        if hint.conflict:
+            an.findings.append(Finding("ASPECT_CONFLICT", WARN, hint.conflict))
+        elif hint.ignored:
+            an.findings.append(Finding("ASPECTS_IGNORED", INFO, hint.ignored))
+        elif use and an.identity.printing is not None:
+            an.findings.append(Finding("ASPECTS_CONFIRM", INFO, f"eBay's item details confirm this version ({hint.said})."))
+        if hint.grade and not r.grade_company:
+            r.grade_company, r.grade = hint.grade             # graded per eBay: never priced with ungraded copies
+        if not r.grade_company and getattr(an.parsed, "grade_company", None) and an.parsed.grade:
+            r.grade_company, r.grade = an.parsed.grade_company, an.parsed.grade   # "PSA 10" in the title: graded pool only
+        r.detail_marker = json.dumps(sig, sort_keys=True)
+        return an
 
     def _load_catalog(self) -> Catalog:
         cache = IdentityCache(self.catalog_db)
@@ -145,6 +172,10 @@ class Engine:
     # -- memory ---------------------------------------------------------------------------------------------------
     def remember(self, r: RawListing, now: datetime, rep: TickReport) -> str:
         """Returns "new", "changed" (price or state) or "same"."""
+        if r.photo_urls:
+            from . import listing_detail
+            listing_detail.save(self.db, r.listing_id, {"image": {"imageUrl": r.photo_urls[0]},
+                                                       "additionalImages": [{"imageUrl": u} for u in r.photo_urls[1:]]}, now, "search")
         row = self.db.execute("SELECT price, kind FROM listing WHERE key=?", (r.key,)).fetchone()
         state = "new" if row is None else ("changed" if (Decimal(row[0]) != r.price or row[1] != r.kind) else "same")
         data = {"description": r.description, "shipping": str(r.shipping) if r.shipping is not None else None, "photos": list(r.photos),
@@ -246,6 +277,7 @@ class Engine:
         an = self._analyze(r, verified, ocr=True)
         ids = [p.id for p in an.identity.candidates]
         fp = hashlib.sha256(json.dumps([ANALYSIS_VERSION, r.fingerprint(), verified, authenticity, ids[:500], self._evidence_version(ids),
+                                        getattr(r, "detail_marker", ""),
                                         now.date().isoformat() if r.ends_at else ""], sort_keys=True, default=str).encode()).hexdigest()[:16]
         prev = self.db.execute("SELECT analysis_fp, created_at, snapshot_id FROM opportunity WHERE key=?", (key,)).fetchone()
         if prev and prev[0] == fp and not force:
@@ -263,7 +295,10 @@ class Engine:
         with self.db:
             self.db.execute("INSERT OR REPLACE INTO opportunity VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                             (key, op.stage, op.status, op.priority, op.expected_profit, op.evpi, json.dumps(op.kinds), op.printing_id, snapshot, fp,
-                             json.dumps({**op.to_dict(), "game": r.game}, ensure_ascii=False, default=str), prev[1] if prev else now.isoformat(), now.isoformat()))
+                             json.dumps({**op.to_dict(), "game": r.game, "kind": r.kind, "listing_id": r.listing_id,
+                                         "shipping": str(r.shipping) if r.shipping is not None else None, "price": str(r.price),
+                                         "currency": r.currency, "grade_company": r.grade_company, "grade": r.grade, "bids": r.bids},
+                                        ensure_ascii=False, default=str), prev[1] if prev else now.isoformat(), now.isoformat()))
         return op
 
     def _escalate(self, r: RawListing, an, op: Opportunity, verified: dict, authenticity, book: PriceBook, now: datetime, rep: TickReport):

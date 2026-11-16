@@ -21,7 +21,7 @@ from .models import IdentityStatus, MarketObservation
 from .verify import assess, filter_comps
 
 # Bump when the rules change, so the engine re-analyzes listings it would otherwise skip as unchanged.
-ANALYSIS_VERSION = "2026-11-13.3"   # Pokémon reader fixes
+ANALYSIS_VERSION = "2026-11-16.1"   # Pokémon reader fixes
 MAX_SCENARIOS = 40
 UNDERPRICED_SHARE = 0.8
 MIN_PRICED_SHARE = 0.5        # below this, a priced minority of the possibilities does not speak for the listing
@@ -287,7 +287,7 @@ def evaluate_listing(raw: RawListing, an: ListingAnalysis, book: PriceBook, cata
         # Cheap only if it is one particular print: a bet on identity, which the check below can settle.
         kinds.append("RIGHT_PRINT_ONLY")
         reasons.append(f"Under max buy only if it is the right print ({cheap_w:.0%} of the probability). Confirm before buying.")
-    if an.has("CODE_NAME_MISMATCH", "RARITY_NOT_ON_CODE", "PHOTO_CONTRADICTS_SELLER"):
+    if an.has("CODE_NAME_MISMATCH", "RARITY_NOT_ON_CODE", "PHOTO_CONTRADICTS_SELLER", "ASPECT_CONFLICT"):
         kinds.append("MISIDENTIFIED")
     if an.has("RARITY_UNSTATED", "PHOTO_ADDS_CODE") and best is not None and best > 0:
         kinds.append("HIDDEN_VARIANT")

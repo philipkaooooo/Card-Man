@@ -19,6 +19,7 @@ from .listing_parser import _CERT_RE, _GRADE_RE, ParsedListing
 from .models import IdentityStatus
 from .pkm_catalog import PkmCatalog, norm
 
+ERROR_PRINT = re.compile(r"\berror\b|misprint|miscut|\bno holo\b|holo bleed|crimp", re.I)
 FAKE = ("proxy", "custom", "orica", "fan art", "fanart", "replica", "fake", "not real", "unofficial", "metal card", "gold metal",
         "metal pokemon", "24k", "gold plated", "gold foil card", "reprint card", "handmade", "playtest")
 # "art card" alone is a custom display card; "Alt Art Card" / "Full Art Card" are real cards.
@@ -75,7 +76,9 @@ def parse(title: str) -> dict:
         "condition": None if gc else next((n for n, p in CONDITION if re.search(p, low)), None),
         "fake": _has(low, FAKE) + (("art card",) if ART_CARD.search(low) else ()), "jumbo": _has(low, JUMBO), "code": _has(low, CODE),
         "sealed": _has(low, SEALED) if not nums else (),
-        "lot": bool(_has(low, LOT) or (lot_n and int(lot_n.group(1)) > 1)), "lot_size": int(lot_n.group(1)) if lot_n else None,
+        # several different card numbers ("30/102 + 42/102 + 24/102") is several cards
+        "lot": bool(_has(low, LOT) or (lot_n and int(lot_n.group(1)) > 1) or len({a.lstrip("0") for a, _ in nums}) > 1),
+        "lot_size": int(lot_n.group(1)) if lot_n else (len({a.lstrip("0") for a, _ in nums}) if len({a.lstrip("0") for a, _ in nums}) > 1 else None),
         "languages": tuple(sorted(langs)),
     }
 
@@ -105,7 +108,10 @@ def _set_of(p: dict, cat: PkmCatalog) -> str | None:
 
 def analyze(title: str, cat: PkmCatalog, *, description: str = "", verified: dict | None = None, ocr_codes=()) -> ListingAnalysis:
     verified = dict(verified or {})
-    if verified.get("printed_set_code"):              # the number a person read off the card settles which card it is
+    title_only = title
+    if verified.get("set_hint"):                      # eBay's item details name the set
+        title = f"{title} {verified['set_hint']}"
+    if verified.get("printed_set_code"):              # the number a person (or eBay's details) gives settles which card it is
         title = f"{title} {verified['printed_set_code']}"
     p = parse(f"{title} {description}" if description else title)
     if verified.get("printed_set_code"):
@@ -123,11 +129,14 @@ def analyze(title: str, cat: PkmCatalog, *, description: str = "", verified: dic
     other = [l for l in p["languages"] if l != "en"]
     if other:
         findings.append(Finding("OUT_OF_SCOPE", BLOCK, "Not an English card: only English Pokémon cards are covered so far."))
+    if ERROR_PRINT.search(p["text"]):
+        findings.append(Finding("ERROR_PRINT", WARN, "Sold as an error or misprint: priced apart from the normal card, and not tracked yet."))
     if p["stamped"]:
         findings.append(Finding("STAMPED", WARN, "A stamped or special version (prerelease, staff, league, event): priced apart "
                                 "from the normal card, and not tracked yet."))
 
-    reprint = bool(re.search(REPRINT, p["low"]))
+    # the set eBay's details name is a hint for the set only: it never turns a card into a reprint
+    reprint = bool(re.search(REPRINT, parse(title_only)["low"])) and "30th celebration" not in p["low"]
     tn = norm(p["text"])
     names = _names_in(tn, cat)
     by_number: list[str] = []
@@ -177,14 +186,50 @@ def analyze(title: str, cat: PkmCatalog, *, description: str = "", verified: dic
         if reprint:
             named = [c for c in named if cat._cards[c][3] in ("cel25c", "cel25")]
         cards = [c for c in named if sid and cat._cards[c][3] == sid] or named
+    vnum = re.fullmatch(r"\s*#?\s*([A-Za-z]{0,5}\d{1,3}[a-z]?)\s*", str((verified or {}).get("printed_set_code") or ""))
+    if vnum and cards:                           # a bare number from eBay's details ("257"): keep the card it names
+        want = vnum.group(1).lstrip("0").lower() or "0"
+        hit = [c for c in cards if (cat._cards[c][4] or "").lstrip("0").lower() == want]
+        if not hit:                              # not in the named set: the same card name elsewhere (a promo) with that number
+            hit = [cid for nm in names[:1] for cid in cat.by_name.get(nm, []) if (cat._cards[cid][4] or "").lstrip("0").lower() == want]
+        cards = hit
     if len(cards) > 40:                        # a bare name like "Pikachu": too many to weigh
         cards = sorted(cards, key=lambda c: cat._cards[c][9] or "", reverse=True)[:40]
 
     cands = [v for c in cards for v in cat.versions(c)]
     if verified and verified.get("verified_edition"):
         cands = [v for v in cands if (v.edition or "").lower().startswith(str(verified["verified_edition"]).lower())] or cands
+    elif verified and verified.get("from_details") and len(cards) == 1 and len(cands) > 1:
+        # eBay's details confirm the card. A version nobody mentions is the common one: sellers always advertise
+        # Reverse Holo, 1st Edition and Shadowless, which sell for more.
+        said = set(p["versions"])
+        fin = verified.get("finish")
+        named = [v for v in cands if any((v.edition or "").startswith(x) for x in said & {"1st Edition", "Shadowless", "Reverse Holo", "Unlimited"})]
+        if len({v.id for v in named}) == 1:
+            cands = named                                # the title names the version and the details confirm the card
+        def common(v):
+            ed = v.edition or ""
+            if ed == "Reverse Holo":
+                return "Reverse Holo" in said
+            if ed.startswith("1st Edition"):
+                return "1st Edition" in said
+            if ed == "Shadowless":
+                return "Shadowless" in said
+            if fin == "Non-holo" and ed == "Holo":
+                return False
+            return True
+        keep = [v for v in cands if common(v)]
+        if len(keep) == 1 and len(cands) > 1:
+            cands = keep
     weights = _weights(cands, p)
-    status = (IdentityStatus.RESOLVED if len(cands) == 1 and not any(f.severity == BLOCK for f in findings)
+    special = any(f.kind in ("STAMPED", "ERROR_PRINT", "REPRINT") for f in findings)
+    rh = str((verified or {}).get("rarity_hint") or "").lower()
+    if rh and len(cands) == 1 and re.search(r"ultra|full art|secret|special|illustration|hyper|gold|rainbow", rh):
+        have = (cands[0].rarity or "").lower()
+        strong = re.search(r"ultra|secret|special|illustration|hyper|gold|rainbow|full art|trainer gallery|shiny|vmax|vstar|gx|ex|\bv\b", have)
+        if not strong:
+            special = True              # eBay calls it a chase card, but the number points to a plain one: a person should look
+    status = (IdentityStatus.RESOLVED if len(cands) == 1 and not special and not any(f.severity == BLOCK for f in findings)
               else IdentityStatus.CANDIDATES if cands else IdentityStatus.UNRESOLVED)
     identity = IdentityResult(status, sorted(cands, key=lambda v: -weights.get(v.id, 0)), evidence=[f"pkm title parse: {len(cards)} card(s)"])
     if p["cert"]:
