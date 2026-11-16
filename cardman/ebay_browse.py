@@ -49,6 +49,7 @@ class SearchResult:
     total: int | None
     pages: int
     titles: dict[str, str] = field(default_factory=dict)   # observation id -> seller's title
+    photos: dict[str, list] = field(default_factory=dict)  # observation id -> the listing's own photo URLs
 
 
 def _ts(s: str | None) -> datetime | None:
@@ -172,6 +173,7 @@ class EbayBrowse:
         obs, refs, total, pages = [], [], None, 0
         seen: set[str] = set()
         titles: dict[str, str] = {}
+        photos: dict[str, list] = {}
         while url and pages < max_pages:
             req = urllib.request.Request(url, headers={"Authorization": f"Bearer {tok}",
                                                        "X-EBAY-C-MARKETPLACE-ID": self.marketplace})
@@ -189,6 +191,8 @@ class EbayBrowse:
                 obs.append(map_item(item, captured_at=now, raw_ref=ref, catalog=catalog,
                                     marketplace=self.marketplace, synthetic=synthetic))
                 titles[obs[-1].id] = item.get("title") or ""
+                from .listing_detail import _imgs
+                photos[obs[-1].id] = _imgs(item)
             url = page.get("next")
             pages += 1
-        return SearchResult(obs, refs, total, pages, titles)
+        return SearchResult(obs, refs, total, pages, titles, photos)

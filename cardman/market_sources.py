@@ -73,6 +73,7 @@ class RawListing:
     is_lot: bool = False
     quantity: int = 1
     game: str = "ygo"                   # "ygo" | "pkm": which catalog reads it; never mixed
+    photo_urls: tuple[str, ...] = ()    # the listing's own photos (eBay image URLs), shown through CardMan
 
     def __post_init__(self):
         self.currency = self.currency.upper()
@@ -340,7 +341,7 @@ class EbayAdapter:
                                       price=o.original_amount, currency=o.currency,
                                       kind="bid" if o.evidence_type == EvidenceType.OBSERVED_BID else "ask", url=o.source_url,
                                       shipping=o.shipping_amount, seller=o.seller_ref, condition=o.observed_condition, raw_ref=o.raw_ref,
-                                      game=game))
+                                      game=game, photo_urls=tuple(res.photos.get(o.id) or ())))
         return out, errors
 
 
