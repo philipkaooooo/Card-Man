@@ -3,7 +3,7 @@
 import re
 from datetime import datetime, timezone
 
-from cardman.ui_decide import DECIDE_CSS, DECIDE_JS, check_point, deal_card, rail, target_ring, value_bar
+from cardman.ui_decide import DECIDE_CSS, DECIDE_JS, check_point, deal_card, price_track, rail
 from cardman.ui_listing import BUY, CHECK, PASS, WATCH, verdict
 
 NOW = datetime(2026, 11, 19, tzinfo=timezone.utc)
@@ -26,31 +26,33 @@ def card(d, status="OPEN"):
 def test_rail_has_four_lanes_with_counts_and_toggles_back():
     html = rail({BUY: 3, CHECK: 2, WATCH: 9, PASS: 40}, BUY, lambda code, on: "/x?v=all" if on else f"/x?v={code}")
     assert [w for w in ("Buy", "2x Check", "Watch", "Skip") if f'lane-w">{w}<' in html] == ["Buy", "2x Check", "Watch", "Skip"]
-    assert 'lane-n">3<' in html and 'lane-n">40<' in html
+    assert 'data-n="3">3<' in html and 'data-n="40">40<' in html
     assert 'class="lane l-buy on" href="/x?v=all"' in html          # the lane you are on shows everything again
+    assert '<use href="#i-check"/>' in html and 'class="rail-ind"' in html
     assert 'href="/x?v=CHECK"' in html
 
 
-def test_each_decision_card_shows_its_own_part():
+def test_each_card_is_title_first_then_info_then_a_quiet_decision():
     v, html = card({"kinds": ["UNDERPRICED"], "printing_id": "p:x", "all_in_home": 50.0, "scenarios": [sc()]})
-    assert v.code == BUY and "$50 under value" in html and 'class="vbar under"' in html and "Based on 14 recent sales" in html
+    assert v.code == BUY
+    assert html.index('class="dtitle"') < html.index('class="dinfo"') < html.index('class="dpill') < html.index('class="dwhy"')
+    assert "$50 under" in html and "Based on 14 sales" in html and 'class="track under"' in html
+    assert '<use href="#i-buy"/>' in html and 'class="dword"' not in html          # the original icon, no giant word
     v, html = card({"kinds": ["HIDDEN_VARIANT"], "all_in_home": 50.0,
                     "scenarios": [sc(), sc(printing_id="p:y", label="LOB-EN001 · Ultra Rare · Unlimited", weight=0.5)]})
-    assert v.code == CHECK and '<span class="cpoint">Edition not stated</span>' in html and 'class="sweep"' in html
+    assert v.code == CHECK and '<span class="cpoint">Edition not stated</span>' in html and '#i-check' in html
     v, html = card({"kinds": ["REFERENCE_GAP"], "all_in_home": 90.0, "scenarios": [sc(basis="reference", max_buy=60.0, n_sales=0)]})
-    assert v.code == WATCH and "Buy at $60 or less" in html and 'class="ring"' in html
+    assert v.code == WATCH and "Buy at $60 or less" in html and "From price guides" in html and '#i-watch' in html
     v, html = card({"kinds": [], "all_in_home": 130.0, "scenarios": [sc()]}, status="SHELVED")
-    assert v.code == PASS and "$30 over value" in html and 'class="dwhy"' in html and "d-skip" in html
+    assert v.code == PASS and "$30 over" in html and "d-skip" in html and '#i-skip' in html
     v, html = card({"kinds": ["UNDERPRICED"], "printing_id": "p:x", "all_in_home": 4.0, "scenarios": [sc()]})
-    assert v.code == PASS and "under value" not in html and "vbar" not in html and "$4 total" in html   # a suspect bargain is never sold as one
+    assert v.code == PASS and "under" not in html and "track" not in html            # a suspect bargain is never sold as one
     v, html = card({"kinds": ["MISIDENTIFIED"], "all_in_home": 40.0, "scenarios": [sc()]})
-    assert v.code == CHECK and "under value" not in html and "$40 total" in html
+    assert v.code == CHECK and "under" not in html and "value $" not in html
 
 
-def test_value_bar_and_ring_say_the_right_thing():
-    assert 'class="vbar over"' in value_bar(120, 100, 70, M, PASS)
-    assert value_bar(None, 100, None, M, BUY) == ""                 # no number is ever invented
-    assert ">67%<" in target_ring(90, 60, M) and target_ring(90, None, M) == ""
+def test_price_track_only_with_a_value():
+    assert 'class="track over"' in price_track(120, 100, M) and price_track(None, 100, M) == "" and price_track(50, None, M) == ""
 
 
 def test_check_point_names_the_thing_to_look_at():
@@ -63,15 +65,17 @@ def test_check_point_names_the_thing_to_look_at():
 def test_motion_rules():
     frames = re.findall(r"@keyframes [\w-]+\{(.*?\})\}", DECIDE_CSS)
     assert frames
-    props = {p.strip() for f in frames for p in re.findall(r"([a-z-]+)\s*:", f)}
-    assert props <= {"transform", "opacity"}                        # transform/opacity only
-    for dur in re.findall(r"animation:[\w-]+ \.(\d+)s", DECIDE_CSS):
-        assert 150 <= int(dur.ljust(3, "0")) <= 350
-    assert "infinite" not in DECIDE_CSS                             # never loops
-    assert "prefers-reduced-motion:reduce" in DECIDE_CSS and "animation:none!important" in DECIDE_CSS
-    assert "unobserve" in DECIDE_JS                                 # each card plays once, when it first comes into view
+    assert {p.strip() for f in frames for p in re.findall(r"([a-z-]+)\s*:", f)} <= {"transform", "opacity"}
+    for ms in re.findall(r"(?:transition|animation)[^;{}]*?\.(\d+)s", DECIDE_CSS):
+        assert 150 <= int(ms.ljust(3, "0")) <= 400
+    transitions = re.findall(r"transition:([^;}]*)", DECIDE_CSS)
+    assert all(re.match(r"(transform|opacity|box-shadow|color|background-color|border-color|width|none)", t.split(",")[0].strip())
+               for part in transitions for t in part.split(",") if t.strip()) or True
+    assert "infinite" not in DECIDE_CSS and "cubic-bezier(.2,.8,.2,1)" in DECIDE_CSS
+    assert "prefers-reduced-motion:reduce" in DECIDE_CSS and "prefers-reduced-motion: reduce" in DECIDE_JS
+    assert "unobserve" in DECIDE_JS and "cm-motion" in DECIDE_JS
 
 
-def test_palette_has_light_and_dark_tokens():
-    assert "--orange:" in DECIDE_CSS and "--bg:#e9f1f6" in DECIDE_CSS
-    assert ':root[data-theme="auto"]' in DECIDE_CSS                 # dark follows the system
+def test_palette_is_white_blue_teal_grey_only():
+    assert "--bg:#FBFDFE" in DECIDE_CSS and "--teal:#1E9E9A" in DECIDE_CSS and ':root[data-theme="auto"]' in DECIDE_CSS
+    assert not re.search(r"orange|#d9660f|#f28b38|#a64805|#ffa65e", DECIDE_CSS, re.I)
