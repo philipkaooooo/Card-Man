@@ -24,7 +24,8 @@ class Hint:
 
 # Never settled by eBay's details: special prints priced apart, error prints, other regions, reprints, several cards.
 NOT_SETTLED = re.compile(r"prerelease|pre-release|\bstaff\b|\bstamp|\berror\b|misprint|miscut|\bno holo\b|asian|\baen\b|\(ae\)|"
-                         r"\breprint|\bproxy|\bcustom", re.I)
+                         r"\breprint|\bproxy|\bcustom|anniversary|\b25th\b|\b30th\b|celebration|classic|legendary collection|"
+                         r"\bfan[\s-]*(?:made|art)|\bfans\s+art|\breplica|display card|\bdisplay\b", re.I)
 
 
 def unsettled(title: str, sig: dict) -> str | None:

@@ -119,3 +119,22 @@ def test_listing_filters_site_kind_and_price(tmp_path):
     assert "Lot of 300" not in page(t="singles") and "Cheap eBay card" not in page(t="lots")
     assert "Dear Yahoo card" not in page(pmax=500.0) and "Cheap eBay card" not in page(pmin=500.0)
     assert 'class="filterbar"' in page()
+
+
+def test_reprints_and_impossible_prices_are_never_watch_or_confirmed():
+    from cardman.ui_listing import listing_icons, verdict, suspect
+    from datetime import datetime, timezone
+    celebi = D(kinds=["REFERENCE_GAP"], title="Shining Celebi 106/105 Neo Revelation 1st Edition Holo Rare 30th Anniversary",
+               all_in_home=1502.0, findings=[{"kind": "ASPECTS_CONFIRM", "severity": "INFO", "text": "eBay's item details confirm this version"}],
+               scenarios=[sc(basis="reference", label="Neo Destiny 106/105 · Rare Shining · 1st Edition Holo", mid=59288.0)])
+    v = verdict(celebi, "OPEN", M)
+    assert v.code == PASS and "30th" in v.reason and "looks cheap" not in v.reason.lower()
+    assert "confirm" not in listing_icons(celebi, datetime(2026, 11, 19, tzinfo=timezone.utc))
+    cheap = D(kinds=["REFERENCE_GAP"], title="Charizard 4/102 Base Set Holo", all_in_home=700.0,
+              scenarios=[sc(basis="reference", label="Base 4/102 · Rare Holo · Unlimited Holo", mid=31472.0)])
+    assert verdict(cheap, "OPEN", M).code == PASS and "2%" in verdict(cheap, "OPEN", M).reason
+    fine = D(kinds=["REFERENCE_GAP"], title="Shining Celebi 106 30th Celebration Classic Collection", all_in_home=1500.0,
+             scenarios=[sc(basis="reference", label="30th Celebration: Classic Collection 106 · Rare Secret · Holo", mid=1700.0)])
+    assert suspect(fine) is None
+    from cardman.aspect_identity import unsettled
+    assert unsettled("Shining Celebi 106/105 Neo Revelation 1st Edition 30th Anniversary", {}) == "30th"

@@ -149,7 +149,7 @@ def test_a_shared_code_picks_the_reprint_only_when_it_is_said(ycat):
     assert plain.verified["verified_product"] == "Legend of Blue Eyes White Dragon"
     rep = aspect_identity.ygo("Blue-Eyes White Dragon LOB-EN001 25th Anniversary", {"number": "LOB-EN001", "rarity": "Ultra Rare",
                                                                                      "set": "Legend of Blue Eyes White Dragon 25th Anniversary"}, ycat)
-    assert "25th" in rep.verified.get("verified_product", "")
+    assert rep.verified == {}          # anniversary / reprint wording: eBay's details never settle it (title evidence only)
 
 
 def test_special_prints_reprints_and_lots_are_never_settled_by_the_details(ycat, pcat):

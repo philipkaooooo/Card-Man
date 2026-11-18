@@ -55,6 +55,26 @@ def _lot_size(d: dict) -> int | None:
     return parse_listing_text(d.get("title") or "").lot_size
 
 
+_SPECIAL = re.compile(r"reprint|anniversary|\b25th\b|\b30th\b|celebration|classic collection|\bclassic\b|legendary collection|"
+                      r"replica|proxy|fan[\s-]*made|fan art|fans art|\bcustom\b|retro pack", re.I)
+
+
+def suspect(d: dict) -> str | None:
+    """A match that must not be trusted: the title names a reprint or special print the matched version is not, or the
+    price is a small fraction of what the matched version is worth. Plain reason, or None."""
+    top = max(d.get("scenarios") or [{}], key=lambda s: s.get("weight") or 0)
+    label = (top.get("label") or "").lower()
+    m = _SPECIAL.search(d.get("title") or "")
+    if m and not _SPECIAL.search(label) and not re.search(r"25th|anniversary|celebration|legendary|retro|rarity collection|quarter century", label):
+        return (f"The title says \"{m.group(0)}\", but the version we matched is the original: this is probably a reprint "
+                "or a special print we can't price yet.")
+    val, allin = top.get("resale_mid"), d.get("all_in_home")
+    if val and allin and allin < 0.10 * val:
+        return (f"Priced at {allin / val:.0%} of what the matched card is worth: almost certainly a reprint, a fake or a "
+                "different card, not a bargain.")
+    return None
+
+
 def verdict(d: dict, status: str, M) -> Verdict:
     """The decision in a friend's words. Same rules as before; only the wording is plain."""
     kinds = set(d.get("kinds") or [])
@@ -78,6 +98,9 @@ def verdict(d: dict, status: str, M) -> Verdict:
 
     if status == "REJECTED":
         return V(PASS, "Skip", "Not a single card we can price (a proxy, a different game, or not what it says).")
+    sus = suspect(d)
+    if sus:
+        return V(PASS, "Skip", sus)                    # never "Watch", never "looks cheap" on a match we can't trust
     if "LOT" in kinds and "LOT_UNDERPRICED" not in kinds:
         size = _lot_size(d)
         what = f"A lot of {size} cards" if size else "A lot of several cards"
@@ -258,7 +281,7 @@ def listing_icons(d: dict, now: datetime, detail: dict | None = None) -> str:
         out.append(icon("ja", "Japanese card"))
     elif pid.startswith(("p:EN_TCG", "pk:EN")):
         out.append(icon("en", "English card"))
-    if any(f.get("kind") == "ASPECTS_CONFIRM" for f in d.get("findings") or []):
+    if any(f.get("kind") == "ASPECTS_CONFIRM" for f in d.get("findings") or []) and not suspect(d):
         out.append(icon("confirmed", "eBay's item details confirm this version", "good"))
     ship = d.get("shipping")
     if ship not in (None, "", "None"):
