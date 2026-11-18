@@ -186,8 +186,11 @@ def analyze(title: str, cat: PkmCatalog, *, description: str = "", verified: dic
     rep_sets = getattr(cat, "reprint_sets", set())
     if reprint:
         mapped = []
+        # The anniversary sets themselves (30th Celebration, Celebrations) are named by the same words but hold new
+        # cards too: those stay as they are. Any other card maps to its reprints.
+        anniv = lambda c: c in rep_sets or "celebration" in norm((cat.set(c) or {}).get("name") or "")
         for c in cards:
-            mapped += [c] if cat._cards[c][3] in rep_sets else list(getattr(cat, "reprints", {}).get(c, []))
+            mapped += [c] if anniv(cat._cards[c][3]) else list(getattr(cat, "reprints", {}).get(c, []))
         mapped = list(dict.fromkeys(mapped))
         if sid and any(cat._cards[c][3] == sid for c in mapped):
             mapped = [c for c in mapped if cat._cards[c][3] == sid]
@@ -199,8 +202,9 @@ def analyze(title: str, cat: PkmCatalog, *, description: str = "", verified: dic
             mapped = pick or mapped
         if mapped:
             orig = {getattr(cat, "reprint_of", {}).get(c) for c in mapped} - {None}
-            findings.append(Finding("REPRINT_OF", INFO, "A later reprint" + (f" of {', '.join(sorted(cat.card_label(o) for o in orig))[:160]}"
-                                                                            if orig else "") + ", priced on its own."))
+            if orig or any(cat._cards[c][3] in rep_sets for c in mapped):
+                findings.append(Finding("REPRINT_OF", INFO, "A later reprint" + (f" of {', '.join(sorted(cat.card_label(o) for o in orig))[:160]}"
+                                                                                if orig else "") + ", priced on its own."))
             cards = mapped
         elif cards:
             findings.append(Finding("REPRINT", WARN, "The title says it is a reprint, but we don't have that reprint in our list yet."))

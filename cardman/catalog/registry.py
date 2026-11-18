@@ -77,6 +77,19 @@ def _cname(name: str | None) -> str:
     return re.sub(r"\bimposter\b", "impostor", n)
 
 
+# Tags TCGplayer adds to tell its products apart that only describe the card itself (not a separate print).
+_DESCRIPTIVE = re.compile(r"(?:^|\s)(?:#?[A-Za-z]{0,3}\d+[a-z]?|alternate full art|alternate art|full art|secret rare|secret|delta species|"
+                          r"prime|team plasma|gym|shiny|unnumbered)(?=\s|$)", re.I)
+
+
+def _pkm_special(mods: str) -> str:
+    """What is left of a TCGplayer name tag once descriptive words go: a stamp, a pattern, a prerelease... or ''."""
+    prev = None
+    while prev != mods:
+        prev, mods = mods, _DESCRIPTIVE.sub(" ", mods).strip()
+    return re.sub(r"\s+", " ", mods)
+
+
 def _group_name(name: str) -> str:
     """'SV: Scarlet & Violet 151' -> 'scarlet and violet 151'; 'ME04: Chaos Rising' -> 'chaos rising'."""
     return norm(re.sub(r"^[A-Za-z]{1,5}\d{0,3}(?:\.\d)?[a-z]?:\s*", "", name or ""))
@@ -291,6 +304,7 @@ class Builder:
                     if not number_full:
                         continue                                    # sealed product, code cards, accessories
                     base, mods = _split_name(prod["name"])
+                    mods = _pkm_special(mods)
                     hit = [cid for sid in (pool or [our]) for cid in cards_in.get(sid, [])
                            if _num(pcat._cards[cid][4]) == _num(number_full) and _cname(pcat._cards[cid][1]) == _cname(base)] if our else []
                     if len(hit) > 1:
