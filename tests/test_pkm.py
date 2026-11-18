@@ -1,4 +1,6 @@
 """Pokémon: catalog, versions, title reading on realistic listing titles, and the walls between the two games."""
+import re
+
 import pytest
 
 from cardman import pkm_intel
@@ -217,7 +219,8 @@ def web(tmp_path, cat, monkeypatch):
 def test_switch_routes_and_pages_for_pokemon(web):
     s, url, h, body = web("/pkm/")
     assert s == 200 and 'class="on">Pokémon<' in body and 'href="/pkm/opportunities"' in body and "199/165" in body
-    assert "Charizard ex 199/165 SIR 151" in body and "Blue-Eyes White Dragon LOB-EN001 buy" not in body     # only Pokémon listings
+    # Home shows Buys and 2x Checks; this Watch listing is counted in the rail (only Pokémon listings are counted)
+    assert re.search(r'l-watch[^"]*"[^>]*>.*?class="lane-n">1<', body) and "Blue-Eyes White Dragon LOB-EN001 buy" not in body
     s, url, h, body = web("/")
     assert 'class="on">Yu-Gi-Oh!<' in body and "Charizard ex 199/165 SIR 151" not in body                    # and only Yu-Gi-Oh! here
     s, url, h, body = web("/game?g=pkm&back=/opportunities", follow=False)

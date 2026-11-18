@@ -86,6 +86,6 @@ def test_main_pages_have_no_system_words(tmp_path, monkeypatch):
             found = [w for w in BANNED if re.search(re.escape(w), text, re.I)]
             assert not found, f"{p} still says {found}: " + "; ".join(
                 text[max(0, m.start() - 60):m.end() + 30] for w in found for m in [re.search(re.escape(w), text, re.I)])
-        assert "Check first" in urllib.request.urlopen(base + "/opportunities").read().decode()
+        assert "2x Check" in urllib.request.urlopen(base + "/opportunities").read().decode()
     finally:
         srv.shutdown()

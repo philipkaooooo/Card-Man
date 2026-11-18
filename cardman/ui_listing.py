@@ -3,7 +3,7 @@ number. Detail (pricing, identity, costs, raw data) is one click away, closed by
 
 Verdicts:
   BUY up to X       sold evidence backs a max-buy price at or above the all-in cost, and the identity is settled
-  NEEDS YOUR CHECK  money depends on which printing it is (or the seller may have it wrong): a look at the card decides
+  2x CHECK          money depends on which printing it is (or the seller may have it wrong): a look at the card decides
   WATCH             something is worth following, but nothing proves a price yet (guide price only, an interesting lot)
   PASS              rejected, shelved, or loses money
 Without real sold evidence there is never a BUY.
@@ -21,7 +21,7 @@ from .games import card_href
 
 BUY, CHECK, WATCH, PASS = "BUY", "CHECK", "WATCH", "PASS"
 ORDER = {BUY: 0, CHECK: 1, WATCH: 2, PASS: 3}
-LABEL = {BUY: "Buy", CHECK: "Check first", WATCH: "Watch", PASS: "Skip"}
+LABEL = {BUY: "Buy", CHECK: "2x Check", WATCH: "Watch", PASS: "Skip"}
 SURE = {"High": "Sure", "Medium": "Fairly sure", "Low": "Not sure"}
 CLS = {BUY: "good", CHECK: "warn", WATCH: "info", PASS: "crit"}
 IDENTITY_KINDS = {"RIGHT_PRINT_ONLY", "MISIDENTIFIED", "HIDDEN_VARIANT"}
@@ -110,7 +110,7 @@ def verdict(d: dict, status: str, M) -> Verdict:
             return V(WATCH, "Watch", f"{what}: we can't tell what each card is worth yet, but {cue}. Ask the seller for a card list or photos.")
         return V(PASS, "Skip", f"{what}, and nothing in it looks cheap.")
     if "LOT_UNDERPRICED" in kinds:
-        return V(CHECK, "Check first", f"The cards in this lot usually sell for more than it costs (about {M(d.get('expected_profit'), True)} "
+        return V(CHECK, "2x Check", f"The cards in this lot usually sell for more than it costs (about {M(d.get('expected_profit'), True)} "
                  "profit after fees). Check the card list and condition.")
     if status == "SHELVED" and not (kinds & IDENTITY_KINDS):
         return V(PASS, "Skip", "Not cheaper than it usually sells for.")
@@ -120,15 +120,15 @@ def verdict(d: dict, status: str, M) -> Verdict:
                      f"Cheaper than it usually sells for: {M(all_in)} to you, and it's worth paying up to {M(top['max_buy'])}. "
                      f"Based on {n} recent sale{'s' if n != 1 else ''}.")
         if all_in <= top["max_buy"]:
-            return V(CHECK, "Check first", f"A good price if it's the {version(top)} version, but it could be one of {ncand} versions. "
+            return V(CHECK, "2x Check", f"A good price if it's the {version(top)} version, but it could be one of {ncand} versions. "
                      "Check the photos first.")
         if not (kinds & IDENTITY_KINDS) and (d.get("best_profit") is None or d.get("best_profit") <= 0):
             return V(PASS, "Skip", f"Costs more than it usually sells for: {M(all_in)} to you, but it's only worth up to {M(top['max_buy'])}.")
     if kinds & IDENTITY_KINDS:
         if "MISIDENTIFIED" in kinds:
             f = next((f["text"] for f in d.get("findings") or [] if f.get("kind") in ("ASPECT_CONFLICT", "CODE_NAME_MISMATCH", "PHOTO_CONTRADICTS_SELLER")), None)
-            return V(CHECK, "Check first", f or "The title and the card don't match. Check the photos to see which card it really is.")
-        return V(CHECK, "Check first", "Can't tell which version this is, and they sell for different prices. Check the photos.")
+            return V(CHECK, "2x Check", f or "The title and the card don't match. Check the photos to see which card it really is.")
+        return V(CHECK, "2x Check", "Can't tell which version this is, and they sell for different prices. Check the photos.")
     if "REFERENCE_GAP" in kinds or ref:
         return V(WATCH, "Watch", "Looks cheap next to the price guides, but we haven't seen enough real sales to be sure.")
     if "SELLER_UNSURE" in kinds:
@@ -138,7 +138,7 @@ def verdict(d: dict, status: str, M) -> Verdict:
     return V(PASS, "Skip", "Not cheaper than it usually sells for.")
 
 
-VTIP = {BUY: "Buy: cheaper than it usually sells for, backed by real sales", CHECK: "Check first: look at the photos before buying",
+VTIP = {BUY: "Buy: cheaper than it usually sells for, backed by real sales", CHECK: "2x Check: one thing needs a second look before buying",
         WATCH: "Watch: might be interesting, not enough sales to be sure", PASS: "Skip: not cheaper than it usually sells for"}
 
 
@@ -345,56 +345,43 @@ def site_of(key: str) -> str:
     return "ebay" if src.startswith("ebay") else "yahoo" if src.startswith("yahoo") else "mercari" if src.startswith("mercari") else "other"
 
 
-def view_list(st, cards, now, M, *, v_filter: str, t_filter: str, home_cur: str, site: str = "any",
-              pmin: float | None = None, pmax: float | None = None, game: str = "ygo") -> str:
+def view_list(st, cards, now, M, *, v_filter: str, t_filter: str, home_cur: str, site: str = "any", game: str = "ygo") -> str:
+    """Listings: the decision rail (with live counts) on top, then two filter sections, then one card per listing."""
+    from .ui_decide import deal_card, first_seen, rail
     items = decisions(st, M, game)
-    counts = {c: sum(1 for i in items if i[3].code == c) for c in ORDER}
     is_lot = lambda d: "LOT" in (d.get("kinds") or [])
-    shown = [i for i in items if (v_filter == "all" and i[3].code != PASS) or i[3].code == v_filter or v_filter == "every"]
-    if t_filter == "singles":
-        shown = [i for i in shown if not is_lot(i[2])]
-    elif t_filter == "lots":
-        shown = [i for i in shown if is_lot(i[2])]
-    if site != "any":
-        shown = [i for i in shown if site_of(i[0]) == site]
-    k = float(getattr(M, "k", 1) or 1)                       # price filters are in the display currency
-    if pmin is not None:
-        shown = [i for i in shown if (i[2].get("all_in_home") or 0) * k >= pmin]
-    if pmax is not None:
-        shown = [i for i in shown if (i[2].get("all_in_home") or 0) * k <= pmax]
+    pool = [i for i in items if (t_filter != "singles" or not is_lot(i[2])) and (t_filter != "lots" or is_lot(i[2]))
+            and (site == "any" or site_of(i[0]) == site)]
+    counts = {c: sum(1 for i in pool if i[3].code == c) for c in ORDER}      # counts follow the other filters
+    shown = [i for i in pool if (v_filter == "all" and i[3].code != PASS) or i[3].code == v_filter or v_filter == "every"]
     shown.sort(key=lambda i: (ORDER[i[3].code], -(i[3].margin if i[3].margin is not None else -1e12), -(i[2].get("priority") or 0)))
-    state = {"v": v_filter, "t": t_filter, "site": site, "min": "" if pmin is None else f"{pmin:g}", "max": "" if pmax is None else f"{pmax:g}"}
+    state = {"v": v_filter, "t": t_filter, "site": site}
 
     def href(**kw):
         from urllib.parse import urlencode
         q = {**state, **kw}
-        return "/opportunities?" + urlencode({a: b for a, b in q.items() if b not in ("", None)})
+        return "/opportunities?" + urlencode({a: b for a, b in q.items() if b not in ("", None, "any") and not (a == "v" and b == "all")})
 
-    def chip(param, val, text, n=None):
+    def chip(param, val, text):
         on = state[param] == val
-        return f'<a class="fchip{" on" if on else ""}" href="{e(href(**{param: val}))}">{e(text)}' + (f' <b>{n}</b>' if n is not None else "") + '</a>'
+        return f'<a class="fchip{" on" if on else ""}" href="{e(href(**{param: val}))}"{" aria-current=\"true\"" if on else ""}>{e(text)}</a>'
     bar = ('<div class="filterbar">'
-           '<div class="fchips">' + chip("v", "all", "Worth a look", sum(counts[c] for c in (BUY, CHECK, WATCH)))
-           + chip("v", BUY, "Buy", counts[BUY]) + chip("v", CHECK, "Check first", counts[CHECK]) + chip("v", WATCH, "Watch", counts[WATCH])
-           + chip("v", PASS, "Skip", counts[PASS]) + '</div><div class="fchips">'
-           + chip("t", "any", "Single cards and lots") + chip("t", "singles", "Single cards") + chip("t", "lots", "Lots")
-           + '<span class="sep"></span>' + "".join(chip("site", v, label) for v, label in SITES) + '</div>'
-           f'<form class="prange" method="get" action="/opportunities">'
-           + "".join(f'<input type="hidden" name="{a}" value="{e(b)}">' for a, b in state.items() if a in ("v", "t", "site"))
-           + f'<label>Total from <input name="min" value="{e(state["min"])}" inputmode="decimal" size="6"></label>'
-           f'<label>to <input name="max" value="{e(state["max"])}" inputmode="decimal" size="6"></label>'
-           f'<span class="muted small">{e(getattr(M, "cur", ""))}</span><button>Apply</button>'
-           + (f'<a class="small" href="{e(href(min="", max=""))}">clear</a>' if pmin is not None or pmax is not None else "")
-           + '</form></div>')
+           + rail(counts, v_filter if v_filter in ORDER else None, lambda code, on: href(v="all" if on else code))
+           + '<div class="fsecs"><div class="fsec" role="group" aria-label="All Cards"><h3>All Cards</h3>'
+           + chip("t", "any", "All cards") + chip("t", "singles", "Single cards") + chip("t", "lots", "Lots") + '</div>'
+           + '<div class="fsec" role="group" aria-label="Sites"><h3>Sites</h3>' + "".join(chip("site", v, label) for v, label in SITES) + '</div></div></div>')
     from .history import sparks as _sparks
     sp = _sparks(st, now, home_cur)
-    ph = photo_counts(st, [item_id_of(key, d) for key, _s, d, _v in shown[:150]])
-    rows = [row_html(key, d, v, cards, M, now, sp, ph) for key, status, d, v in shown[:150]]
-    hidden = "" if v_filter in (PASS, "every") else f'<p class="muted small">{counts[PASS]} skipped listings are hidden. <a href="{e(href(v=PASS))}">Show them</a>.</p>'
-    more = f'<p class="muted small">Showing the first 150 of {len(shown)}. Narrow the filters to see the rest.</p>' if len(shown) > 150 else ""
+    page_items = shown[:150]
+    ph = photo_counts(st, [item_id_of(key, d) for key, _s, d, _v in page_items])
+    seen = first_seen(st, [key for key, *_ in page_items])
+    rows = [deal_card(key, d, v, cards, M, now, ph, seen.get(key), (sp or {}).get(d.get("printing_id") or "", "") if not is_lot(d) else "")
+            for key, status, d, v in page_items]
+    hidden = "" if v_filter in (PASS, "every") else f'<p class="muted small">{counts[PASS]:,} skipped listings are hidden. <a href="{e(href(v=PASS))}">Show them</a>.</p>'
+    more = f'<p class="muted small">Showing the first 150 of {len(shown):,}. Pick a lane or a site to see the rest.</p>' if len(shown) > 150 else ""
     return ('<h1>Listings</h1><p class="sub">Every listing with our take. We only say Buy when real sales back the price.</p>'
             + bar + hidden
-            + (f'<div class="lrows">{"".join(rows)}</div>' if rows else '<p class="empty">Nothing matches these filters. Try “Worth a look” or clear the price range.</p>')
+            + (f'<div class="deals">{"".join(rows)}</div>' if rows else '<p class="empty">Nothing matches these filters. Try “All cards” or “All sites”.</p>')
             + more)
 
 
@@ -571,7 +558,7 @@ align-items:center;justify-content:center;color:#fff;font-size:12px;background:v
 .conf-m{display:inline-flex;align-items:center;gap:2px;vertical-align:middle;cursor:help}.conf-m i{width:6px;height:12px;border-radius:2px;
 background:var(--line);display:inline-block}.conf-m i.on{background:var(--fg2)}.conf-m small{margin-left:5px;font-size:12px;color:var(--fg2)}
 .fchips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px;align-items:center}
-.filterbar{position:sticky;top:58px;z-index:20;background:var(--bg);padding:10px 0 4px;margin:0 0 6px;border-bottom:1px solid var(--line)}
+.filterbar{padding:6px 0 0;margin:0 0 6px}
 .prange{display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin:0 0 6px}.prange label{flex-direction:row;align-items:center;gap:6px}
 @media(max-width:860px){.filterbar{top:0;position:static}}.fchips .sep{width:10px}
 .fchip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:4px 12px;font-size:13px;color:var(--fg2);text-decoration:none}

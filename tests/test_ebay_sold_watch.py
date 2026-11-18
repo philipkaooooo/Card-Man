@@ -150,4 +150,5 @@ def test_home_lists_recorded_sales_without_crashing(tmp_path):
     b.items["1"] = item(4)
     check(e, NOW + timedelta(hours=7), browse=b)
     page = view_home(e.store, None, NOW + timedelta(hours=8), "USD", "market")
-    assert "Recently sold" in page and "$10" in page and "version not known" in page
+    # Home is the decisions only: search, then nothing that has no decision to make (no "Recently sold" shelf)
+    assert "Recently sold" not in page and "Find the exact card" in page

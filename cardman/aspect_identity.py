@@ -2,7 +2,7 @@
 
 The seller picks these from eBay's own lists, and they usually match the card. When they agree with the title and
 the catalog, they settle the exact version, the same way a confirmed set code, rarity and edition would. When they
-contradict the title, nothing is settled and the listing says why ("Check first"). Fakes and condition are still
+contradict the title, nothing is settled and the listing says why ("2x Check"). Fakes and condition are still
 for a person to judge from the photos: the details only say which card the seller listed.
 """
 from __future__ import annotations

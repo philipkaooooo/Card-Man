@@ -322,6 +322,7 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     from .ui_settings import SETTINGS_CSS
     from .ui_chart import CHART_CSS
     from .ui_icons import EFFECTS_CSS, ICON_CSS, SPRITE
+    from .ui_decide import DECIDE_CSS
     theme = theme if theme in THEMES else "market"
     where = NAV_OF.get(nav, "")
     links = "".join(f'<a href="{h}"{ON if k == where else ""}>{e(t)}</a>' for k, t, h in NAV)
@@ -336,9 +337,9 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     flash = (f'<div class="note ok">{e(msg)}</div>' if msg else "") + (f'<div class="note bad">{e(err)}</div>' if err else "")
     crumb = f'<a class="crumb-back" href="{e(back[1])}">← {e(back[0])}</a>' if back else ""
     tz = datetime.now().astimezone().strftime("UTC%z")
-    return (f'<!doctype html><html lang="en" data-theme="{"vault" if theme == "vault" else "light"}"><head><meta charset="utf-8">'
+    return (f'<!doctype html><html lang="en" data-theme="{"vault" if theme == "vault" else "auto"}"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)} · CardMan</title>'
-            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{CHART_CSS}{ICON_CSS}{EFFECTS_CSS}{SHELL_CSS}</style></head><body>{SPRITE}'
+            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{CHART_CSS}{ICON_CSS}{EFFECTS_CSS}{SHELL_CSS}{DECIDE_CSS}</style></head><body>{SPRITE}'
             + scope_links(f'<header class="top"><a class="logo" href="/">CardMan</a><nav class="main" aria-label="Main">{links}</nav>{hsearch}'
                           f'{games}{curs}</header><main class="page">{crumb}{flash}{body}</main>', game) +
             f'<footer class="foot">Private to this Mac · times {e(tz)} · press <kbd>/</kbd> to search</footer>'
@@ -1381,7 +1382,8 @@ def _js_version() -> str:
         from .ui_chart import CHART_JS
         from .ui_home import HOME_JS
         from .ui_import import IMPORT_JS
-        _JSV.append(hashlib.sha256((JS + HOME_JS + IMPORT_JS + CHART_JS).encode()).hexdigest()[:10])
+        from .ui_decide import DECIDE_JS
+        _JSV.append(hashlib.sha256((JS + HOME_JS + IMPORT_JS + CHART_JS + DECIDE_JS).encode()).hexdigest()[:10])
     return _JSV[0]
 
 
@@ -1879,8 +1881,7 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     return self._page("opportunities", "Listings", view_list(
                         st, idx, now, M, v_filter=v if v in ("all", "BUY", "CHECK", "WATCH", "PASS", "every") else "all",
                         t_filter=t if t in ("any", "singles", "lots") else "any", home_cur=M.cur,
-                        site=qs.get("site", ["any"])[0] if qs.get("site", ["any"])[0] in ("any", "ebay", "yahoo", "mercari", "other") else "any",
-                        pmin=_num(qs.get("min", [""])[0]), pmax=_num(qs.get("max", [""])[0]), game="pkm"), qs)
+                        site=qs.get("site", ["any"])[0] if qs.get("site", ["any"])[0] in ("any", "ebay", "yahoo", "mercari", "other") else "any", game="pkm"), qs)
                 if parts[:1] in (["opp"], ["import"], ["settings"], ["costs"], ["static"]):
                     return self._go("/" + "/".join(parts) + (("?" + urlsplit(self.path).query) if urlsplit(self.path).query else ""))
                 return self._send(404, page("Not found", "<h1>Not found</h1>", nav="", store=store_path, game="pkm"))
@@ -1913,7 +1914,8 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                 from .ui_home import HOME_JS
                 from .ui_import import IMPORT_JS
                 from .ui_chart import CHART_JS
-                return self._send(200, (JS + HOME_JS + IMPORT_JS + CHART_JS).encode(), "text/javascript; charset=utf-8")
+                from .ui_decide import DECIDE_JS
+                return self._send(200, (JS + HOME_JS + IMPORT_JS + CHART_JS + DECIDE_JS).encode(), "text/javascript; charset=utf-8")
             if len(parts) == 3 and parts[0] == "card" and parts[1].isdigit() and parts[2] in ("history.json", "history.html"):
                 try:
                     from .identity import edition_variants
@@ -2059,8 +2061,7 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                         self._page("opportunities", "Listings",
                                    view_list(st, cards, now, M, v_filter=v if v in ("all", "BUY", "CHECK", "WATCH", "PASS", "every") else "all",
                                              t_filter=t if t in ("any", "singles", "lots") else "any", home_cur=M.cur,
-                                             site=qs.get("site", ["any"])[0] if qs.get("site", ["any"])[0] in ("any", "ebay", "yahoo", "mercari", "other") else "any",
-                                             pmin=_num(qs.get("min", [""])[0]), pmax=_num(qs.get("max", [""])[0])).replace(
+                                             site=qs.get("site", ["any"])[0] if qs.get("site", ["any"])[0] in ("any", "ebay", "yahoo", "mercari", "other") else "any").replace(
                                        '</p>', '</p>' + tick, 1), qs)
                 elif parts == ["opportunities", "engine"]:
                     self._page("engine", "Engine details", view_opportunities(st, now, token, self._cur(), qs.get("show", ["open"])[0]), qs)

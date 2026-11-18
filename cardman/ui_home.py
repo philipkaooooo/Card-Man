@@ -130,7 +130,7 @@ def _tile(key, title, price, currency, payload, M, *, ask_home=None, sub="", pho
 
 
 def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", assumed_costs: bool = True, EM=None, game: str = "ygo") -> str:
-    """Search, then what needs you: Buy and Check first, then a few Watch singles. New singles and recent sales below."""
+    """Search, then the decisions: the rail with live counts, the top Buys, then the 2x Checks. Nothing else."""
     from .ui_listing import BUY, CHECK, WATCH, decisions, row_html
     M = Money(st, home, cur, now)
     vault = theme == "vault"
@@ -146,83 +146,26 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", a
         out.append('<p class="note slimnote">"Worth paying up to" prices use <b>starter</b> costs. <a href="/settings">Set your real fees and shipping</a>.</p>')
 
     if "opportunity" in have and EM is not None:
+        from .ui_decide import deal_card, first_seen, rail
+        from .ui_listing import PASS, item_id_of, photo_counts
         items = decisions(st, EM, game)
         high = lambda d: (d.get("ask_home") or 0) >= float(VAULT_MIN_HOME) or re.search(r"\b(PSA|BGS|CGC|ARS|SGC)\s*\d", d.get("title") or "", re.I)
         if vault:
             items = [i for i in items if high(i[2])]
-        lot = lambda d: "LOT" in (d.get("kinds") or [])
-        by = lambda code, lots=False: [i for i in items if i[3].code == code and lot(i[2]) == lots]
-        buy, check, watch, watch_lots = by(BUY), by(CHECK), by(WATCH), by(WATCH, True)
+        counts = {c: sum(1 for i in items if i[3].code == c) for c in (BUY, CHECK, WATCH, PASS)}
         rank = lambda i: (-(i[3].margin or -1e12), -(i[2].get("priority") or 0))
-        top = sorted(buy, key=rank) + sorted(check, key=rank)
-        from .history import sparks as _sparks
-        sp = _sparks(st, now, getattr(M, 'home', 'TWD'))
-        from .ui_listing import item_id_of, photo_counts
-        shown = top[:6] + sorted(watch, key=rank)[:max(0, 8 - len(top[:6]))]
-        ph = photo_counts(st, [item_id_of(k, d) for k, _s, d, v in shown])
-        rows = [row_html(k, d, v, idx, EM, now, sp, ph) for k, _s, d, v in shown]
-        chips = ('<div class="fchips">'
-                 f'<a class="fchip" href="/opportunities?v=BUY">Buy <b>{len(buy)}</b></a>'
-                 f'<a class="fchip" href="/opportunities?v=CHECK">Check first <b>{len(check)}</b></a>'
-                 f'<a class="fchip" href="/opportunities?v=WATCH&t=singles">Watch <b>{len(watch)}</b></a>'
-                 f'<a class="fchip" href="/opportunities?v=WATCH&t=lots">Lots worth a look <b>{len(watch_lots)}</b></a></div>')
-        out.append('<section class="shelf"><div class="shelf-h"><h2>Decisions for you</h2><a href="/opportunities">All listings →</a></div>' + chips
-                   + (f'<div class="lrows">{"".join(rows)}</div>' if rows else
-                      '<p class="empty">Nothing needs you right now. CardMan checks eBay every 15 minutes while it is open.</p>')
-                   + ('' if buy else '<p class="muted small">No "Buy" yet: we only say Buy after seeing enough real sales of that exact card. More sales come in by '
-                      'automatically; you can also <a href="/import">add sales</a>.</p>') + '</section>')
-
-    if "listing" in have:
-        recent = st.db.execute(
-            "SELECT l.key, l.title, l.price, l.currency, o.payload_json FROM listing l LEFT JOIN opportunity o ON o.key=l.key "
-            "WHERE l.ended_at IS NULL AND l.kind IN ('ask','bid','auction') AND COALESCE(o.status,'')<>'REJECTED' "
-            "ORDER BY l.first_seen DESC, l.rowid DESC LIMIT 300").fetchall()
-        rt = []
-        for key, title, price, currency, pj in recent:
-            p = json.loads(pj) if pj else None
-            if (p or {}).get("game", "ygo") != game:
-                continue
-            ah = (p or {}).get("ask_home")
-            if vault and not ((ah or 0) >= float(VAULT_MIN_HOME)):
-                continue
-            if "LOT" not in ((p or {}).get("kinds") or []) and _listing_art(p):
-                rt.append((key, title, price, currency, p, ah))
-            if len(rt) == 6:
-                break
-        if rt:
-            from .ui_listing import item_id_of, photo_counts
-            ph = photo_counts(st, [item_id_of(k, p) for k, _t, _pr, _c, p, _a in rt])
-            tiles = [_tile(k, t, pr, c, p, M, ask_home=a, photo=bool(ph.get(item_id_of(k, p) or ""))) for k, t, pr, c, p, a in rt]
-            out.append('<section class="shelf"><div class="shelf-h"><h2>New single cards</h2><a href="/opportunities?t=singles">More →</a></div>'
-                       f'<div class="tiles-l">{"".join(tiles)}</div></section>')
-
-    sold = st.db.execute(
-        "SELECT o.id FROM observation o WHERE o.synthetic=0 AND o.evidence_type IN "
-        "('MARKETPLACE_MARKED_SOLD','ACCEPTED_OFFER','INDEPENDENT_TRANSACTION') ORDER BY o.event_time DESC LIMIT 200").fetchall()
-    srows = []
-    from .games import game_of
-    for (oid,) in sold:
-        if len(srows) == 6:
-            break
-        try:
-            o = st.effective(oid)          # decoded record, with any confirmed printing applied
-        except Exception:
-            continue
-        cands = o.printing_candidates
-        if not cands or game_of(cands[0]) != game:
-            continue
-        pc = passcode_of(cands[0]) if len(cands) == 1 else None
-        title = st.db.execute("SELECT title FROM listing WHERE listing_id=? LIMIT 1", (o.listing_id,)).fetchone() if "listing" in have else None
-        name = ((idx.card(pc) or {}).get("name_en") if (pc and idx is not None) else None) or (title[0] if title else o.listing_id or oid)
-        site = {"ebay_browse:sold_count": "eBay", "ebay": "eBay", "130point": "130point", "yahoo_auctions_jp": "Yahoo! Auctions",
-                "mercari_jp": "Mercari", "manual": "you"}.get(o.source, o.source)
-        srows.append(f'<li>{img(pc, "small", name)}<span><b>{e(name)}</b><br><span class="muted small">{e(site)} · {e(f"{o.event_time:%b} {o.event_time.day}")}'
-                     f'{"" if len(cands) == 1 else " · version not known"}</span></span>'
-                     f'<span class="sold-p">{e(charts.fmt(float(o.original_amount), o.currency))}</span></li>')
-    out.append('<section class="shelf"><div class="shelf-h"><h2>Recently sold</h2><a href="/import">Add sales →</a></div>'
-               + (f'<ul class="soldlist">{"".join(srows)}</ul>' if srows else
-                  '<p class="empty">No sales seen yet. They come in by themselves as cards sell; you can also '
-                  '<a href="/import">add sales</a>.</p>') + '</section>')
+        buy = sorted((i for i in items if i[3].code == BUY), key=rank)[:6]
+        check = sorted((i for i in items if i[3].code == CHECK), key=rank)[:6]
+        ph = photo_counts(st, [item_id_of(k, d) for k, _s, d, _v in buy + check])
+        seen = first_seen(st, [k for k, *_ in buy + check])
+        cards_of = lambda group: "".join(deal_card(k, d, v, idx, EM, now, ph, seen.get(k)) for k, _s, d, v in group)
+        out.append(rail(counts, None, lambda code, on: f"/opportunities?v={code}", compact=True))
+        out.append('<div class="home-h"><h2>Top Buys</h2><a href="/opportunities?v=BUY">All Buys →</a></div>'
+                   + (f'<div class="deals">{cards_of(buy)}</div>' if buy else
+                      '<p class="empty">No Buy right now: we only say Buy after enough real sales of that exact card. '
+                      'CardMan checks eBay every 15 minutes while it is open; you can also <a href="/import">add sales</a>.</p>'))
+        out.append('<div class="home-h"><h2>2x Checks</h2><a href="/opportunities?v=CHECK">All 2x Checks →</a></div>'
+                   + (f'<div class="deals">{cards_of(check)}</div>' if check else '<p class="empty">Nothing to double-check right now.</p>'))
     return "".join(out)
 
 

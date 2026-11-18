@@ -146,7 +146,7 @@ class Store:
         self.path = Path(path)
         if str(path) != ":memory:":
             self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(str(path))
+        self.db = sqlite3.connect(str(path), timeout=30)     # wait for the engine's write instead of failing the page
         self.db.execute("PRAGMA foreign_keys=ON")
         self.db.executescript(_SCHEMA)
         with self.db:

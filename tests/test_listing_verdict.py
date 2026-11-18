@@ -117,8 +117,10 @@ def test_listing_filters_site_kind_and_price(tmp_path):
     assert "Cheap eBay card" in page() and "Dear Yahoo card" in page() and "Lot of 300" in page()
     assert "Dear Yahoo card" not in page(site="ebay") and "Cheap eBay card" not in page(site="yahoo")
     assert "Lot of 300" not in page(t="singles") and "Cheap eBay card" not in page(t="lots")
-    assert "Dear Yahoo card" not in page(pmax=500.0) and "Cheap eBay card" not in page(pmin=500.0)
-    assert 'class="filterbar"' in page()
+    assert 'class="filterbar"' in page() and 'name="min"' not in page() and "Total from" not in page()   # no price range
+    p = page()
+    assert '<nav class="rail"' in p and all(w in p for w in ("Buy", "2x Check", "Watch", "Skip"))
+    assert '<h3>All Cards</h3>' in p and '<h3>Sites</h3>' in p
 
 
 def test_reprints_and_impossible_prices_are_never_watch_or_confirmed():
