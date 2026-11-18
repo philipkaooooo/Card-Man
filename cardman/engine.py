@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS inbox_seen (hash TEXT PRIMARY KEY, file TEXT, at TEXT
 CREATE TABLE IF NOT EXISTS ocr_cache (path TEXT, mtime REAL, codes_json TEXT, text TEXT, PRIMARY KEY (path, mtime));
 CREATE TABLE IF NOT EXISTS market_signal (id TEXT PRIMARY KEY, kind TEXT, printing_id TEXT, at TEXT, detail_json TEXT);
 CREATE TABLE IF NOT EXISTS engine_run (at TEXT, data_json TEXT);
+CREATE TABLE IF NOT EXISTS engine_meta (k TEXT PRIMARY KEY, v TEXT);
 """
 
 
@@ -145,6 +146,18 @@ class Engine:
                     rep.errors.append(f"Missing from our card list ({game}): {m.get('set', 0)} sets, {m.get('card', 0)} cards")
         except Exception as x:
             rep.errors.append(f"card list refresh: {type(x).__name__}: {x}")
+
+    def _catalog_stamp(self) -> str:
+        """Changes whenever what identification reads changes: the rules (ANALYSIS_VERSION) or the master card list."""
+        from .catalog.registry import DB as REG
+        if getattr(self, "_stamp_at", 0) > time.monotonic() - 60:
+            return self._stamp
+        try:
+            built = REG.stat().st_mtime if REG.exists() else 0
+        except OSError:
+            built = 0
+        self._stamp, self._stamp_at = f"{ANALYSIS_VERSION}|{built:.0f}", time.monotonic()
+        return self._stamp
 
     def catalog_for(self, game: str):
         return self.pkm if game == "pkm" else self.catalog
@@ -306,7 +319,7 @@ class Engine:
         an = self._analyze(r, verified, ocr=True)
         ids = [p.id for p in an.identity.candidates]
         fp = hashlib.sha256(json.dumps([ANALYSIS_VERSION, r.fingerprint(), verified, authenticity, ids[:500], self._evidence_version(ids),
-                                        getattr(r, "detail_marker", ""),
+                                        getattr(r, "detail_marker", ""), self._catalog_stamp(),
                                         now.date().isoformat() if r.ends_at else ""], sort_keys=True, default=str).encode()).hexdigest()[:16]
         prev = self.db.execute("SELECT analysis_fp, created_at, snapshot_id FROM opportunity WHERE key=?", (key,)).fetchone()
         if prev and prev[0] == fp and not force:
@@ -467,12 +480,22 @@ class Engine:
         cutoff = (now - GONE_AFTER).isoformat()
         keys = [k for (k,) in self.db.execute("SELECT key FROM listing WHERE ended_at IS NULL AND last_seen>=? AND (ends_at IS NULL OR ends_at>?)",
                                               (cutoff, now.isoformat()))]
+        # When the card list or the rules change, every listing still shown is identified again, not only recent ones:
+        # a decision on screen never comes from an older card list.
+        stamp, was = self._catalog_stamp(), (self.db.execute("SELECT v FROM engine_meta WHERE k='catalog_stamp'").fetchone() or [None])[0]
+        if stamp != was:
+            seen = set(keys)
+            keys += [k for (k,) in self.db.execute("SELECT o.key FROM opportunity o JOIN listing l ON l.key=o.key WHERE l.ended_at IS NULL "
+                                                   "AND (l.ends_at IS NULL OR l.ends_at>?)", (now.isoformat(),)) if k not in seen]
         for k in keys:
             try:
                 self.analyze_listing(k, book, now, rep)
             except Exception as x:
                 rep.errors.append(f"{k}: {type(x).__name__}: {x}")
         rep.errors += list(dict.fromkeys(book.notes))[:20]
+        if stamp != was:
+            with self.db:
+                self.db.execute("INSERT OR REPLACE INTO engine_meta VALUES ('catalog_stamp', ?)", (stamp,))
         self._daily_catalog(now, rep)
         try:
             # Photos for what people will look at first: listings worth a look, newest first. Ended ones are cleaned up.
