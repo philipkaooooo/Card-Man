@@ -38,6 +38,30 @@ def _row(name: str, state: str, detail: str, ok: bool | None) -> str:
             f'<td class="fg2">{detail}</td></tr>')
 
 
+def _catalog_row() -> str:
+    """The master card list: how many versions, and what the other sources list that we do not. Must be zero."""
+    import sqlite3
+    from .catalog.registry import DB, missing, needs_look
+    try:
+        con = sqlite3.connect(DB)
+        n = dict(con.execute("SELECT game, COUNT(*) FROM printing GROUP BY game").fetchall())
+        rep = con.execute("SELECT COUNT(*) FROM printing WHERE is_reprint=1").fetchone()[0]
+        miss = missing(con)
+        look = sum(needs_look(con).values())
+        built = dict(con.execute("SELECT k, v FROM catalog_meta").fetchall())
+        con.close()
+    except Exception:
+        return _row("Master card list", "not built yet", "run: python -m cardman.catalog.registry", None)
+    sets = sum(m.get("set", 0) for m in miss.values())
+    cards = sum(m.get("card", 0) for m in miss.values())
+    state = (f"Missing from our list: {sets} sets, {cards} cards" if sets or cards else "Nothing missing")
+    detail = (f"{n.get('ygo', 0):,} Yu-Gi-Oh! and {n.get('pkm', 0):,} Pokémon versions · {rep:,} marked as reprints of an older card · "
+              + (f"{look:,} links left for a look rather than guessed · " if look else "") +
+              f"checked against TCGplayer's list on {e(built.get('built_pkm') or built.get('built_ygo') or '?')} · "
+              "full list: data/exports/catalog_*.xlsx")
+    return _row("Master card list", state, detail, not (sets or cards))
+
+
 def _pkm_row() -> str:
     """Pokémon catalog status: how many cards, when it was last downloaded."""
     import sqlite3
@@ -100,6 +124,7 @@ def view_settings(st, now: datetime, cur: str, theme: str, profile: dict | None,
         _row("Exchange rates", f"1 USD = {float(fx[0]):.2f} TWD" if fx else "none yet", f"{e(fx[2])}, {e(str(fx[1])[:10])}" if fx else "fetched on each check", bool(fx)),
         _row("Guide prices (YGOPRODeck)", "on" if (routes.get("ygoprodeck") or {}).get("on") else "off", "leads only; never used as a value", None),
         _pkm_row(),
+        _catalog_row(),
         _row("Inbox folder", "on", e((routes.get("inbox") or {}).get("detail") or "~/card-man/data/inbox"), None),
     ]
     from .card_market import coverage, coverage_line

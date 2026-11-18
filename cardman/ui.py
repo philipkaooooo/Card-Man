@@ -2314,6 +2314,7 @@ def background_engine(store_path: str, catalog, every_min: float, stop: "threadi
             try:
                 from .engine import Engine
                 eng = Engine(store_path, catalog=catalog() if catalog else None)
+                eng._skip_daily_catalog = False     # the app's own engine refreshes the master card list once a day
                 eng.tick()
                 eng.db.close()
                 ENGINE_STATUS["error"] = None

@@ -117,6 +117,35 @@ class Engine:
         except Exception:
             return None
 
+    def _daily_catalog(self, now: datetime, rep) -> None:
+        """Once a day after TCGplayer's daily update (~20:00 UTC): refresh its list and prices, rebuild the master card
+        list, and say loudly what any source lists that we do not."""
+        import sqlite3 as _sq
+        from .catalog import registry, tcgcsv
+        if getattr(self, "_skip_daily_catalog", True):       # off unless the app turns it on (never in tests)
+            return
+        try:
+            con = _sq.connect(registry.DB)
+            con.executescript(registry.SCHEMA)
+            built = dict(con.execute("SELECT k, v FROM catalog_meta").fetchall())
+            con.close()
+            if built.get("built_pkm") == now.date().isoformat() or now.hour < 21:
+                return
+            for g in ("pkm", "ygo"):
+                tcgcsv.sync(g, log=lambda *_: None)
+            registry.fetch_setlists()
+            from .pkm_catalog import PkmCatalog
+            # the plain Pokémon catalog: the build must never read the list it is writing
+            registry.build(ygo=self.catalog, pkm=PkmCatalog(self.pkm.db_path, registry=False), tcg_ygo=tcgcsv.latest("ygo"), tcg_pkm=tcgcsv.latest("pkm"), log=lambda *_: None)
+            con = _sq.connect(registry.DB)
+            miss = registry.missing(con)
+            con.close()
+            for game, m in miss.items():
+                if m.get("set") or m.get("card"):
+                    rep.errors.append(f"Missing from our card list ({game}): {m.get('set', 0)} sets, {m.get('card', 0)} cards")
+        except Exception as x:
+            rep.errors.append(f"card list refresh: {type(x).__name__}: {x}")
+
     def catalog_for(self, game: str):
         return self.pkm if game == "pkm" else self.catalog
 
@@ -444,6 +473,7 @@ class Engine:
             except Exception as x:
                 rep.errors.append(f"{k}: {type(x).__name__}: {x}")
         rep.errors += list(dict.fromkeys(book.notes))[:20]
+        self._daily_catalog(now, rep)
         try:
             # Photos for what people will look at first: listings worth a look, newest first. Ended ones are cleaned up.
             from . import listing_detail
