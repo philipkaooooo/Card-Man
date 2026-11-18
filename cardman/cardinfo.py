@@ -321,11 +321,12 @@ class ImageCache:
 
     def pkm(self, card_id: str, url: str | None, size: str = "small") -> tuple[bytes, str]:
         """A Pokémon card picture from images.pokemontcg.io, cached like the Yu-Gi-Oh! artwork."""
-        if not re.fullmatch(r"[a-z0-9.]{2,16}-[A-Za-z0-9]{1,8}", card_id or "") or size not in ("small", "large") \
-                or not (url or "").startswith("https://images.pokemontcg.io/"):
+        tcg = (url or "").startswith("https://tcgplayer-cdn.tcgplayer.com/")
+        if not re.fullmatch(r"[a-z0-9.]{2,16}-[A-Za-z0-9]{1,10}", card_id or "") or size not in ("small", "large") \
+                or not ((url or "").startswith("https://images.pokemontcg.io/") or tcg):
             return PLACEHOLDER, "image/svg+xml"
-        path = self.root / "pkm" / size / f"{card_id}.png"
-        got = self._cached(path, url, ("image/png",))
+        path = self.root / "pkm" / size / (f"{card_id}.jpg" if tcg else f"{card_id}.png")
+        got = self._cached(path, url, ("image/jpeg",) if tcg else ("image/png",))
         return got or (PLACEHOLDER, "image/svg+xml")
 
     def scan(self, filename: str) -> tuple[bytes, str]:

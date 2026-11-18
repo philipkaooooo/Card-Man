@@ -27,7 +27,8 @@ ART_CARD = re.compile(r"(?<!alt )(?<!full )(?<!alternate )(?<!alt-)\bart card")
 JUMBO = ("jumbo", "oversized", "oversize", "big card", "large card", "giant card", "burger king", "gold card", "gold cards",
          "keychain", "key chain", "keyring", "mini slab", "mini graded", "acrylic", "magnet", "sticker", "display case", "figure",
          "plush", "coin", "pin badge", "sleeves", "playmat", "binder", "toploader only")
-REPRINT = r"celebrations|classic collection|pok[eé]mon tcg classic|\bclassic\b.*\b(?:deck|box)\b|25th anniversary"
+# Words that say "this is a later reprint of an older card" (Celebrations 2021, 30th Celebration 2026, Pokémon TCG Classic).
+REPRINT = r"celebrations?|classic collection|classic coll|pok[eé]mon tcg classic|\bclassic\b|25th anniversary|\b30th\b|anniversary|\b30c\b|\bccc\b"
 CODE = ("code card", "online code", "ptcgo code", "tcg live code", "tcgo code", "digital code", "unused code")
 SEALED = ("booster box", "booster pack", "booster bundle", "elite trainer box", "etb", "blister", "sealed pack", "sealed box",
           "collection box", "premium collection", "build & battle", "build and battle", "booster display", "tin", "factory sealed",
@@ -138,7 +139,7 @@ def analyze(title: str, cat: PkmCatalog, *, description: str = "", verified: dic
                                 "from the normal card, and not tracked yet."))
 
     # the set eBay's details name is a hint for the set only: it never turns a card into a reprint
-    reprint = bool(re.search(REPRINT, parse(title_only)["low"])) and "30th celebration" not in p["low"]
+    reprint = bool(re.search(REPRINT, parse(title_only)["low"]))
     tn = norm(p["text"])
     names = _names_in(tn, cat)
     by_number: list[str] = []
@@ -149,12 +150,6 @@ def analyze(title: str, cat: PkmCatalog, *, description: str = "", verified: dic
             if tot is None or (tot.isdigit() and s.get("printed_total") == int(tot)) or (not tot.isdigit() and tot.upper()[:2] == num.upper()[:2]):
                 by_number.append(cid)
     sid = _set_of(p, cat)
-    if reprint:
-        # Celebrations / Classic reprints reuse the old number (Charizard 4/102): never the 1999 card.
-        rs = [x for x in ("cel25c", "cel25") if cat.set(x)]
-        by_number = [c for c in by_number if cat._cards[c][3] in rs]
-        findings.append(Finding("REPRINT", WARN, "A later reprint (Celebrations or Classic), not the original card: priced apart."))
-        sid = sid if sid in rs else None
     def name_ok(cid: str) -> bool:
         """The title names this card: its exact name, or the name without the ex / V / GX / VMAX ending sellers drop."""
         cn = cat._cards[cid][2]
@@ -185,9 +180,33 @@ def analyze(title: str, cat: PkmCatalog, *, description: str = "", verified: dic
             cards = [c for c in by_number if sid and cat._cards[c][3] == sid] or by_number
     else:
         named = [cid for nm in names[:1] for cid in cat.by_name.get(nm, [])]
-        if reprint:
-            named = [c for c in named if cat._cards[c][3] in ("cel25c", "cel25")]
         cards = [c for c in named if sid and cat._cards[c][3] == sid] or named
+    # Reprint is a property of the card: a reprint copies an original (same name and number). The title's reprint words
+    # pick the reprint; without them a reprint is never a candidate. A reprint is never priced as its original.
+    rep_sets = getattr(cat, "reprint_sets", set())
+    if reprint:
+        mapped = []
+        for c in cards:
+            mapped += [c] if cat._cards[c][3] in rep_sets else list(getattr(cat, "reprints", {}).get(c, []))
+        mapped = list(dict.fromkeys(mapped))
+        if sid and any(cat._cards[c][3] == sid for c in mapped):
+            mapped = [c for c in mapped if cat._cards[c][3] == sid]
+        # Which reprint line: "30th" is the 2026 30th Celebration, "Celebrations" / "25th" the 2021 Celebrations.
+        low = parse(title_only)["low"]
+        era = ("30th" if re.search(r"\b30th\b|\b30c\b", low) else "celebrations" if re.search(r"celebrations|\b25th\b|\bccc\b", low) else None)
+        if era:
+            pick = [c for c in mapped if era in norm((cat.set(cat._cards[c][3]) or {}).get("name") or "")]
+            mapped = pick or mapped
+        if mapped:
+            orig = {getattr(cat, "reprint_of", {}).get(c) for c in mapped} - {None}
+            findings.append(Finding("REPRINT_OF", INFO, "A later reprint" + (f" of {', '.join(sorted(cat.card_label(o) for o in orig))[:160]}"
+                                                                            if orig else "") + ", priced on its own."))
+            cards = mapped
+        elif cards:
+            findings.append(Finding("REPRINT", WARN, "The title says it is a reprint, but we don't have that reprint in our list yet."))
+            cards = []
+    else:
+        cards = [c for c in cards if cat._cards[c][3] not in rep_sets]       # no reprint words: never a reprint
     vnum = re.fullmatch(r"\s*#?\s*([A-Za-z]{0,5}\d{1,3}[a-z]?)\s*", str((verified or {}).get("printed_set_code") or ""))
     if vnum and cards:                           # a bare number from eBay's details ("257"): keep the card it names
         want = vnum.group(1).lstrip("0").lower() or "0"
@@ -211,6 +230,8 @@ def analyze(title: str, cat: PkmCatalog, *, description: str = "", verified: dic
             cands = named                                # the title names the version and the details confirm the card
         def common(v):
             ed = v.edition or ""
+            if " · " in ed:
+                return False                # special prints are never the default
             if ed == "Reverse Holo":
                 return "Reverse Holo" in said
             if ed.startswith("1st Edition"):
@@ -262,6 +283,10 @@ def _weights(cands, p) -> dict[str, float]:
     for v in cands:
         w = 1.0
         ed = v.edition or ""
+        if " · " in ed:                     # a stamped / error / special print: only when the title names it
+            mods = ed.split(" · ", 1)[1].lower()
+            w *= 3.0 if any(t in p["low"] for t in re.findall(r"[a-z0-9]{3,}", mods)) else 0.02
+            ed = ed.split(" · ", 1)[0]
         if "Reverse Holo" in vs:
             w *= 4.0 if ed == "Reverse Holo" else 0.4
         elif ed == "Reverse Holo":

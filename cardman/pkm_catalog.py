@@ -286,8 +286,14 @@ class PkmCatalog:
     """Same shape the shared pricing code expects (printings, by_id, families, edition_rules), plus Pokémon lookups."""
     game = "pkm"
 
-    def __init__(self, db: Path | str = DB):
+    def __init__(self, db: Path | str = DB, registry: Path | str | bool | None = None):
+        """registry: the master card list to add reprint links and extra versions from. The real catalog uses the real
+        list; any other catalog (tests) only uses the one it is given."""
         self.db_path = str(db)
+        from .catalog.registry import DB as REG
+        # registry=False: read our own sources only (the master list builder uses this, so it never reads its own output).
+        self.registry_path = (None if registry is False else Path(registry) if registry
+                              else (REG if Path(db).resolve() == DB.resolve() else None))
         self.con = sqlite3.connect(self.db_path, check_same_thread=False)
         self.con.executescript(_SCHEMA)
         self.edition_rules: dict = {}
@@ -314,11 +320,69 @@ class PkmCatalog:
         self.by_number: dict[str, list[str]] = {}
         for cid, r in self._cards.items():
             self.by_number.setdefault(_num(r[4]), []).append(cid)
+        self._load_registry()
+        for cid, row in getattr(self, "_extra", {}).items():
+            if row[8] != "Jumbo":
+                self.by_number.setdefault(_num(self._cards[cid][4]), []).append(cid)
         self.set_names = {norm(s["name"]): sid for sid, s in self._sets.items()}
         for alias, sid in (_rules().get("set_aliases") or {}).items():
             if sid in self._sets:
                 self.set_names.setdefault(norm(alias), sid)
         self.set_codes = {s["ptcgo"].upper(): sid for sid, s in self._sets.items() if s.get("ptcgo")}
+
+    def _load_registry(self) -> None:
+        """Reprint links and versions TCGplayer sells that our source lacks, from the master card list (if built)."""
+        REG = self.registry_path
+        self.reprints: dict[str, list[str]] = {}
+        self.reprint_of: dict[str, str] = {}
+        self.reprint_sets: set[str] = {sid for sid, s in self._sets.items() if re.search(r"classic collection", s.get("name") or "", re.I)}
+        if REG is None or not Path(REG).exists():
+            return
+        try:
+            con = sqlite3.connect(REG)
+            tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            self._extra: dict[str, tuple] = {}
+            if "extra_card" in tables:
+                for sid, name, rel in con.execute("SELECT set_id, name, release FROM extra_set"):
+                    self._sets.setdefault(sid, {"id": sid, "name": name, "series": "TCGplayer", "printed_total": None, "total": None,
+                                                "release": rel, "ptcgo": None, "logo": None, "symbol": None})
+                for row in con.execute("SELECT cid, set_id, set_name, release, number, name, rarity, image, subset, data_json FROM extra_card"):
+                    cid, sid, sname, rel, number, name, rarity = row[:7]
+                    self._extra[cid] = row
+                    self._cards[cid] = (cid, name, norm(name), sid, (number or "").split("/")[0], None, rarity, None, None, rel)
+                    if row[8] != "Jumbo":                       # a jumbo card is not a single: never a listing candidate
+                        self.by_name.setdefault(norm(name), []).append(cid) if hasattr(self, "by_name") else None
+            if "dropped" in tables:
+                for (pid,) in con.execute("SELECT pid FROM dropped"):
+                    p = self.by_id.pop(pid, None)
+                    if p is not None:
+                        self.printings.remove(p)
+                        cid = pid.split(":")[2]
+                        self.by_card[cid] = [x for x in self.by_card.get(cid, []) if x.id != pid]
+            for pid, orig in con.execute("SELECT pid, reprint_of FROM printing WHERE game='pkm' AND is_reprint=1 AND reprint_of IS NOT NULL"):
+                cid, ocid = pid.split(":")[2], orig.split(":")[2] if orig.startswith("pk:") else orig
+                self.reprint_of[cid] = ocid
+                if cid not in self.reprints.setdefault(ocid, []):
+                    self.reprints[ocid].append(cid)
+                self.reprint_sets.add(self._cards[cid][3]) if cid in self._cards else None
+            for pid, ver in con.execute("SELECT pid, variant FROM printing WHERE game='pkm' AND sources='tcgplayer'"):
+                cid = pid.split(":")[2]
+                if pid not in self.by_id and cid in self._cards:
+                    p = self._printing(pid, cid, ver)
+                    if p:
+                        self.printings.append(p)
+                        self.by_id[pid] = p
+                        self.by_card.setdefault(cid, []).append(p)
+            con.close()
+        except sqlite3.Error:
+            pass
+
+    def card_label(self, cid: str) -> str:
+        c = self._cards.get(cid)
+        if not c:
+            return cid
+        s = self._sets.get(c[3]) or {}
+        return f"{s.get('name')} {c[4]}/{s.get('printed_total') or '?'} {c[1]}"
 
     def _printing(self, pid: str, cid: str, ver: str) -> Printing | None:
         r = self._cards.get(cid)
@@ -336,6 +400,14 @@ class PkmCatalog:
         return self._sets.get(sid)
 
     def card(self, card_id: str) -> dict | None:
+        if card_id.startswith("tcg-") and card_id in getattr(self, "_extra", {}):
+            cid, sid, sname, rel, number, name, rarity, image, subset, dj = self._extra[card_id]
+            d = json.loads(dj or "{}")
+            return {"id": cid, "name": name, "supertype": d.get("Card Type") or "", "subtypes": [x for x in (d.get("Stage"), subset) if x],
+                    "hp": d.get("HP"), "number": (number or "").split("/")[0], "rarity": rarity,
+                    "set": {"id": sid, "name": sname, "series": "TCGplayer", "printedTotal": None, "releaseDate": rel},
+                    "rules": [d["CardText"]] if d.get("CardText") else [], "images": {"small": image, "large": image},
+                    "_source": "tcgplayer"}
         row = self.con.execute("SELECT json FROM pkm_card WHERE id=?", (card_id,)).fetchone()
         return json.loads(row[0]) if row else None
 
