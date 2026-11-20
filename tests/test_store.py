@@ -67,7 +67,17 @@ def _inputs():
     return valuation_inputs([Decimal("16000"), Decimal("15000"), Decimal("17500"), Decimal("14800")], inp)
 
 
-def test_snapshot_replays_exactly(tmp_path):
+def test_a_mark_lowers_the_ceiling_the_old_prices_would_have_allowed(tmp_path):
+    vin = _inputs()
+    plain = compute_valuation(vin)
+    marked = compute_valuation({**vin, "mark": "12000"})
+    assert marked["scenarios"]["method"] == "read"
+    assert marked["scenarios"]["conservative"] == Decimal("12000")
+    assert marked["buy_ceiling"] < plain["buy_ceiling"]
+    st = Store(tmp_path / "s.sqlite")
+    sid = st.save_snapshot(listing_ref="L1", printing_ids=[P_LOB_1ST.id], now=NOW,
+                           payload={"valuation_inputs": {**vin, "mark": "12000"}, "valuation": marked})
+    assert replay(Store(tmp_path / "s.sqlite"), sid)["matches"]
     st = Store(tmp_path / "s.sqlite")
     vin = _inputs()
     sid = st.save_snapshot(listing_ref="L1", printing_ids=[P_LOB_1ST.id], now=NOW,
@@ -77,6 +87,11 @@ def test_snapshot_replays_exactly(tmp_path):
     r = replay(Store(tmp_path / "s.sqlite"), sid)
     assert r["matches"] and r["identity_valid"]
     assert r["recorded"]["buy_ceiling"] is not None
+    refused = compute_valuation({**_inputs(), "refused": "sources disagree"})
+    assert refused["buy_ceiling"] is None and refused["scenarios"]["method"] == "read"
+    sid = st.save_snapshot(listing_ref="L2", printing_ids=[P_LOB_1ST.id], now=NOW,
+                           payload={"valuation_inputs": {**_inputs(), "refused": "sources disagree"}, "valuation": refused})
+    assert replay(Store(tmp_path / "s.sqlite"), sid)["matches"]
 
 
 def test_tampered_snapshot_is_detected(tmp_path):
