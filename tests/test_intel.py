@@ -1,7 +1,7 @@
 """Exact identification on real printings (YAML Yugi pinned subset): seller errors, traps, edition rules."""
 from dataclasses import replace
 
-from cardman.identity import Catalog, ListingSignals, resolve
+from cardman.identity import Catalog, ListingSignals, edition_variants, resolve
 from cardman.intel import analyze, lot_contents
 from cardman.listing_parser import parse_listing_text as P
 from cardman.models import IdentityStatus
@@ -68,18 +68,30 @@ def test_photo_text_that_disagrees_with_seller_is_an_upside_signal_not_proof():
     assert a.has("PHOTO_CONTRADICTS_SELLER") and a.identity.status != IdentityStatus.RESOLVED
 
 
-def test_edition_rule_resolves_only_a_verified_stamp_on_a_listed_product():
+def test_edition_rule_follows_the_code_not_just_the_product_name():
     cat = Catalog(list(CATALOG.families.values()), CATALOG.printings, edition_rules=RULES)
-    base = dict(title="Blue-Eyes White Dragon LOB-EN001", printed_set_code="LOB-EN001",
-                verified_product="Legend of Blue Eyes White Dragon")
-    ok = resolve(ListingSignals(**base, verified_edition="1st"), cat)
+    en = dict(title="Blue-Eyes White Dragon LOB-EN001", printed_set_code="LOB-EN001",
+              verified_product="Legend of Blue Eyes White Dragon")
+    # Worldwide LOB-EN was Unlimited only. A 1st stamp on that code is a conflict, not a price.
+    blocked = resolve(ListingSignals(**en, verified_edition="1st"), cat)
+    assert blocked.status == IdentityStatus.CONFLICT
+    assert any("does not include" in b for b in blocked.blocking_reasons)
+    unl = resolve(ListingSignals(**en, verified_edition="Unlimited"), cat)
+    assert unl.status == IdentityStatus.RESOLVED and unl.printing.edition == "Unlimited"
+    na = dict(title="Blue-Eyes White Dragon LOB-001", printed_set_code="LOB-001",
+              verified_product="Legend of Blue Eyes White Dragon")
+    ok = resolve(ListingSignals(**na, verified_edition="1st"), cat)
     assert ok.status == IdentityStatus.RESOLVED and ok.printing.edition == "1st" and ok.printing.id.endswith("|ed:1st")
     # seller text is not a stamp
-    assert resolve(ListingSignals(**base, seller_edition="1st"), cat).status == IdentityStatus.CANDIDATES
+    assert resolve(ListingSignals(**na, seller_edition="1st"), cat).status == IdentityStatus.CANDIDATES
     # an edition the product does not have
-    assert resolve(ListingSignals(**base, verified_edition="Limited"), cat).status == IdentityStatus.CANDIDATES
-    # no rule, no resolution: the strict default is unchanged
-    assert resolve(ListingSignals(**base, verified_edition="1st"), CATALOG).status == IdentityStatus.CANDIDATES
+    assert resolve(ListingSignals(**na, verified_edition="Limited"), cat).status == IdentityStatus.CANDIDATES
+    # no rule, no resolution
+    assert resolve(ListingSignals(**en, verified_edition="1st"), CATALOG).status == IdentityStatus.CANDIDATES
+    en_print = next(p for p in cat.by_code["LOB-EN001"] if p.product_name == "Legend of Blue Eyes White Dragon")
+    na_print = next(p for p in cat.by_code["LOB-001"] if p.product_name == "Legend of Blue Eyes White Dragon")
+    assert [v.edition for v in edition_variants(en_print, cat)] == ["Unlimited"]
+    assert [v.edition for v in edition_variants(na_print, cat)] == ["1st", "Unlimited"]
 
 
 def test_lot_itemizer_finds_cards_and_keeps_them_as_claims():

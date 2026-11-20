@@ -29,7 +29,7 @@ DEFAULT_COSTS = {
     # Resale on a US marketplace, buying from a domestic seller. Every number is shown on the page.
     "target_return": "0.20", "holding_months": "2", "capital_cost_monthly": "0.01",
     "acquisition": {"payment_fx_spread_pct": "0.0", "inbound_shipping": "5"},
-    "exit": {"platform_fee_pct": "0.1325", "outbound_shipping": "5", "returns_reserve_pct": "0.02"},
+    "exit": {"platform_fee_pct": "0.1325", "platform_fee_fixed": "0.40", "outbound_shipping": "5", "returns_reserve_pct": "0.02"},
 }
 
 

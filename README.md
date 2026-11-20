@@ -129,11 +129,12 @@ python -m cardman.ui --store data/store/evidence.sqlite                         
 1. Editions. YAML, YGOResources and YGOPRODeck still have no 1st / Unlimited / Limited field. YGOResources
    prints are `{code, date}` only (live revision 33276). Yugipedia galleries are the check, and they are not a
    stamp photo. Worldwide English is Unlimited-only, NA is 1st and Unlimited, for LOB, MRD, Spell Ruler, PSV,
-   LON, LOD, DCR and IOC. `data/edition_rules.json` is still keyed by product name, so those arrays were not
-   split: a split would mint a 1st scenario for an `LOB-EN` printing. Magic Ruler redirects to Spell Ruler;
-   the 1st-edition NA gallery is titled Magic Ruler. A verified 1st on `LOB-EN001` stays CANDIDATES.
-   `code_key` still collapses `LOB-EN001` onto `LOB-001` so a date can be found. `is_original` True means that
-   key holds the earliest listed date, not that the card is a 1st Edition.
+   LON, LOD, DCR and IOC. `editions_for` drops 1st from a code whose suffix starts with EN
+   (`LOB-EN001`). The NA code with no language segment (`LOB-001`) keeps both. A verified 1st
+   on `LOB-EN001` is a CONFLICT, not a price. Magic Ruler redirects to Spell Ruler; the
+   1st-edition NA gallery is titled Magic Ruler. `code_key` still collapses `LOB-EN001` onto
+   `LOB-001` so a date can be found. `is_original` True means that key holds the earliest
+   listed date, not that the card is a 1st Edition.
 2. Asian-English. YGOResources does have AE code and date. On the vintage samples those codes collide with
    English: `LOB-001`, `SDK-001`, `LOB-005`, `SDY-006`, `MFC-000`. Quarantine stays. Do not merge them into
    the EN namespace.
@@ -148,7 +149,7 @@ python -m cardman.ui --store data/store/evidence.sqlite                         
 5. FX. A mid print, not wired into the store: USD/TWD 32.986624 and USD/JPY 159.74951 at 2026-11-20 00:02:32
    UTC (open.er-api). Frankfurter JPY 159.97 on 2026-11-19, and no TWD. `fx.py` rejects a rate older than
    one day for the timestamp being converted. Old comps still need a rate near their own sale date.
-6. Costs. `data/profile.json` is still absent. The assumed 0.1325 matches the published eBay.com CCG rate.
-   Missing from the model: the $0.40 per-order fee (13.19 TWD at the print above) and 13.25% of buyer-paid
-   shipping. Do not write a profile from those figures. They are not a measured Taipei payout.
+6. Costs. `data/profile.json` is still absent. The assumed file uses the published eBay.com CCG rate,
+   13.25%, plus the $0.40 per-order fee as 13.19 TWD at the print above. Scan's US-unit costs use $0.40
+   directly. 13.25% of buyer-paid shipping is still not in either model. These are not a measured Taipei payout.
 7. Still closed: PSA cert (403), Yahoo Auctions closed results (500), OCR (needs images and `swiftc`).
