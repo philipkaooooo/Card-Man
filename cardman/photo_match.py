@@ -1,8 +1,9 @@
 """Whether a seller's photo and the catalog picture are the same card.
 
-A title can name an expensive card while the photo is a different one. The hash is an 8×8 average of
-the gray values. A sleeve, a glare or a crop moves it a little. A different card moves it a lot.
-Uncertain pairs are left alone: this only speaks when the two pictures clearly disagree.
+The whole frame is not the card. A listing photo has a table, a sleeve, a hand. The catalog picture is only the card.
+The check looks at card-shaped windows inside the listing photo and scores the one that fits the official art best.
+Color layout and which parts are lighter than their neighbor both have to agree. A similar average color is not a match.
+Uncertain pairs are left alone: this only speaks when the best window clearly agrees or clearly does not.
 """
 from __future__ import annotations
 
@@ -15,24 +16,196 @@ import tempfile
 import zlib
 from pathlib import Path
 
-# Mean absolute difference of an 8×8 gray sample, 0–255.
-# A sleeve or a glare stays under AGREE. A different picture lands at or over DIFFERENT.
+# Mean per-channel difference of an 8×10 color grid, 0–255, plus how the light falls across the card.
+# A sleeve or a glare stays under AGREE when the card window is the one being scored. A different picture does not.
 AGREE = 22
 DIFFERENT = 48
+_COLS, _ROWS = 8, 10
+_ASPECT = 63 / 88
 
 
 def disagrees(seller: bytes, catalog: bytes) -> bool | None:
-    """True when the two pictures are clearly different cards. None when either picture can't be read,
-    or the difference is in the middle and could be a sleeve."""
-    a, b = _sample(seller), _sample(catalog)
-    if a is None or b is None:
-        return None
-    dist = sum(abs(x - y) for x, y in zip(a, b)) / len(a)
-    if dist >= DIFFERENT:
+    """True when the best card-shaped window is a different picture. None when a picture can't be read,
+    or the best window is in the middle and could be a sleeve or a glare."""
+    verdict = judge(seller, catalog)
+    if verdict == "clash":
         return True
-    if dist <= AGREE:
+    if verdict == "match":
         return False
     return None
+
+
+def judge(seller: bytes, catalog: bytes) -> str | None:
+    """'match', 'clash', 'unsure', or None when a picture can't be read."""
+    a, b = _rgb(seller), _rgb(catalog)
+    if a is None or b is None:
+        return None
+    cat = _cells(b, _inset(_box(b[0], b[1]), 0.04))
+    best = None
+    sw, sh, _ = a
+    for box in _windows(sw, sh):
+        color, struct = _score(cat, _cells(a, box))
+        rank = color + struct * 40
+        if best is None or rank < best[0]:
+            best = (rank, color, struct)
+    _, color, struct = best
+    # A dimmer photo of the same card keeps the light-and-dark pattern and only shifts the color.
+    # A flat catalog picture has no pattern, so only the color can decide it.
+    shaped = _contrast(cat)
+    if (color <= AGREE and struct <= 0.28) or (shaped and struct <= 0.08 and color <= 40):
+        return "match"
+    if color >= DIFFERENT or (color >= 34 and struct >= 0.45):
+        return "clash"
+    return "unsure"
+
+
+def _contrast(cells: list[tuple[int, int, int]]) -> bool:
+    jumps = 0
+    for i, c in enumerate(cells):
+        if (i + 1) % _COLS == 0:
+            continue
+        n = cells[i + 1]
+        if abs(c[0] + c[1] + c[2] - n[0] - n[1] - n[2]) > 36:
+            jumps += 1
+    return jumps >= 4
+
+
+def _rgb(data: bytes) -> tuple[int, int, list[int]] | None:
+    if data.startswith(b"\x89PNG"):
+        return _png(data, rgb=True)
+    if data.startswith(b"BM"):
+        return _bmp_rgb(data)
+    if data.startswith(b"\xff\xd8"):
+        return _jpeg_rgb(data)
+    return None
+
+
+def _bmp_rgb(data: bytes) -> tuple[int, int, list[int]] | None:
+    if len(data) < 54:
+        return None
+    off = struct.unpack_from("<I", data, 10)[0]
+    w, h = struct.unpack_from("<ii", data, 18)
+    bits = struct.unpack_from("<H", data, 28)[0]
+    if bits != 24 or w < 1 or abs(h) < 1:
+        return None
+    h, flip = abs(h), h > 0
+    stride = (w * 3 + 3) & ~3
+    out = [0] * (w * h * 3)
+    for y in range(h):
+        src = h - 1 - y if flip else y
+        row = data[off + src * stride:off + src * stride + w * 3]
+        if len(row) < w * 3:
+            return None
+        base = y * w * 3
+        for x in range(w):
+            b, g, r = row[x * 3:x * 3 + 3]
+            out[base + x * 3:base + x * 3 + 3] = r, g, b
+    return w, h, out
+
+
+def _jpeg_rgb(data: bytes) -> tuple[int, int, list[int]] | None:
+    try:
+        from PIL import Image
+    except ImportError:
+        Image = None
+    if Image is not None:
+        try:
+            im = Image.open(io.BytesIO(data)).convert("RGB")
+        except Exception:
+            return None
+        w, h = im.size
+        return w, h, list(im.tobytes())
+    if sys.platform != "darwin":
+        return None
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            src, dst = Path(d) / "a.jpg", Path(d) / "a.bmp"
+            src.write_bytes(data)
+            r = subprocess.run(["sips", "-Z", "160", "-s", "format", "bmp", str(src), "--out", str(dst)],
+                               capture_output=True, timeout=8)
+            if r.returncode != 0 or not dst.exists():
+                return None
+            return _bmp_rgb(dst.read_bytes())
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def _box(w: int, h: int) -> tuple[int, int, int, int]:
+    return 0, 0, w, h
+
+
+def _inset(box: tuple[int, int, int, int], frac: float) -> tuple[int, int, int, int]:
+    x0, y0, x1, y1 = box
+    dx, dy = int((x1 - x0) * frac), int((y1 - y0) * frac)
+    if x1 - x0 - 2 * dx < 4 or y1 - y0 - 2 * dy < 4:
+        return box
+    return x0 + dx, y0 + dy, x1 - dx, y1 - dy
+
+
+def _windows(w: int, h: int) -> list[tuple[int, int, int, int]]:
+    """Card-shaped windows, largest first, centered and nudged. The full frame is only a last candidate."""
+    found = []
+    for scale in (1.0, 0.84, 0.7):
+        if w / max(h, 1) > _ASPECT:
+            ch = max(4, int(h * scale))
+            cw = max(4, int(ch * _ASPECT))
+        else:
+            cw = max(4, int(w * scale))
+            ch = max(4, int(cw / _ASPECT))
+        cw, ch = min(cw, w), min(ch, h)
+        for fx, fy in ((0.5, 0.5), (0.32, 0.5), (0.68, 0.5), (0.5, 0.32), (0.5, 0.68)):
+            x = int(round((w - cw) * fx))
+            y = int(round((h - ch) * fy))
+            x = min(max(0, x), w - cw)
+            y = min(max(0, y), h - ch)
+            found.append((x, y, x + cw, y + ch))
+    found.append((0, 0, w, h))
+    return found
+
+
+def _cells(im: tuple[int, int, list[int]], box: tuple[int, int, int, int]) -> list[tuple[int, int, int]]:
+    w, _h, pix = im
+    x0, y0, x1, y1 = box
+    out = []
+    for gy in range(_ROWS):
+        ya = y0 + (y1 - y0) * gy // _ROWS
+        yb = y0 + (y1 - y0) * (gy + 1) // _ROWS
+        for gx in range(_COLS):
+            xa = x0 + (x1 - x0) * gx // _COLS
+            xb = x0 + (x1 - x0) * (gx + 1) // _COLS
+            rs = gs = bs = n = 0
+            for sy in (ya, (ya + yb) // 2):
+                if sy >= yb or sy < 0:
+                    continue
+                row = sy * w
+                for sx in (xa, (xa + xb) // 2):
+                    if sx >= xb or sx < 0:
+                        continue
+                    i = (row + sx) * 3
+                    rs += pix[i]
+                    gs += pix[i + 1]
+                    bs += pix[i + 2]
+                    n += 1
+            out.append((rs // n, gs // n, bs // n) if n else (0, 0, 0))
+    return out
+
+
+def _score(a: list[tuple[int, int, int]], b: list[tuple[int, int, int]]) -> tuple[float, float]:
+    n = len(a)
+    color = sum(abs(p[0] - q[0]) + abs(p[1] - q[1]) + abs(p[2] - q[2]) for p, q in zip(a, b)) / (n * 3)
+    differ = 0
+    pairs = 0
+    for i in range(n):
+        if (i + 1) % _COLS == 0:
+            continue
+        pairs += 1
+        la = a[i][0] + a[i][1] + a[i][2]
+        ra = a[i + 1][0] + a[i + 1][1] + a[i + 1][2]
+        lb = b[i][0] + b[i][1] + b[i][2]
+        rb = b[i + 1][0] + b[i + 1][1] + b[i + 1][2]
+        if (la > ra + 12) != (lb > rb + 12):
+            differ += 1
+    return color, differ / pairs if pairs else 0.0
 
 
 def _sample(data: bytes) -> list[int] | None:
@@ -57,7 +230,7 @@ def _gray(data: bytes) -> tuple[int, int, list[int]] | None:
     return None
 
 
-def _png(data: bytes) -> tuple[int, int, list[int]] | None:
+def _png(data: bytes, rgb: bool = False) -> tuple[int, int, list[int]] | None:
     if len(data) < 24:
         return None
     try:
@@ -109,7 +282,12 @@ def _png(data: bytes) -> tuple[int, int, list[int]] | None:
                                     else up if abs(p - up) <= abs(p - ul) else ul)) & 255
         prev = row
         if color == 0:
-            out.extend(row)
+            if rgb:
+                out.extend(v for p in row for v in (p, p, p))
+            else:
+                out.extend(row)
+        elif rgb:
+            out.extend(v for x in range(0, stride, ch) for v in row[x:x + 3])
         else:
             out.extend((row[x] + row[x + 1] + row[x + 2]) // 3 for x in range(0, stride, ch))
     return w, h, out

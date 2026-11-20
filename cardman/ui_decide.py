@@ -22,7 +22,7 @@ import re
 from datetime import datetime
 from urllib.parse import quote
 
-from .ui_listing import BUY, CHECK, LABEL, PASS, WATCH, Verdict, _art, _likely, _passcode, item_id_of, listing_icons, lphoto
+from .ui_listing import BUY, CHECK, LABEL, PASS, WATCH, Verdict, _likely, _passcode, listing_icons
 
 LANE = {BUY: "buy", CHECK: "check", WATCH: "watch", PASS: "skip"}
 LANE_WHY = {BUY: "Cheaper than it sells for, backed by real sales",
@@ -133,16 +133,8 @@ def deal_card(key: str, d: dict, v: Verdict, cards, M, now: datetime, photos: di
     if target:
         info.append(f'<span>Buy at {e(M(target))} or less</span>')
     href = f'/opp/{quote(key, safe="")}'
-    iid = item_id_of(key, d)
-    from .ui_home import _listing_art, img
-    if iid and (photos or {}).get(iid):
-        art = lphoto(iid, 0, "l", d.get("title") or "", cls="dphoto")
-        ref = _listing_art(d)
-        if ref and not lot:
-            art += (f'<span class="refart" data-tip="What this version looks like (reference picture, not the listing)">'
-                    f'{img(ref, "small", "Reference picture")}</span>')
-    else:
-        art = _art(d, v, "large", cls="card dphoto")
+    from .ui_listing import pair_art
+    art = pair_art(key, d, photos, big=True)
     lane = LANE[v.code]
     pill = (f'<span class="dpill p-{lane}" data-tip="{e(LABEL[v.code] + ": " + LANE_WHY[v.code])}">{_icon(v.code)}{e(LABEL[v.code])}</span>'
             + (f'<span class="cpoint">{e(check_point(d, v))}</span>' if v.code == CHECK else ""))
@@ -213,7 +205,8 @@ font-weight:500;border:1px solid var(--line);background:var(--surface);transitio
 border-radius:var(--r);box-shadow:var(--shadow);transition:transform .26s var(--ease),box-shadow .26s var(--ease),opacity .26s var(--ease);
 transition-delay:var(--d,0ms)}
 .deal:hover{transform:translateY(-2px);box-shadow:var(--shadow-hi)}
-.dart{position:relative;display:block;border-radius:10px;overflow:hidden;background:var(--soft);aspect-ratio:3/4;align-self:start}
+.dart{position:relative;display:flex;align-items:flex-end;border-radius:10px;background:transparent;align-self:start}
+.dart:not(:has(.pair)){display:block;overflow:hidden;background:var(--soft);aspect-ratio:3/4}
 .dart img.dphoto,.dart .dphoto{width:100%;height:100%;object-fit:cover;display:block;border-radius:0;transition:transform .4s var(--ease)}
 .deal:hover .dphoto{transform:scale(1.03)}
 .dart .refart{right:4px;bottom:4px;width:26px;height:37px;border-radius:3px}

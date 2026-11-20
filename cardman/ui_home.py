@@ -433,9 +433,11 @@ def _market_section(passcode, market, chosen, by_id, M, now, f: dict) -> str:
         unsure = "" if r["payload"].get("printing_id") else " · version not certain"
         cond = " ".join(x for x in (r["grade_company"], r["grade"]) if x) or ("Graded" if graded else "Ungraded")
         ship = r["shipping"]
-        from .ui_listing import item_id_of, lphoto
+        from .ui_listing import item_id_of, pair_art
+        from .photo_match import apply as photo_apply
         iid = item_id_of(r["key"], r["payload"])
-        pic = lphoto(iid, 0, "s", r["title"], "mthumb") if iid else ""
+        shown = photo_apply(r["payload"], r["key"])
+        pic = pair_art(r["key"], shown, {iid: 1} if iid else None)
         from .ui_icons import icon
         site_ic = icon(r["site"], f'Listed on {SITE_NAME.get(r["site"], "another site")}') if r["site"] in ("ebay", "yahoo", "mercari") else ""
         return (f'<tr><td>{pic}</td>'

@@ -81,6 +81,16 @@ img.lphoto,img.card,.gmain img{animation:cm-fade .35s ease both}@keyframes cm-fa
 .gmain img{transition:opacity .12s ease}.gmain img.swap{opacity:.15}
 .artbox{position:relative;display:inline-block;width:64px;height:88px;flex:none}
 .artbox img.lphoto{width:64px;height:88px;object-fit:cover;border-radius:8px;background:var(--soft);display:block}
+.pair{display:inline-flex;align-items:flex-end;gap:5px;flex:none}
+.pair .card{width:56px;height:82px}
+.pair.big .card{width:68px;height:100px}
+.pair-side{display:flex;flex-direction:column;align-items:center;gap:2px}
+.pair-shot{width:26px;height:36px;object-fit:cover;border-radius:3px;display:block;background:var(--soft)}
+.pair.big .pair-shot{width:28px;height:40px}
+.pair-side small{font-size:9px;line-height:1;color:var(--muted);font-weight:600}
+.pair.p-same .pair-shot{box-shadow:0 0 0 2px var(--teal)}
+.pair.p-diff .pair-shot{box-shadow:0 0 0 2px var(--fg2)}
+.pair.p-unsure .pair-shot{box-shadow:0 0 0 2px var(--axis)}
 .refart{position:absolute;right:-6px;bottom:-6px;width:26px;height:37px;border-radius:4px;overflow:hidden;box-shadow:0 0 0 2px var(--surface),0 2px 6px rgba(0,0,0,.2)}
 .refart img{width:100%;height:100%;object-fit:cover;display:block}.refart .card.ph{width:100%;height:100%}
 .gallery{display:grid;gap:8px}.gmain{position:relative;border-radius:12px;overflow:hidden;background:var(--soft);aspect-ratio:3/4;max-width:340px}

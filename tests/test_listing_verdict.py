@@ -172,6 +172,36 @@ def test_a_different_photo_is_not_the_named_card():
     assert disagrees(b"not an image", png((1, 2, 3))) is None
 
 
+def test_a_matching_card_on_a_colored_background_is_the_card_and_the_swap_is_not():
+    import struct
+    import zlib
+    from cardman.photo_match import judge
+
+    def png(w, h, paint):
+        raw = b"".join(b"\x00" + b"".join(bytes(paint(x, y)) for x in range(w)) for y in range(h))
+
+        def chunk(tag, data):
+            return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+
+        ihdr = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)
+        return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
+
+    yellow, purple, green = (250, 220, 40), (30, 10, 40), (20, 140, 40)
+    card = png(40, 56, lambda x, y: yellow if x < 20 else purple)
+
+    def framed(flipped):
+        def paint(x, y):
+            if 25 <= x < 65 and 7 <= y < 63:
+                left = purple if flipped else yellow
+                right = yellow if flipped else purple
+                return left if (x - 25) < 20 else right
+            return green
+        return png(90, 70, paint)
+
+    assert judge(framed(False), card) == "match"
+    assert judge(framed(True), card) == "clash"
+
+
 def test_any_listing_with_a_different_photo_loses_the_card_and_its_price(tmp_path):
     from cardman.listing_detail import cache_key
     from cardman.photo_match import apply

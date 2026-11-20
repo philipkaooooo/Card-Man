@@ -270,16 +270,34 @@ def lphoto(iid: str, n: int = 0, size: str = "m", alt: str = "", cls: str = "lph
     return (f'<img class="{cls}" src="/img/listing/{e(iid)}/{n}.jpg?s={size}" alt="{e(alt)}" loading="lazy" decoding="async">')
 
 
-def _art_with_ref(key: str, d: dict, v, photos: dict | None, size: str = "m") -> str:
-    """The seller's own photo first, with the catalog picture as a small reference beside it."""
+_PAIR = {"match": ("same", "same", "Pixels agree: the listing photo is this card"),
+         "clash": ("diff", "different", "Pixels disagree: the listing photo is not this card"),
+         "unconfirmed": ("unsure", "not sure", "The listing photo is not a clear match for this card")}
+
+
+def pair_art(key: str, d: dict, photos: dict | None, *, big: bool = False) -> str:
+    """Official card picture, with the listing's own photo as a small one beside it. The word under the small
+    photo is the pixel result, not the title."""
     from .ui_home import _listing_art, img
+    if "LOT" in (d.get("kinds") or []):
+        return _art(d, None)
+    pc = _listing_art(d)
     iid = item_id_of(key, d)
-    if iid and (photos or {}).get(iid):
-        pc = _listing_art(d)
-        ref = (f'<span class="refart" data-tip="What this version looks like (reference picture, not the listing)" tabindex="0">'
-               f'{img(pc, "small", "Reference picture")}</span>') if pc and "LOT" not in (d.get("kinds") or []) else ""
-        return f'<span class="artbox">{lphoto(iid, 0, size, d.get("title") or "")}{ref}</span>'
-    return _art(d, v)
+    has = bool(iid and (photos or {}).get(iid))
+    official = img(pc, "large" if big else "small", "What this version looks like", cls="card") if pc else ""
+    if official and has:
+        kind, word, tip = _PAIR.get(d.get("photo"), ("open", "", "Listing photo next to the official picture"))
+        shot = lphoto(iid, 0, "s", "Listing photo", cls="pair-shot")
+        label = f"<small>{e(word)}</small>" if word else ""
+        return (f'<span class="pair{" big" if big else ""} p-{kind}">{official}'
+                f'<span class="pair-side" data-tip="{e(tip)}" tabindex="0">{shot}{label}</span></span>')
+    if has:
+        return lphoto(iid, 0, "m" if big else "s", d.get("title") or "", cls="card")
+    return official or _art(d, None)
+
+
+def _art_with_ref(key: str, d: dict, v, photos: dict | None, size: str = "m") -> str:
+    return pair_art(key, d, photos, big=size in ("l", "large"))
 
 
 def listing_icons(d: dict, now: datetime, detail: dict | None = None) -> str:
@@ -505,8 +523,9 @@ def view_one(st, cards, key: str, now: datetime, token: str, M, profile: dict | 
                          for i in range(min(n, 12)))
         ref_words = ("What this version looks like. Compare it with the seller's photos." if trusted
                      else "The card the title names. Compare it with the seller's photos.")
+        shown = pair_art(key, d, {iid: n})
         ref = (f'<div class="gref">{img(art_pc, "small", "Reference picture")}<span><b>Reference</b><br>{e(ref_words)}</span></div>') if art_pc and not lot else ""
-        art = (f'<div class="gallery" data-gallery><div class="gmain"><img src="/img/listing/{e(iid)}/0.jpg?s=m" alt="Photo 1 of {n}" '
+        art = (f'<div class="gallery" data-gallery>{shown}<div class="gmain"><img src="/img/listing/{e(iid)}/0.jpg?s=m" alt="Photo 1 of {n}" '
                f'tabindex="0" role="button" aria-label="Seller\'s photo 1 of {n}. Press Enter to enlarge."></div>'
                + (f'<div class="gthumbs">{thumbs}</div>' if n > 1 else "") + ref + '</div>')
     else:
@@ -618,7 +637,7 @@ background:var(--line);display:inline-block}.conf-m i.on{background:var(--fg2)}.
 @media(max-width:860px){.filterbar{top:0;position:static}}.fchips .sep{width:10px}
 .fchip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:4px 12px;font-size:13px;color:var(--fg2);text-decoration:none}
 .fchip.on{background:var(--fg);color:var(--surface);border-color:var(--fg)}.fchip b{font-weight:700}
-.lrows{display:grid;gap:8px}.lrow{display:grid;grid-template-columns:70px minmax(0,1fr) auto;gap:14px;align-items:center;padding:10px 14px;
+.lrows{display:grid;gap:8px}.lrow{display:grid;grid-template-columns:100px minmax(0,1fr) auto;gap:14px;align-items:center;padding:10px 14px;
 background:var(--surface);border:1px solid var(--line);border-radius:12px;color:var(--fg);text-decoration:none}
 .lrow:hover{box-shadow:0 6px 18px rgba(0,0,0,.07)}.lrow .card{width:56px;height:82px}
 .lr-main{display:flex;flex-direction:column;gap:2px;min-width:0}.lr-title{font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
