@@ -486,6 +486,15 @@ class Builder:
                     ed = YGO_EDITION.get(fin.lower())
                     pid = (f"{base.id}|ed:{ed}" if ed and f"{base.id}|ed:{ed}" in rows else base.id if base.id in rows
                            else eds[0] if len(eds) == 1 else None)
+                    if ed and pid == base.id:
+                        # Our list does not split this printing by edition, TCGplayer does: each edition gets its own
+                        # version, so a 1st Edition price never lands on the Unlimited card (or the other way round).
+                        sub = f"{base.id}|ed:{ed}"
+                        if sub not in rows:
+                            rows[sub] = rows[base.id][:13] + [["tcgplayer"]]
+                            rows[sub][0], rows[sub][8] = sub, ed
+                            self._bump("ygo_editions_added")
+                        pid = sub
                     if pid is None:
                         self._need("tcgplayer", "ygo", prod["productId"], "card",
                                    f"{prod['name']} {num} {rar} in {gname}: TCGplayer does not say which edition ({fin or 'none given'})")
@@ -552,6 +561,9 @@ class Builder:
             self.con.execute("INSERT OR REPLACE INTO catalog_meta VALUES (?, ?)", (f"built_{game}", self.now))
             self.con.execute("INSERT OR REPLACE INTO catalog_meta VALUES (?, ?)", (f"stats_{game}",
                                                                                    json.dumps({k: v for k, v in self.stats.items() if k.startswith(game)})))
+        with self.con:   # a price stays only on a version still linked to its product: no leftovers from an older rule
+            self.con.execute("DELETE FROM market_price WHERE pid IN (SELECT pid FROM printing WHERE game=?) "
+                             "AND pid NOT IN (SELECT pid FROM xref)", (game,))
         self._bump(f"{game}_printings", len(rows))
 
 

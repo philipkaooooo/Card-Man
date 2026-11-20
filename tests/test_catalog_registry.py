@@ -3,6 +3,7 @@
 Uses a tiny hand-made catalog and a recorded TCGplayer snapshot (written to a temp folder), never the network.
 """
 import json
+import re
 import sqlite3
 from pathlib import Path
 
@@ -66,7 +67,8 @@ def built(tmp_path):
 
 
 def linked(con, product_id):
-    return [r[0] for r in con.execute("SELECT pid FROM xref WHERE source='tcgplayer' AND ext_id=?", (str(product_id),))]
+    """The versions a TCGplayer product is linked to, without the edition part (editions have their own test)."""
+    return [re.sub(r"\|ed:[^|]+", "", r[0]) for r in con.execute("SELECT pid FROM xref WHERE source='tcgplayer' AND ext_id=?", (str(product_id),))]
 
 
 def test_reprint_and_original_never_share_a_tcgplayer_product(built):
@@ -82,7 +84,7 @@ def test_a_reprint_wave_is_its_own_version_linked_to_the_original(built):
     assert linked(con, 103) == [RETRO.id]
     sub = f"{RETRO.id}|v:2020 Date Reprint"
     assert linked(con, 104) == [sub]
-    assert con.execute("SELECT is_reprint, reprint_of FROM printing WHERE pid=?", (sub,)).fetchone() == (1, RETRO.id)
+    assert con.execute("SELECT is_reprint, reprint_of FROM printing WHERE pid=?", (f"{RETRO.id}|ed:Unlimited|v:2020 Date Reprint",)).fetchone() == (1, RETRO.id)
 
 
 def test_versions_tcgplayer_sells_apart_stay_apart_with_their_own_prices(built):
@@ -170,3 +172,20 @@ def test_real_celebi_listing_matches_the_30th_reprint_not_the_neo_original():
     assert a.weights and all(c.split(":")[2] == "me55c-106" for c in a.weights)
     b = analyze("Pokemon Shining Celebi Neo Destiny 106/105 1st Edition Holo", cat)
     assert b.weights and all(c.split(":")[2] == "neo4-106" for c in b.weights)
+
+
+def test_editions_tcgplayer_prices_apart_get_their_own_versions(tmp_path):
+    """Our list may not split a printing by edition; TCGplayer prices 1st Edition and Unlimited apart. They must never
+    share one price (the last one written would win)."""
+    root = tmp_path / "t" / "2026-11-17" / "2"
+    root.mkdir(parents=True)
+    (root / "groups.json").write_text(json.dumps({"results": [{"groupId": 9, "name": "Retro Pack", "abbreviation": "", "publishedOn": "2009-01-01"}]}))
+    (root / "9.products.json").write_text(json.dumps({"results": [prod(201, "Dark Magician", "RP01-EN001", "Rare")]}))
+    (root / "9.prices.json").write_text(json.dumps({"results": [
+        {"productId": 201, "subTypeName": "1st Edition", "lowPrice": 1, "midPrice": 2, "marketPrice": 200.0},
+        {"productId": 201, "subTypeName": "Unlimited", "lowPrice": 1, "midPrice": 2, "marketPrice": 20.0}]}))
+    db = tmp_path / "c.sqlite"
+    R.build(db, ygo=YCAT, tcg_ygo=root, log=lambda *_: None, setlists=root / "none")
+    con = sqlite3.connect(db)
+    prices = dict(con.execute("SELECT pid, market FROM market_price"))
+    assert prices == {f"{RETRO.id}|ed:1st": 200.0, f"{RETRO.id}|ed:Unlimited": 20.0}
