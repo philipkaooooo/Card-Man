@@ -41,9 +41,10 @@ def test_over_max_buy_everywhere_is_a_pass():
     assert verdict(d, "OPEN", M).code == PASS
 
 
-def test_guide_only_is_watch_with_the_reason_said_plainly():
+def test_a_price_guide_is_not_what_the_card_sells_for():
     v = verdict(D(kinds=["REFERENCE_GAP"], scenarios=[sc(basis="reference")]), "OPEN", M)
-    assert v.code == WATCH and v.reason == "Looks cheap next to the price guides, but we haven't seen enough real sales to be sure."
+    assert v.code == CHECK and v.top is None
+    assert "price guide is not a sale" in v.reason and "usually" not in v.reason.lower()
 
 
 def test_lots_say_what_they_are():
@@ -93,7 +94,7 @@ def test_listing_page_keeps_raw_data_inside_closed_details(tmp_path):
                                                                                     d["url"], None, "ask", "12", "USD", None, "t", "t", None, "fp", "{}"))
     page = view_one(db, None, key, datetime.now(timezone.utc), "tok", M, None)
     outside = re.sub(r"<details.*?</details>", "", page, flags=re.S)
-    assert "Watch" in outside and "price guides" in outside
+    assert "2x Check" in outside and "not a sale" in outside
     assert key not in outside and "SPECTATE" not in outside and "fp" not in outside and "evpi" not in outside.lower()
     assert key in page and re.search(r"<details class=\"dsec\"><summary>Technical details", page) and "<details class=\"dsec\" open" not in page
 

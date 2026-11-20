@@ -42,7 +42,7 @@ def test_each_card_is_title_first_then_info_then_a_quiet_decision():
                     "scenarios": [sc(), sc(printing_id="p:y", label="LOB-EN001 · Ultra Rare · Unlimited", weight=0.5)]})
     assert v.code == CHECK and '<span class="cpoint">Edition not stated</span>' in html and '#i-check' in html
     v, html = card({"kinds": ["REFERENCE_GAP"], "all_in_home": 90.0, "scenarios": [sc(basis="reference", max_buy=60.0, n_sales=0)]})
-    assert v.code == WATCH and "Buy at $60 or less" in html and "From price guides" in html and '#i-watch' in html
+    assert v.code == CHECK and v.top is None and "Buy at" not in html and "From price guides" not in html and "No sales yet" in html
     v, html = card({"kinds": [], "all_in_home": 130.0, "scenarios": [sc()]}, status="SHELVED")
     assert v.code == PASS and "$30 over" in html and "d-skip" in html and '#i-skip' in html
     v, html = card({"kinds": ["UNDERPRICED"], "printing_id": "p:x", "all_in_home": 4.0, "scenarios": [sc()]})

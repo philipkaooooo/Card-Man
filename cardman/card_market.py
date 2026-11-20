@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 
-INDEX_VERSION = "photo-match-1"
+INDEX_VERSION = "photo-match-2"
 _PC = re.compile(r"@([^@|]+)")   # passcode (Yu-Gi-Oh!) or pkm-<card id> (Pokémon); see games.py
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS card_listing (passcode TEXT NOT NULL, key TEXT NOT NULL, card_prob REAL NOT NULL, printing_id TEXT,
@@ -42,7 +42,9 @@ def ensure_index(st) -> None:
     from .photo_match import apply
     for key, status, pj in st.db.execute("SELECT key, status, payload_json FROM opportunity"):
         d = apply(json.loads(pj), key, st.db)
-        if d.get("photo") in ("clash", "unconfirmed"):
+        # A title, or a price guide, is not enough to file a listing under a card. The photo has to be that card.
+        # A lot is not one card's photo, so it stays counted and stays out of the price.
+        if d.get("photo") != "match" and "LOT" not in (d.get("kinds") or []):
             continue
         sc = d.get("scenarios") or []
         total = sum(s.get("weight") or 0 for s in sc)

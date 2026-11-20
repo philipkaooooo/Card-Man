@@ -166,7 +166,10 @@ def verdict(d: dict, status: str, M) -> Verdict:
             return V(CHECK, "2x Check", f or "The title and the card don't match. Check the photos to see which card it really is.")
         return V(CHECK, "2x Check", "Can't tell which version this is, and they sell for different prices. Check the photos.")
     if "REFERENCE_GAP" in kinds or ref:
-        return V(WATCH, "Watch", "Looks cheap next to the price guides, but we haven't seen enough real sales to be sure.")
+        # A guide is not a sale. It never fills "usually sells for" and it never makes a Watch.
+        return Verdict(CHECK, "2x Check",
+                       "No recorded sale of this card, so nothing here says what it sells for. A price guide is not a sale.",
+                       "Low", why, None, None)
     if "SELLER_UNSURE" in kinds:
         return V(WATCH, "Watch", "The seller isn't sure what card this is, so it may be priced too low. Not enough sales to be sure.")
     if status in ("OPEN", "ESCALATED"):
@@ -457,7 +460,9 @@ def view_one(st, cards, key: str, now: datetime, token: str, M, profile: dict | 
     if top and top.get("basis") == "sales":
         mv, mv_note = M(top.get("resale_mid")), f'<span class="ev good">{top.get("n_sales", 0)} recent sales</span> low {M(top.get("resale_low"))}'
     elif top and top.get("basis") == "reference":
-        mv, mv_note = M(top.get("resale_mid")), '<span class="ev warn">price guide</span> not a real sale'
+        mv = "—"
+        mv_note = (f'<span class="ev warn">guide {M(top.get("resale_mid"))}</span> not a sale'
+                   if d.get("photo") == "match" else '<span class="ev warn">a price guide is not a sale</span>')
     else:
         mv, mv_note = "—", '<span class="ev">not this card\'s price</span>' if claim and not trusted else '<span class="ev">no sales seen yet</span>'
     mb = M(top.get("max_buy")) if top and top.get("basis") == "sales" and top.get("max_buy") is not None else "—"
