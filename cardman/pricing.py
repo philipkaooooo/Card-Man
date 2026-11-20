@@ -126,13 +126,18 @@ class RiskView:
 
 def risk_view(sales: list[Sale], est: PriceEstimate, ask: Decimal, acquisition: AcquisitionCosts, exit_costs: ExitCosts, *,
               target_return: Decimal, capital_cost_monthly: Decimal, competing_listings: int = 0,
-              confidence: float = 0.8) -> RiskView:
-    """Resale drawn from the sales themselves, weighted by trust, scaled to the estimate. Holding time is charged as capital."""
+              confidence: float = 0.8, exit_gross: Decimal | None = None) -> RiskView:
+    """Resale drawn from the sales themselves, weighted by trust, scaled to the estimate. Holding time is charged as capital.
+
+    `exit_gross`, when set, is the mark. Draws and the max-buy both sit on it. A quantile of a short
+    window does not get to outbid the mark.
+    """
     months = min(months_to_sell(est.sales_per_month, competing_listings), 36.0)
     cost = float(acquisition.all_in(ask))
     # Recentre on the estimate so learned bias and trend carry into every draw.
     base = statistics.median(s.price for s in sales) or 1.0
-    scale = est.mid / base
+    center = float(exit_gross) if exit_gross is not None else est.mid
+    scale = center / base
     seed = int(hashlib.sha256(f"{est.mid}{ask}{len(sales)}".encode()).hexdigest()[:12], 16)
     rng = random.Random(seed)
     draws = rng.choices([s.price * scale for s in sales], [s.trust for s in sales], k=N_SIMS)
@@ -146,7 +151,7 @@ def risk_view(sales: list[Sale], est: PriceEstimate, ask: Decimal, acquisition: 
     target = cost * float(target_return)
     ret = (mean / cost) if cost > 0 else None
     ann = ((1 + ret) ** (12 / max(months, 1 / 12)) - 1) if ret is not None and ret > -1 else None
-    q_price = _wq([(s.price * scale, s.trust) for s in sales], 1 - confidence)
+    q_price = float(exit_gross) if exit_gross is not None else _wq([(s.price * scale, s.trust) for s in sales], 1 - confidence)
     ceiling = buy_ceiling(CeilingInputs(Decimal(str(round(q_price, 2))), acquisition, exit_costs, target_return,
                                         Decimal(str(round(months, 2))), capital_cost_monthly)).buy_ceiling
     return RiskView(mean, sum(p < 0 for p in profits) / N_SIMS, sum(p >= target for p in profits) / N_SIMS, p10, cvar,
