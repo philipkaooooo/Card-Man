@@ -3,7 +3,7 @@
 usage:
   python -m cardman.engine once [--store PATH]
   python -m cardman.engine run --interval 900
-  python -m cardman.engine confirm KEY --printed-code LOB-EN001 --rarity \"Ultra Rare\" --edition 1st --product \"...\" --authentic yes
+  python -m cardman.engine confirm KEY --printed-code LOB-EN001 --rarity "Ultra Rare" --edition 1st --product "..." --authentic yes
 """
 from __future__ import annotations
 
