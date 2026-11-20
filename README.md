@@ -149,8 +149,14 @@ python -m cardman.ui --store data/store/evidence.sqlite                         
    `marketPrice` is not a sale and, on LOB-001 product 21792, one number covers 1st Edition and Unlimited.
    `screen` buys the cheapest ask of one SKU and exits at the next ask of that same SKU after a
    Level 1-4 fee (10.75% capped at $75, plus 2.5% and $0.30). A gap that dies is NO. A gap that
-   survives is LOOK, and it is still not a return: no sold history was available (the sales endpoints
-   answered 403 and 404). Market minus lowest on 21792 is a misread. The cheap ask is Damaged Unlimited.
+   survives is LOOK, and it is still not a return. The per-listing sales table is signed and a
+   naked `latestsales` path stays closed. The chart is not: `price/history/{id}/detailed` returns
+   cleared low and high per SKU when called the way the product page calls it. `judge` buys an ask
+   only against that same variant, condition and language. A low under 20% of its own bucket's
+   market price is thrown out. Fewer than three usable sales is THIN, not a buy. On the 2026-11-21
+   pull, 1st Edition Near Mint of 21792 cleared twice in a year, at 14.99 and 4000, so it is not a
+   book. Unlimited Near Mint's newest cleared low was 119.99 on 2026-11-14, and the 161.99 ask is NO.
+   Market minus lowest on 21792 is a misread. The cheap ask is Damaged Unlimited.
    LOB-EN001 25th (486054) and Worldwide English (476160) are different products. Pokémon is line 3 and
    Pokémon Japan is line 85; neither is fed to the Yu-Gi-Oh resolver. PriceCharting and YGOPRODeck
    `card_prices` / `set_price` are not sales either.

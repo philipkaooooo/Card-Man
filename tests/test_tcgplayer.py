@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from cardman.tcgplayer import asks_for, misread, parse_product, screen, search_singles, seller_net, variants
+from cardman.tcgplayer import (
+    asks_for, judge, misread, parse_product, screen, search_singles, seller_net, variants)
 
 DATA = Path(__file__).parent / "data" / "tcgplayer"
 
@@ -88,7 +89,43 @@ def test_commission_caps_at_75_dollars():
     assert seller_net(Decimal("100")) == Decimal("86.45")
 
 
-def test_search_keeps_only_in_scope_singles_of_the_requested_game():
+def test_near_mint_unlimited_ask_is_above_the_last_cleared_low():
+    hit = load("lob001_search_hit.json")
+    listing = parse_product(hit).listings[0]
+    assert listing.condition == "Near Mint" and listing.printing == "Unlimited"
+    row = judge(listing, load("lob001_quarter.json"))
+    assert row.label == "NO"
+    assert row.exit_low == Decimal("119.99") and row.exit_date == "2026-11-14"
+    assert row.sales == 10 and row.after_fees < 0
+
+
+def test_damaged_ask_under_its_own_cleared_low_is_a_look_not_a_return():
+    hit = load("lob001_search_hit.json")
+    listing = parse_product(hit).listings[1]
+    assert listing.condition == "Damaged"
+    row = judge(listing, load("lob001_quarter.json"))
+    assert row.label == "LOOK" and row.exit_low == Decimal("26.6")
+    assert row.after_fees == Decimal("2.91")
+    assert "not a return" in row.why and row.sales >= 3
+
+
+def test_two_1st_edition_prints_a_year_apart_are_not_a_book():
+    hit = load("lob001_search_hit.json")
+    # Same dollars as the Near Mint Unlimited ask, but the SKU is 1st Edition.
+    listing = parse_product(hit).listings[0]
+    listing = type(listing)(**{**listing.__dict__, "printing": "1st Edition"})
+    row = judge(listing, load("lob001_1st_nm_annual.json"))
+    assert row.label == "THIN" and row.sales == 1 and row.after_fees is None
+    assert "14.99" in row.why and "Not a book" in row.why
+    assert "Rejected" in row.why
+
+
+def test_a_1st_edition_ask_does_not_use_unlimited_sales():
+    hit = load("lob001_search_hit.json")
+    listing = parse_product(hit).listings[0]
+    listing = type(listing)(**{**listing.__dict__, "printing": "1st Edition"})
+    row = judge(listing, load("lob001_quarter.json"))
+    assert row.label == "ABSTAIN" and row.sales == 0
     hit = load("lob001_search_hit.json")
     sealed = dict(hit, productId=1, sealed=True, listings=[])
     magic = dict(hit, productId=2, productLineId=1, listings=[])

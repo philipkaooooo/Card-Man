@@ -16,6 +16,13 @@ Those are different products from 21792. Do not join them on the number alone.
 
 ``printing`` "1st Edition" on a modern listing is TCGplayer's variant label.
 It is not proof of a 2002 North American 1st Edition.
+
+Sold buckets, per SKU, are public at
+``GET https://infinite-api.tcgplayer.com/price/history/{id}/detailed?range=quarter``
+when the request carries a browser user agent and the product page as referer.
+A naked ``latestsales`` path is still 403. Each bucket has a low and a high for
+that condition and variant, not one receipt. 1st Edition Near Mint of product
+21792 cleared twice in the year pulled 2026-11-21: 14.99 and 4000. That is not a price.
 """
 from __future__ import annotations
 
@@ -237,6 +244,115 @@ def misread(product: TcgProduct) -> str | None:
     return (f"market {product.market_price} minus lowest {product.lowest_price} is {gap}. "
             f"The cheap ask in hand is {cheap.printing} {cheap.condition} at {_all_in(cheap)}. "
             f"Market price is one number for every SKU. That gap is not a return.")
+
+
+HISTORY_URL = "https://infinite-api.tcgplayer.com/price/history/{product_id}/detailed?range={span}"
+# A cleared low under this fraction of the same bucket's market price is a bad print, not a comp.
+# 14.99 against a bucket market of 2007.50 on 1st Edition Near Mint is the case.
+OUTLIER = Decimal("0.2")
+MIN_SALES = 3
+
+
+@dataclass(frozen=True)
+class SoldBucket:
+    sku_id: int
+    variant: str
+    condition: str
+    language: str
+    date: str
+    transactions: int
+    low: Decimal
+    high: Decimal
+    market: Decimal | None
+
+
+def _buckets(doc: dict) -> tuple[SoldBucket, ...]:
+    out = []
+    for row in (doc or {}).get("result") or []:
+        if not isinstance(row, dict):
+            continue
+        for b in row.get("buckets") or []:
+            n = int(str(b.get("transactionCount") or "0").split(".")[0] or "0")
+            low = _dec(b.get("lowSalePrice"))
+            if n <= 0 or low is None or low <= 0:
+                continue
+            out.append(SoldBucket(
+                sku_id=int(row["skuId"]), variant=str(row.get("variant") or ""),
+                condition=str(row.get("condition") or ""), language=str(row.get("language") or ""),
+                date=str(b.get("bucketStartDate") or ""), transactions=n, low=low,
+                high=_dec(b.get("highSalePrice")) or low, market=_dec(b.get("marketPrice"))))
+    return tuple(out)
+
+
+def _usable(bucket: SoldBucket) -> bool:
+    if bucket.market is None or bucket.market <= 0:
+        return True
+    return bucket.low >= bucket.market * OUTLIER
+
+
+@dataclass(frozen=True)
+class SaleRead:
+    label: str
+    printing: str
+    condition: str
+    language: str
+    sales: int
+    exit_low: Decimal | None
+    exit_date: str | None
+    buy: Decimal | None
+    after_fees: Decimal | None
+    why: str
+
+
+def judge(listing: TcgListing, history: dict) -> SaleRead:
+    """Buy this ask only against cleared sales of the same variant, condition and language.
+
+    The exit is the low of the newest bucket that is not an outlier, after Level 1-4 fees.
+    Fewer than three such sales is THIN: the prices are shown and nothing is bought.
+    LOOK is still not a return. The bucket is a low and a high, not a receipt.
+    """
+    same = [b for b in _buckets(history)
+            if b.variant == listing.printing and b.condition == listing.condition and b.language == listing.language]
+    base = dict(printing=listing.printing, condition=listing.condition, language=listing.language,
+                buy=_all_in(listing), exit_low=None, exit_date=None, after_fees=None)
+    if not same:
+        return SaleRead(label="ABSTAIN", sales=0, why="no cleared sale of this SKU in the window", **base)
+    junk = [b for b in same if not _usable(b)]
+    good = [b for b in same if _usable(b)]
+    sales = sum(b.transactions for b in good)
+    if sales < MIN_SALES:
+        span = ""
+        if good:
+            span = f" usable prints {min(b.low for b in good)} to {max(b.low for b in good)}."
+        dropped = ""
+        if junk:
+            dropped = " Rejected " + ", ".join(f"{b.low} on {b.date} against a bucket market of {b.market}" for b in junk) + "."
+        return SaleRead(label="THIN", sales=sales,
+                        why=f"{sales} usable sale(s) of this SKU.{span}{dropped} Not a book.", **base)
+    newest = max(good, key=lambda b: b.date)
+    after = seller_net(newest.low) - _all_in(listing)
+    why = (f"newest cleared low {newest.low} on {newest.date}, {sales} usable sales in the window. "
+           f"A bucket low is not a receipt, so this is not a return.")
+    label = "LOOK" if after > 0 else "NO"
+    if label == "NO":
+        why = "the ask is not under the newest cleared low of this SKU after Level 1-4 fees. " + why
+    return SaleRead(label=label, sales=sales, exit_low=newest.low, exit_date=newest.date,
+                    after_fees=after, why=why, **{k: v for k, v in base.items() if k not in ("exit_low", "exit_date", "after_fees")})
+
+
+def fetch_history(product_id: int, span: str = "quarter", timeout: float = 25) -> dict:
+    """The chart the product page draws. range is quarter, month or annual."""
+    if span not in ("quarter", "month", "annual"):
+        raise ValueError(f"unsupported range {span!r}")
+    url = HISTORY_URL.format(product_id=int(product_id), span=span)
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json",
+        "Referer": f"https://www.tcgplayer.com/product/{int(product_id)}",
+        "Origin": "https://www.tcgplayer.com",
+    })
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read().decode())
 
 
 def _post(url: str, body: dict, timeout: float) -> dict:
