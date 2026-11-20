@@ -111,7 +111,12 @@ Paste a title and description as the seller wrote them (English or Japanese) wit
   sample with no such flag still uses its own low sale. The prior month stays in the history. A cross-posted
   sale has to match within 0.1% and one day. Listing counts add only this printing.
 - The keyword scanner (`market_live.py`, `spread.py`) does not run. A search mixes printings and a scraped
-  tile is not a sale. One product's SKUs are `python -m cardman.tcgplayer`.
+  tile is not a sale. `python -m cardman.tcgplayer --product 21792` pulls that product's asks. Each row
+  already names its printing, condition and language. The label is **2x**, **buy**, **watch** or **pass**.
+  2x means the cautious exit, after Level 1-4 fees, returns at least twice the all-in. buy clears the
+  all-in and is not a double. Blank shipping, a thin book, or no cleared sales stays watch. An ask above
+  the exit is pass. A row is stored only when those three fields are present, and a listing id never
+  moves to a different card. Asks the pull did not return are not invented.
 - English edition rules (`data/edition_rules.json`, hand-written, to be checked against a source) split edition-less
   English prints into edition scenarios priced from confirmed-edition sales.
 - Costs come from `data/profile.json`; until it exists the engine uses `examples/cost_profiles_ASSUMED.json`.
@@ -120,13 +125,14 @@ Paste a title and description as the seller wrote them (English or Japanese) wit
 
 ### Run
 ```
-pip install pytest && python -m pytest -q                      # 220 pass
+pip install pytest && python -m pytest -q                      # 228 pass
 python -m cardman.sources                                       # re-probe every source
 python -m cardman.identity_cache sync                           # clone/update YAML Yugi, sync cache
 python -m cardman.slice examples/identity_only_LB-01.json examples/manual_import_TEMPLATE.csv
 python -m cardman.store --store data/store/evidence.sqlite import my_sales.csv   # accumulate comps
 python -m cardman.slice listing.json --store data/store/evidence.sqlite          # value from the store
 python -m cardman.ui --store data/store/evidence.sqlite                          # http://127.0.0.1:8765
+python -m cardman.tcgplayer --product 21792                                 # every ask for one card, labeled and stored
 python -m cardman.tcgplayer yugioh "LOB-001" --html lob.html                  # same-SKU asks, the trend, and a chart of the bucket lows
 # the Scan page needs the identity cache: python -m cardman.identity_cache sync
 ```

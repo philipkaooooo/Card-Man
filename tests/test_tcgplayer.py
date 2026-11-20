@@ -6,7 +6,9 @@ from pathlib import Path
 import pytest
 
 from cardman.tcgplayer import (
-    asks_for, judge, misread, page_html, parse_product, review, review_query, screen, search_singles, seller_net, variants)
+    asks_for, assemble, fetch_listings, judge, label_listing, misread, page_html, parse_product, review,
+    review_query, screen, search_singles, seller_net, variants)
+from cardman.store import Store
 
 DATA = Path(__file__).parent / "data" / "tcgplayer"
 
@@ -225,3 +227,85 @@ def test_a_failed_history_abstains_and_is_not_fetched_twice():
     assert calls == [(21792, "quarter")] and len(rows) == 2
     assert rows[0].history_note == "history failed: TimeoutError"
     assert {r.label for r in rows[0].reads} == {"ABSTAIN"}
+    assert {c.label for c in rows[0].calls} == {"watch"}
+
+
+def _priced(**kw):
+    hit = load("lob001_details.json")
+    row = {"listingId": kw.get("listing_id", 1), "productId": kw.get("product_id", 21792),
+           "price": kw.get("price", "10"), "condition": kw.get("condition", "Near Mint"),
+           "printing": kw.get("printing", "Unlimited"), "language": kw.get("language", "English"), "quantity": 1}
+    if kw.get("shipping", 0) is not None:
+        row["shippingPrice"] = kw.get("shipping", 0)
+    hit["listings"] = [row]
+    return parse_product(hit)
+
+
+def _clears(low="100", n=3):
+    buckets = [{"bucketStartDate": f"2026-11-0{i}", "transactionCount": "1", "lowSalePrice": low,
+                "highSalePrice": low, "marketPrice": low} for i in range(1, n + 1)]
+    return {"result": [{"skuId": "1", "variant": "Unlimited", "condition": "Near Mint", "language": "English",
+                        "buckets": buckets}]}
+
+
+def test_a_double_after_fees_is_2x_and_a_smaller_gap_is_buy():
+    product = _priced(price="10", shipping=0)
+    double = label_listing(product, product.listings[0], _clears("100"))
+    assert double.label == "2x" and double.multiple >= Decimal("2") and double.typed
+    product = _priced(price="50", shipping=0)
+    bought = label_listing(product, product.listings[0], _clears("100"))
+    assert bought.label == "buy" and bought.multiple < Decimal("2") and bought.after_fees > 0
+
+
+def test_blank_shipping_or_a_thin_book_is_watch_and_an_expensive_ask_is_pass():
+    product = _priced(price="10", shipping=None)
+    assert label_listing(product, product.listings[0], _clears("100")).label == "watch"
+    product = _priced(price="10", shipping=0)
+    assert label_listing(product, product.listings[0], _clears("100", n=2)).label == "watch"
+    assert label_listing(product, product.listings[0], _clears("100")).label == "2x"
+    product = _priced(price="90", shipping=0)
+    assert label_listing(product, product.listings[0], _clears("100")).label == "pass"
+
+
+def test_a_blank_type_is_not_stored_and_a_listing_cannot_change_card(tmp_path):
+    product = _priced(printing="")
+    blank = label_listing(product, product.listings[0], _clears())
+    assert blank.typed is False
+    product = _priced(price="10", shipping=0)
+    call = label_listing(product, product.listings[0], _clears())
+    from datetime import datetime, timezone
+    now = datetime(2026, 11, 21, tzinfo=timezone.utc)
+    st = Store(tmp_path / "s.sqlite")
+    written, refused = st.save_public_listings([call.row()], now)
+    assert written == 1 and refused == []
+    moved = dict(call.row(), printing="1st Edition", card_key="tcg:21792|1st Edition|Near Mint|English")
+    written, refused = st.save_public_listings([moved], now)
+    assert written == 0 and "not tcg:21792|1st Edition" in refused[0]
+    assert st.db.execute("SELECT printing, label FROM public_listing").fetchone() == ("Unlimited", "2x")
+
+
+def test_paging_keeps_this_product_only_and_a_count_is_not_asks():
+    pages = {
+        0: {"results": [{"totalResults": 3, "results": [
+            {"listingId": 1, "productId": 21792, "price": 1},
+            {"listingId": 2, "productId": 999, "price": 2},
+        ]}]},
+        2: {"results": [{"totalResults": 3, "results": [
+            {"listingId": 3, "productId": 21792, "price": 3},
+        ]}]},
+    }
+
+    def post(url, body):
+        assert str(21792) in url
+        return pages[body["from"]]
+
+    rows, total = fetch_listings(21792, post=post, page_size=2)
+    assert total == 3 and [r["listingId"] for r in rows] == [1, 3]
+    details = load("lob001_details.json")
+    details["listings"] = 115
+    product = assemble(details, [{
+        "listingId": 7, "productId": 21792, "price": 10, "shippingPrice": 1,
+        "condition": "Near Mint", "printing": "Unlimited", "language": "English", "quantity": 1,
+    }], 115)
+    assert product.listed == 115 and len(product.listings) == 1
+    assert label_listing(product, product.listings[0], None).label == "watch"

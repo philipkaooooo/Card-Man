@@ -64,6 +64,13 @@ CREATE INDEX IF NOT EXISTS outcome_position ON outcome(position);
 CREATE TABLE IF NOT EXISTS decision (
     snapshot_id TEXT NOT NULL REFERENCES snapshot(id), action TEXT NOT NULL, rationale TEXT NOT NULL,
     wait_trigger TEXT, decided_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS public_listing (
+    source TEXT NOT NULL, listing_id TEXT NOT NULL, product_id TEXT NOT NULL, card_key TEXT NOT NULL,
+    name TEXT NOT NULL, number TEXT, printing TEXT NOT NULL, condition TEXT NOT NULL, language TEXT NOT NULL,
+    price TEXT NOT NULL, shipping TEXT, label TEXT NOT NULL, sales INTEGER NOT NULL, exit_low TEXT,
+    after_fees TEXT, multiple TEXT, why TEXT NOT NULL, seen_at TEXT NOT NULL,
+    PRIMARY KEY (source, listing_id));
+CREATE INDEX IF NOT EXISTS public_listing_card ON public_listing(card_key);
 """
 
 
@@ -149,6 +156,37 @@ class Store:
         self.db.executescript(_SCHEMA)
         with self.db:
             self.db.execute("INSERT OR IGNORE INTO meta VALUES ('store_schema_version', ?)", (str(STORE_SCHEMA_VERSION),))
+
+    def save_public_listings(self, rows: list[dict], seen_at: datetime) -> tuple[int, list[str]]:
+        """Current asks that already name one card. A listing id never moves to a different card.
+
+        The same id seen again with the same card updates the price and the label. A different
+        card key is refused and the old row stays.
+        """
+        written, refused = 0, []
+        with self.db:
+            for row in rows:
+                key = (row["source"], str(row["listing_id"]))
+                prev = self.db.execute("SELECT card_key FROM public_listing WHERE source=? AND listing_id=?", key).fetchone()
+                if prev and prev[0] != row["card_key"]:
+                    refused.append(f"{key[0]}:{key[1]} is {prev[0]}, not {row['card_key']}")
+                    continue
+                self.db.execute(
+                    "INSERT INTO public_listing (source, listing_id, product_id, card_key, name, number, printing,"
+                    " condition, language, price, shipping, label, sales, exit_low, after_fees, multiple, why, seen_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                    " ON CONFLICT(source, listing_id) DO UPDATE SET"
+                    " price=excluded.price, shipping=excluded.shipping, label=excluded.label, sales=excluded.sales,"
+                    " exit_low=excluded.exit_low, after_fees=excluded.after_fees, multiple=excluded.multiple,"
+                    " why=excluded.why, seen_at=excluded.seen_at, name=excluded.name, number=excluded.number",
+                    (row["source"], str(row["listing_id"]), str(row["product_id"]), row["card_key"], row["name"],
+                     row.get("number"), row["printing"], row["condition"], row["language"], str(row["price"]),
+                     None if row.get("shipping") is None else str(row["shipping"]), row["label"], int(row["sales"]),
+                     None if row.get("exit_low") is None else str(row["exit_low"]),
+                     None if row.get("after_fees") is None else str(row["after_fees"]),
+                     None if row.get("multiple") is None else str(row["multiple"]), row["why"], _ts(seen_at)))
+                written += 1
+        return written, refused
 
     # -- observations --------------------------------------------------------------------------
     def add_observation(self, o: MarketObservation, *, now: datetime | None = None) -> bool:

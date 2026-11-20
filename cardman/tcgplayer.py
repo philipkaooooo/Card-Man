@@ -38,6 +38,7 @@ from decimal import Decimal, ROUND_HALF_EVEN
 
 SEARCH_URL = "https://mp-search-api.tcgplayer.com/v1/search/request"
 DETAILS_URL = "https://mp-search-api.tcgplayer.com/v2/product/{product_id}/details"
+LISTINGS_URL = "https://mp-search-api.tcgplayer.com/v1/product/{product_id}/listings?mpfev=5762"
 UA = "cardman/0.2 (private research tool)"
 # The history host answers 403 to a short agent. This is the one the product page uses.
 BROWSER_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
@@ -513,6 +514,7 @@ class Review:
     misread: str | None
     history_note: str | None
     reads: tuple[SaleRead, ...]
+    calls: tuple[Call, ...] = ()
 
 
 def review(products: list[TcgProduct], histories: dict[int, dict], notes: dict[int, str] | None = None) -> list[Review]:
@@ -521,11 +523,13 @@ def review(products: list[TcgProduct], histories: dict[int, dict], notes: dict[i
     out = []
     for p in products:
         hist = histories.get(p.product_id) or {"result": []}
+        failed = bool(notes.get(p.product_id))
         out.append(Review(
             product_id=p.product_id, game=p.game, name=p.name, number=p.number, set_name=p.set_name,
             judged=len(p.listings), listed=p.listed, misread=misread(p),
             history_note=notes.get(p.product_id),
             reads=tuple(judge(row, hist) for row in p.listings),
+            calls=tuple(label_listing(p, row, None if failed else hist) for row in p.listings),
         ))
     return out
 
@@ -547,13 +551,166 @@ def review_query(game: str, query: str, *, size: int = 3, span: str = "quarter",
     return review(products, histories, notes)
 
 
-def _line(r: Review, row: SaleRead) -> str:
+TWO = Decimal("2")
+DECISIONS = ("2x", "buy", "watch", "pass")
+
+
+@dataclass(frozen=True)
+class Call:
+    """What to do with one ask. 2x and buy are the only labels worth paying on."""
+    label: str
+    product_id: int
+    listing_id: int
+    name: str
+    number: str | None
+    printing: str
+    condition: str
+    language: str
+    price: Decimal
+    shipping: Decimal | None
+    typed: bool
+    sales: int
+    exit_low: Decimal | None
+    after_fees: Decimal | None
+    multiple: Decimal | None
+    why: str
+
+    @property
+    def card_key(self) -> str:
+        return f"tcg:{self.product_id}|{self.printing}|{self.condition}|{self.language}"
+
+    def row(self) -> dict:
+        return {"source": "tcgplayer", "listing_id": self.listing_id, "product_id": self.product_id,
+                "card_key": self.card_key, "name": self.name, "number": self.number, "printing": self.printing,
+                "condition": self.condition, "language": self.language, "price": self.price,
+                "shipping": self.shipping, "label": self.label, "sales": self.sales, "exit_low": self.exit_low,
+                "after_fees": self.after_fees, "multiple": self.multiple, "why": self.why}
+
+
+def label_listing(product: TcgProduct, listing: TcgListing, history: dict | None) -> Call:
+    """2x if the cautious exit nets at least twice the all-in. buy if it only clears.
+
+    Both need shipping on the ask and three usable sales of this printing, condition
+    and language. A blank type is not stored. A blank shipping price is watch.
+    """
+    typed = bool(listing.printing and listing.condition and listing.language) and listing.product_id == product.product_id
+    empty = dict(sales=0, exit_low=None, after_fees=None, multiple=None)
+    if not typed:
+        why = "printing, condition or language is blank, or the listing is a different product. Not stored."
+        return Call("watch", product.product_id, listing.listing_id, product.name, product.number,
+                    listing.printing, listing.condition, listing.language, listing.price, listing.shipping,
+                    False, why=why, **empty)
+    if history is None:
+        return Call("watch", product.product_id, listing.listing_id, product.name, product.number,
+                    listing.printing, listing.condition, listing.language, listing.price, listing.shipping,
+                    True, why="Cleared sales were not pulled. An ask is not a sale.", **empty)
+    sale = judge(listing, history)
+    if sale.label == "NO":
+        return Call("pass", product.product_id, listing.listing_id, product.name, product.number,
+                    listing.printing, listing.condition, listing.language, listing.price, listing.shipping,
+                    True, sale.sales, sale.exit_low, sale.after_fees, None, sale.why)
+    if sale.label != "LOOK" or sale.exit_low is None or not sale.buy:
+        return Call("watch", product.product_id, listing.listing_id, product.name, product.number,
+                    listing.printing, listing.condition, listing.language, listing.price, listing.shipping,
+                    True, sale.sales, sale.exit_low, None, None, sale.why)
+    if listing.shipping is None:
+        return Call("watch", product.product_id, listing.listing_id, product.name, product.number,
+                    listing.printing, listing.condition, listing.language, listing.price, listing.shipping,
+                    True, sale.sales, sale.exit_low, None, None,
+                    "Shipping was blank, so the all-in is not known. Not a buy.")
+    multiple = _cents(seller_net(sale.exit_low) / sale.buy)
+    label = "2x" if multiple >= TWO else "buy"
+    why = (f"After Level 1-4 fees the cautious exit returns {multiple} times the all-in. " if label == "2x"
+           else "The all-in clears the cautious exit after fees and is not a double. ")
+    return Call(label, product.product_id, listing.listing_id, product.name, product.number,
+                listing.printing, listing.condition, listing.language, listing.price, listing.shipping,
+                True, sale.sales, sale.exit_low, sale.after_fees, multiple, why + sale.why)
+
+
+def _listing_query(start: int, size: int) -> dict:
+    return {
+        "from": start, "size": size,
+        "filters": {"term": {"sellerStatus": "Live", "channelId": 0},
+                    "range": {"quantity": {"gte": 1}}, "exclude": {"channelExclusion": 0}},
+        "context": {"cart": {}, "shippingCountry": "US"},
+        "sort": {"field": "price+shipping", "order": "asc"},
+    }
+
+
+def fetch_listings(product_id: int, *, post=None, page_size: int = 50, timeout: float = 25
+                   ) -> tuple[list[dict], int | None]:
+    """Every ask this product's listings call returns. Another product's row is dropped.
+
+    Stops on an empty page, a page that adds nothing, a short page, or the reported total.
+    Asks that were not in the pull are not invented.
+    """
+    post = post or _post_browser
+    seen: dict[int, dict] = {}
+    total: int | None = None
+    url = LISTINGS_URL.format(product_id=int(product_id))
+
+    def ask(body: dict) -> dict:
+        try:
+            return post(url, body, timeout)
+        except TypeError:
+            return post(url, body)
+
+    for page in range(40):
+        block = (ask(_listing_query(page * page_size, page_size)).get("results") or [{}])[0]
+        if total is None and block.get("totalResults") is not None:
+            total = int(block["totalResults"])
+        rows = [r for r in (block.get("results") or []) if isinstance(r, dict) and r.get("listingId") is not None]
+        if not rows:
+            break
+        fresh = 0
+        for row in rows:
+            if int(row.get("productId") or product_id) != int(product_id):
+                continue
+            lid = int(row["listingId"])
+            if lid in seen:
+                continue
+            seen[lid] = row
+            fresh += 1
+        if fresh == 0 or (total is not None and len(seen) >= total) or len(rows) < page_size:
+            break
+    return list(seen.values()), total
+
+
+def _post_browser(url: str, body: dict, timeout: float = 25) -> dict:
+    req = urllib.request.Request(
+        url, data=json.dumps(body).encode(), method="POST",
+        headers={"User-Agent": BROWSER_UA, "Accept": "application/json", "Content-Type": "application/json",
+                 "Referer": "https://www.tcgplayer.com/", "Origin": "https://www.tcgplayer.com"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read().decode())
+
+
+def fetch_details(product_id: int, timeout: float = 25) -> dict:
+    url = DETAILS_URL.format(product_id=int(product_id))
+    req = urllib.request.Request(url, headers={"User-Agent": BROWSER_UA, "Accept": "application/json",
+                                               "Referer": f"https://www.tcgplayer.com/product/{int(product_id)}"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read().decode())
+
+
+def assemble(details: dict, rows: list[dict], total: int | None) -> TcgProduct | None:
+    doc = dict(details)
+    if total is not None:
+        doc["totalListings"] = total
+    if not isinstance(doc.get("listings"), list):
+        doc.pop("listings", None)
+    doc["listings"] = rows
+    return parse_product(doc)
+
+
+def _line(r: Review, row: SaleRead, call: Call | None = None) -> str:
     sample = f"{r.judged} of {r.listed}" if r.listed is not None else str(r.judged)
     money = ""
     if row.after_fees is not None:
         money = f"  exit {row.exit_low} on {row.exit_date}  after fees {row.after_fees}"
     trend = f"  {row.direction} {row.prior_low}→{row.recent_low}" if row.direction else ""
-    head = (f"{row.label:7} {r.game:14} {r.number or '-':12} {row.printing} {row.condition}"
+    shown = call.label if call is not None else row.label
+    head = (f"{shown:5} {r.game:14} {r.number or '-':12} {row.printing} {row.condition}"
             f"  buy {row.buy}{money}{trend}  asks {sample}  {r.name}")
     if not row.series:
         return head
@@ -601,14 +758,70 @@ def page_html(rows: list[Review]) -> str:
     return "\n".join(parts)
 
 
+def pull(product_id: int, span: str, store_path: str) -> int:
+    """Every ask for one product id, labeled, and stored when the type is complete."""
+    from datetime import datetime, timezone
+
+    from .store import Store
+
+    details = fetch_details(product_id)
+    if int(details.get("productId") or 0) != int(product_id):
+        print(f"details were for {details.get('productId')}, not {product_id}")
+        return 1
+    rows, total = fetch_listings(product_id)
+    product = assemble(details, rows, total)
+    if product is None or not product.in_scope:
+        print(f"{product_id} is not an in-scope single")
+        return 1
+    note = None
+    try:
+        history = fetch_history(product_id, span)
+    except Exception as exc:
+        history = None
+        note = f"history failed: {type(exc).__name__}"
+    order = {name: i for i, name in enumerate(DECISIONS)}
+    calls = sorted((label_listing(product, row, history) for row in product.listings),
+                   key=lambda c: (order[c.label], c.price))
+    written, refused = Store(store_path).save_public_listings(
+        [c.row() for c in calls if c.typed], datetime.now(timezone.utc))
+    counts = {name: sum(c.label == name for c in calls) for name in DECISIONS}
+    print(f"{product.product_id} {product.name} {product.number or ''} [{product.game}]".rstrip())
+    print(f"site count {total if total is not None else 'unknown'}; captured {len(calls)}; stored {written}")
+    if total is not None and len(calls) < total:
+        print(f"{total - len(calls)} asks were not in the pull. They are not labeled.")
+    if note:
+        print(note)
+    print(" ".join(f"{name} {counts[name]}" for name in DECISIONS))
+    for c in calls:
+        if c.label not in ("2x", "buy"):
+            continue
+        all_in = c.price + c.shipping if c.shipping is not None else None
+        print(f"{c.label:4} {c.card_key} all-in {all_in} exit {c.exit_low} x{c.multiple} n={c.sales} listing {c.listing_id}")
+        print(f"     {c.why}")
+    watched = [c for c in calls if c.label == "watch"]
+    if watched:
+        print(f"watch {len(watched)}")
+        for c in watched[:8]:
+            print(f"     {c.printing} {c.condition} {c.language} {c.price}  {c.why}")
+    for line in refused:
+        print(f"refused {line}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m cardman.tcgplayer")
-    ap.add_argument("game", choices=sorted(LINE))
-    ap.add_argument("query")
+    ap.add_argument("game", nargs="?", choices=sorted(LINE))
+    ap.add_argument("query", nargs="?")
+    ap.add_argument("--product", type=int, help="one product id: pull every ask, label it, store the typed rows")
+    ap.add_argument("--store", default="data/store/evidence.sqlite")
     ap.add_argument("--size", type=int, default=3)
     ap.add_argument("--span", default="quarter", choices=("quarter", "month", "annual"))
     ap.add_argument("--html", help="write one chart per SKU, with the same numbers in a table")
     args = ap.parse_args(argv)
+    if args.product:
+        return pull(args.product, args.span, args.store)
+    if not args.game or not args.query:
+        ap.error("give a game and a query, or --product ID")
     rows = review_query(args.game, args.query, size=args.size, span=args.span)
     if not rows:
         print("no in-scope singles")
@@ -618,8 +831,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ABSTAIN {r.game} {r.number or '-'} {r.history_note}")
         if r.misread:
             print(f"MISREAD {r.number or '-'} {r.misread}")
-        for row in r.reads:
-            print(_line(r, row))
+        for row, call in zip(r.reads, r.calls or r.reads):
+            print(_line(r, row, call if r.calls else None))
         if not r.reads and not r.history_note:
             print(f"ABSTAIN {r.game} {r.number or '-'} {r.name}  no asks in the search sample")
     if args.html:
