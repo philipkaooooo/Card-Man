@@ -174,7 +174,7 @@ def _label(p) -> str:
         bits.append(p.edition)
     if p.product_name:
         bits.append(p.product_name)
-    return " \u00b7 ".join(bits)
+    return " · ".join(bits)
 
 
 def evaluate_listing(raw: RawListing, an: ListingAnalysis, book: PriceBook, catalog, ledger=None, now: datetime | None = None) -> Opportunity:
