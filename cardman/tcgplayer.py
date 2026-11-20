@@ -29,6 +29,7 @@ That is not a price.
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import urllib.parse
 import urllib.request
@@ -320,6 +321,10 @@ class SaleRead:
     buy: Decimal | None
     after_fees: Decimal | None
     why: str
+    direction: str = ""
+    prior_low: Decimal | None = None
+    recent_low: Decimal | None = None
+    series: tuple[tuple[str, Decimal, int], ...] = ()
 
 
 def _weighted_median_low(buckets: list[SoldBucket]) -> SoldBucket:
@@ -338,12 +343,54 @@ def _weighted_median_low(buckets: list[SoldBucket]) -> SoldBucket:
     return rows[-1]
 
 
+def _halves(buckets: list[SoldBucket]) -> tuple[list[SoldBucket], list[SoldBucket]] | None:
+    """Newer half of the transactions, then the older half. None when either side has under two."""
+    total = sum(b.transactions for b in buckets)
+    need = total // 2
+    if need < 2 or total - need < 2:
+        return None
+    recent, prior = [], []
+    got = 0
+    for b in sorted(buckets, key=lambda b: b.date, reverse=True):
+        if got >= need:
+            prior.append(b)
+            continue
+        room = need - got
+        if b.transactions <= room:
+            recent.append(b)
+            got += b.transactions
+        else:
+            recent.append(SoldBucket(b.sku_id, b.variant, b.condition, b.language, b.date, room, b.low, b.high, b.market))
+            prior.append(SoldBucket(b.sku_id, b.variant, b.condition, b.language, b.date,
+                                    b.transactions - room, b.low, b.high, b.market))
+            got += room
+    return recent, prior
+
+
+def _trend(buckets: list[SoldBucket]) -> tuple[str, Decimal | None, Decimal | None]:
+    """DOWN only when the newer half of clears is at least 5% under the older half."""
+    halves = _halves(buckets)
+    if halves is None:
+        return "", None, None
+    recent, prior = halves
+    recent_low = _weighted_median_low(recent).low
+    prior_low = _weighted_median_low(prior).low
+    if recent_low <= prior_low * Decimal("0.95"):
+        direction = "DOWN"
+    elif recent_low >= prior_low * Decimal("1.05"):
+        direction = "UP"
+    else:
+        direction = "FLAT"
+    return direction, prior_low, recent_low
+
+
 def judge(listing: TcgListing, history: dict) -> SaleRead:
     """Buy this ask only against cleared sales of the same variant, condition and language.
 
     The exit is the transaction-weighted median of the usable bucket lows, after
-    Level 1-4 fees. Fewer than three usable sales is THIN. A low under 20% of its
-    own bucket's market price is rejected. LOOK is still not a return.
+    Level 1-4 fees. A DOWN book uses the newer half instead, so an old high
+    cannot keep a price the last sales have already left. An UP book does not
+    get paid for the rise. Fewer than three usable sales is THIN. LOOK is not a return.
     """
     same = [b for b in _buckets(history)
             if b.variant == listing.printing and b.condition == listing.condition and b.language == listing.language]
@@ -354,6 +401,7 @@ def judge(listing: TcgListing, history: dict) -> SaleRead:
     junk = [b for b in same if not _usable(b)]
     good = [b for b in same if _usable(b)]
     sales = sum(b.transactions for b in good)
+    series = tuple((b.date, b.low, b.transactions) for b in sorted(good, key=lambda b: b.date))
     if sales < MIN_SALES:
         span = ""
         if good:
@@ -362,19 +410,26 @@ def judge(listing: TcgListing, history: dict) -> SaleRead:
         if junk:
             dropped = " Rejected " + ", ".join(
                 f"{b.low} on {b.date} against a bucket market of {b.market}" for b in junk) + "."
-        return SaleRead(label="THIN", sales=sales,
+        return SaleRead(label="THIN", sales=sales, series=series,
                         why=f"{sales} usable sale(s) of this SKU.{span}{dropped} Not a book.", **base)
+    direction, prior_low, recent_low = _trend(good)
     pick = _weighted_median_low(good)
+    if direction == "DOWN":
+        pick = _weighted_median_low(_halves(good)[0])
     after = seller_net(pick.low) - _all_in(listing)
     lo, hi = min(b.low for b in good), max(b.low for b in good)
+    move = ""
+    if direction:
+        move = f" {direction} {prior_low} to {recent_low}."
     why = (f"weighted-median bucket low {pick.low} on {pick.date}; usable lows {lo} to {hi}; "
-           f"{sales} sales. Each sale in a bucket is counted at that day's low, not at a receipt. "
+           f"{sales} sales.{move} Each sale in a bucket is counted at that day's low, not at a receipt. "
            f"Not a return.")
     label = "LOOK" if after > 0 else "NO"
     if label == "NO":
         why = "the ask is not under the median cleared low of this SKU after Level 1-4 fees. " + why
     return SaleRead(label=label, sales=sales, exit_low=pick.low, exit_date=pick.date,
-                    after_fees=after, why=why,
+                    after_fees=after, why=why, direction=direction, prior_low=prior_low,
+                    recent_low=recent_low, series=series,
                     **{k: v for k, v in base.items() if k not in ("exit_low", "exit_date", "after_fees")})
 
 
@@ -497,8 +552,53 @@ def _line(r: Review, row: SaleRead) -> str:
     money = ""
     if row.after_fees is not None:
         money = f"  exit {row.exit_low} on {row.exit_date}  after fees {row.after_fees}"
-    return (f"{row.label:7} {r.game:14} {r.number or '-':12} {row.printing} {row.condition}"
-            f"  buy {row.buy}{money}  asks {sample}  {r.name}")
+    trend = f"  {row.direction} {row.prior_low}→{row.recent_low}" if row.direction else ""
+    head = (f"{row.label:7} {r.game:14} {r.number or '-':12} {row.printing} {row.condition}"
+            f"  buy {row.buy}{money}{trend}  asks {sample}  {r.name}")
+    if not row.series:
+        return head
+    path = ", ".join(f"{d[5:]} {low}×{n}" for d, low, n in row.series)
+    return head + "\n  " + path
+
+
+def sku_svg(row: SaleRead, *, title: str) -> str:
+    """The same SVG the review UI uses. Points are bucket lows. Lines are the ask and the exit."""
+    from datetime import datetime, timezone
+    from .charts import Point, Ref, price_chart
+    pts = [Point(datetime.fromisoformat(d).replace(tzinfo=timezone.utc), float(low),
+                 "MARKETPLACE_MARKED_SOLD", "used", f"{d} low {low} ×{n}")
+           for d, low, n in row.series]
+    refs = []
+    if row.buy is not None:
+        refs.append(Ref("ask", float(row.buy), "ask"))
+    if row.exit_low is not None:
+        refs.append(Ref("exit", float(row.exit_low), "exit"))
+    return price_chart(pts, refs, currency="USD", label=title)
+
+
+def page_html(rows: list[Review]) -> str:
+    """One chart per judged SKU, and the same numbers in a table under it."""
+    parts = [
+        "<!doctype html><meta charset=utf-8><title>cardman</title>",
+        "<style>.grid{stroke:#ddd}.axis{stroke:#888}.tick{fill:#444;font:11px sans-serif}"
+        "body{font:14px sans-serif;margin:24px} table{border-collapse:collapse}"
+        "td,th{padding:2px 8px;text-align:right} td.l,th.l{text-align:left}</style>",
+    ]
+    for r in rows:
+        for row in r.reads:
+            if not row.series:
+                continue
+            title = f"{r.name} {r.number or ''} {row.printing} {row.condition}".strip()
+            parts.append(f"<h2>{html.escape(title)}</h2>")
+            parts.append(f"<p>ask {row.buy} · exit {row.exit_low} · {html.escape(row.direction)} "
+                         f"{row.prior_low} → {row.recent_low}</p>")
+            parts.append(f"<p>{html.escape(row.why)}</p>")
+            parts.append(sku_svg(row, title=title))
+            parts.append("<table><tr><th class=l>date</th><th>bucket low</th><th>sales</th></tr>")
+            for date, low, n in row.series:
+                parts.append(f"<tr><td class=l>{html.escape(date)}</td><td>{low}</td><td>{n}</td></tr>")
+            parts.append("</table>")
+    return "\n".join(parts)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -507,6 +607,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("query")
     ap.add_argument("--size", type=int, default=3)
     ap.add_argument("--span", default="quarter", choices=("quarter", "month", "annual"))
+    ap.add_argument("--html", help="write one chart per SKU, with the same numbers in a table")
     args = ap.parse_args(argv)
     rows = review_query(args.game, args.query, size=args.size, span=args.span)
     if not rows:
@@ -521,6 +622,9 @@ def main(argv: list[str] | None = None) -> int:
             print(_line(r, row))
         if not r.reads and not r.history_note:
             print(f"ABSTAIN {r.game} {r.number or '-'} {r.name}  no asks in the search sample")
+    if args.html:
+        open(args.html, "w").write(page_html(rows))
+        print(f"wrote {args.html}")
     return 0
 
 

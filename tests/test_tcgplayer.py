@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from cardman.tcgplayer import (
-    asks_for, judge, misread, parse_product, review, review_query, screen, search_singles, seller_net, variants)
+    asks_for, judge, misread, page_html, parse_product, review, review_query, screen, search_singles, seller_net, variants)
 
 DATA = Path(__file__).parent / "data" / "tcgplayer"
 
@@ -97,6 +97,7 @@ def test_near_mint_unlimited_ask_is_above_the_median_cleared_low():
     assert row.label == "NO" and row.sales == 10
     # 108.95 is in the book. The median low is still 119.99, and the ask is above it.
     assert row.exit_low == Decimal("119.99") and row.exit_date == "2026-11-14"
+    assert row.direction == "UP" and row.prior_low == Decimal("108.98") and row.recent_low == Decimal("122.98")
     assert "108.95" in row.why and row.after_fees < 0
 
 
@@ -107,8 +108,33 @@ def test_one_high_damaged_day_does_not_set_the_exit():
     row = judge(listing, load("lob001_quarter.json"))
     # Five of the ten sales cleared at 19. The 26.60 day is real and is not the exit.
     assert row.label == "NO" and row.exit_low == Decimal("19") and row.sales == 10
+    assert row.direction == "UP" and row.prior_low == Decimal("19") and row.recent_low == Decimal("19.96")
     assert row.after_fees == Decimal("-3.69")
     assert "26.6" in row.why
+
+
+def test_a_falling_book_is_priced_on_the_recent_half_not_the_old_highs():
+    listing = parse_product(load("lob001_search_hit.json")).listings[1]
+    listing = type(listing)(**{**listing.__dict__, "price": Decimal("25"), "shipping": Decimal("0"),
+                               "condition": "Near Mint", "printing": "Unlimited"})
+    history = {"result": [{"skuId": "1", "variant": "Unlimited", "condition": "Near Mint", "language": "English",
+                           "buckets": [
+                               {"bucketStartDate": "2026-08-01", "transactionCount": "5", "lowSalePrice": "40",
+                                "highSalePrice": "40", "marketPrice": "40"},
+                               {"bucketStartDate": "2026-11-01", "transactionCount": "3", "lowSalePrice": "20",
+                                "highSalePrice": "20", "marketPrice": "20"},
+                           ]}]}
+    row = judge(listing, history)
+    # The whole-window median is 40. The newer half is 20. Paying 40 would call a 25 ask a look.
+    assert row.direction == "DOWN" and row.prior_low == Decimal("40") and row.recent_low == Decimal("20")
+    assert row.exit_low == Decimal("20") and row.label == "NO" and row.after_fees == Decimal("-7.95")
+
+
+def test_the_chart_holds_the_same_numbers_as_the_table():
+    hit = load("lob001_search_hit.json")
+    page = page_html(review([parse_product(hit)], {21792: load("lob001_quarter.json")}))
+    assert "<svg" in page and "2026-11-14" in page and ">119.99<" in page
+    assert ">19<" in page and "165.98" in page and "19.87" in page
 
 
 def test_the_median_low_is_the_exit_when_one_bucket_is_high():

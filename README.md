@@ -127,7 +127,7 @@ python -m cardman.slice examples/identity_only_LB-01.json examples/manual_import
 python -m cardman.store --store data/store/evidence.sqlite import my_sales.csv   # accumulate comps
 python -m cardman.slice listing.json --store data/store/evidence.sqlite          # value from the store
 python -m cardman.ui --store data/store/evidence.sqlite                          # http://127.0.0.1:8765
-python -m cardman.tcgplayer yugioh "Blue-Eyes White Dragon"                # same-SKU asks against sold buckets
+python -m cardman.tcgplayer yugioh "LOB-001" --html lob.html                  # same-SKU asks, the trend, and a chart of the bucket lows
 # the Scan page needs the identity cache: python -m cardman.identity_cache sync
 ```
 
