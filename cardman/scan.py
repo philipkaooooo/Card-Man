@@ -157,7 +157,7 @@ def _value(store, p: Printing, parsed: ParsedListing, fx: FxTable, home: str, no
 
 def _money(v: Decimal | None, cur: str) -> str:
     if v is None:
-        return "\u2014"
+        return "—"
     from .charts import fmt
     return fmt(v.quantize(Decimal("1"), rounding=ROUND_FLOOR) if abs(v) >= 100 else v, cur)
 
