@@ -442,7 +442,7 @@ class PkmCatalog:
             return []
         if q.strip() in self._cards:
             return [self._hit(q.strip(), 100)]
-        m = re.search(r"(\d{1,3}[a-z]?)\s*/\s*(\d{1,3})", q, re.I)
+        m = re.search(r"([A-Za-z]{0,4}\d{1,3}[a-z]?)\s*/\s*([A-Za-z]{0,4}\d{1,3})", q)
         words = [w for w in qn.split() if w]
         set_hit = None
         for sname, sid in sorted(self.set_names.items(), key=lambda kv: -len(kv[0])):
@@ -455,11 +455,14 @@ class PkmCatalog:
                     set_hit = self.set_codes[w]
         scored: dict[str, float] = {}
         if m:
-            num, tot = m.group(1).lstrip("0").lower() or "0", int(m.group(2))
+            left, right = m.group(1), m.group(2)
+            num = _num(left)
             for cid in self.by_number.get(num, []):
                 s = self._sets.get(self._cards[cid][3]) or {}
-                if s.get("printed_total") == tot:
-                    scored[cid] = 80
+                same = (right.isdigit() and s.get("printed_total") == int(right)) or (
+                    not right.isdigit() and right[:2].lower() == left[:2].lower())
+                if same:
+                    scored[cid] = max(scored.get(cid, 0), 80)
         name_words = [w for w in words if not w.isdigit() and not re.fullmatch(r"\d+[a-z]?", w) and w not in _STOP]
         if set_hit:
             sw = set(norm(self._sets[set_hit]["name"]).split())

@@ -69,9 +69,37 @@ def suspect(d: dict) -> str | None:
         return (f"The title says \"{m.group(0)}\", but the version we matched is the original: this is probably a reprint "
                 "or a special print we can't price yet.")
     val, allin = top.get("resale_mid"), d.get("all_in_home")
-    if val and allin and allin < 0.10 * val:
+    # A guide is not a sale. An ask under a fifth of it is the wrong card, a fake, or a reprint, not a deal.
+    # Real sales keep the tighter tenth, so a genuine underpriced card still shows.
+    floor = 0.20 if top.get("basis") == "reference" else 0.10
+    if val and allin and allin < floor * val:
         return (f"Priced at {allin / val:.0%} of what the matched card is worth: almost certainly a reprint, a fake or a "
                 "different card, not a bargain.")
+    return None
+
+
+def photos_disagree(seller: bytes | None, catalog: bytes | None) -> bool:
+    """True only when both pictures decoded and they are clearly different cards."""
+    if not seller or not catalog:
+        return False
+    from .photo_match import disagrees
+    return disagrees(seller, catalog) is True
+
+
+def _cached_listing_photo(item_id: str) -> bytes | None:
+    from .listing_detail import CACHE, cache_key
+    k = cache_key(item_id, 0, "s")
+    path = CACHE / k[:2] / f"{k}.img"
+    return path.read_bytes() if path.exists() else None
+
+
+def _cached_catalog_photo(card_id: str) -> bytes | None:
+    from .cardinfo import IMAGES
+    for size in ("small", "large"):
+        for ext in (".png", ".jpg"):
+            path = IMAGES / "pkm" / size / f"{card_id}{ext}"
+            if path.exists() and path.stat().st_size > 32:
+                return path.read_bytes()
     return None
 
 
@@ -100,7 +128,7 @@ def verdict(d: dict, status: str, M) -> Verdict:
         return V(PASS, "Skip", "Not a single card we can price (a proxy, a different game, or not what it says).")
     sus = suspect(d)
     if sus:
-        return V(PASS, "Skip", sus)                    # never "Watch", never "looks cheap" on a match we can't trust
+        return Verdict(PASS, "Skip", sus, "Low", why, None, None)
     if "LOT" in kinds and "LOT_UNDERPRICED" not in kinds:
         size = _lot_size(d)
         what = f"A lot of {size} cards" if size else "A lot of several cards"
@@ -394,15 +422,26 @@ def view_one(st, cards, key: str, now: datetime, token: str, M, profile: dict | 
     stage, status, pj, sid = row
     d = json.loads(pj)
     v = verdict(d, status, M)
+    claim = _likely(d) or {}
+    claim_pc = _passcode(claim)
+    iid = item_id_of(key, d)
+    if (claim_pc or "").startswith("pkm-") and iid and photos_disagree(
+            _cached_listing_photo(iid), _cached_catalog_photo(claim_pc[4:])):
+        v = Verdict(PASS, "Skip",
+                    "The seller's photo is not the card the title names. That card's price does not apply to this listing.",
+                    "Low", ["The photo and the catalog picture are different cards"], None, None)
     meta = listing_meta(st, key)
     top = v.top
-    pc = _passcode(top)
+    pc = _passcode(top) or claim_pc
     c = cards.card(pc) if (pc and cards is not None) else None
     lot = "LOT" in (d.get("kinds") or [])
     settled = bool(d.get("printing_id"))
+    trusted = bool(c and settled and not lot and top is not None)
     card_line = ("Lot: " + (f"{_lot_size(d)} cards" if _lot_size(d) else "several cards")) if lot else \
-        (" · ".join((_likely(d) or top or {}).get("label", "").split(" · ")[:3]) + ("" if settled else "  (probably; version not certain)")) \
-        if (_likely(d) or top) else "Card not identified yet"
+        (" · ".join((claim or top or {}).get("label", "").split(" · ")[:3]) + ("" if settled else "  (probably; version not certain)")) \
+        if (claim or top) else "Card not identified yet"
+    if c and not trusted and not lot and card_line:
+        card_line = "Title claims: " + card_line
 
     # -- key facts
     def fact(label, value, note=""):
@@ -414,11 +453,13 @@ def view_one(st, cards, key: str, now: datetime, token: str, M, profile: dict | 
     elif top and top.get("basis") == "reference":
         mv, mv_note = M(top.get("resale_mid")), '<span class="ev warn">price guide</span> not a real sale'
     else:
-        mv, mv_note = "—", '<span class="ev">no sales seen yet</span>'
+        mv, mv_note = "—", '<span class="ev">not this card\'s price</span>' if claim and not trusted else '<span class="ev">no sales seen yet</span>'
     mb = M(top.get("max_buy")) if top and top.get("basis") == "sales" and top.get("max_buy") is not None else "—"
     mb_note = "from real sales and your costs" if mb != "—" else "needs 3+ real sales"
-    ep = d.get("expected_profit")
+    ep = d.get("expected_profit") if trusted else None
     ep_note = "after every cost" if ep is not None else ("no real sales yet" if not _sales_scenarios(d) else "not sure enough which version it is")
+    if not trusted and claim:
+        ep_note = "not this card's price"
     facts = ('<div class="facts">'
              + fact("Total to you", M(d.get("all_in_home")), landed_note)
              + fact("Usually sells for", mv, mv_note)
@@ -435,7 +476,10 @@ def view_one(st, cards, key: str, now: datetime, token: str, M, profile: dict | 
     if v.code == CHECK or not settled:
         actions.append('<a class="btn ghost" href="#confirm">Tell us which version it is</a>')
     if c:
-        actions.append(f'<a class="btn ghost" href="{e(card_href(pc))}">See this card\'s prices</a>')
+        pid = (top or claim).get("printing_id")
+        href = card_href(pc) + (("?v=" + quote(pid, safe="")) if pid else "")
+        label = "See this card's prices" if trusted else "The title claims this card"
+        actions.append(f'<a class="btn ghost" href="{e(href)}">{e(label)}</a>')
     if sid:
         actions.append(f'<a class="btn ghost" href="/deal/{e(sid)}">Full math</a>')
 
@@ -445,12 +489,13 @@ def view_one(st, cards, key: str, now: datetime, token: str, M, profile: dict | 
     n = len(det.get("images") or [])
     if n:
         from .ui_home import _listing_art, img
-        pc = _listing_art(d)
+        art_pc = claim_pc or _listing_art(d)
         thumbs = "".join(f'<button type="button" data-src="/img/listing/{e(iid)}/{i}.jpg?s=m" data-big="/img/listing/{e(iid)}/{i}.jpg?s=l" '
                          f'aria-label="Photo {i + 1} of {n}" aria-current="{str(i == 0).lower()}">{lphoto(iid, i, "s", f"Photo {i + 1}")}</button>'
                          for i in range(min(n, 12)))
-        ref = (f'<div class="gref">{img(pc, "small", "Reference picture")}<span><b>Reference</b><br>What this version looks like. '
-               'Compare it with the seller\'s photos.</span></div>') if pc and not lot else ""
+        ref_words = ("What this version looks like. Compare it with the seller's photos." if trusted
+                     else "The card the title names. Compare it with the seller's photos.")
+        ref = (f'<div class="gref">{img(art_pc, "small", "Reference picture")}<span><b>Reference</b><br>{e(ref_words)}</span></div>') if art_pc and not lot else ""
         art = (f'<div class="gallery" data-gallery><div class="gmain"><img src="/img/listing/{e(iid)}/0.jpg?s=m" alt="Photo 1 of {n}" '
                f'tabindex="0" role="button" aria-label="Seller\'s photo 1 of {n}. Press Enter to enlarge."></div>'
                + (f'<div class="gthumbs">{thumbs}</div>' if n > 1 else "") + ref + '</div>')
@@ -458,9 +503,9 @@ def view_one(st, cards, key: str, now: datetime, token: str, M, profile: dict | 
         art = _art(d, v, "", "card big")
     hero = (f'<section class="lhero vcard-{CLS[v.code]}"><div class="lh-art">{art}</div><div class="lh-body">'
             f'{badge(v, big=True)}<p class="lh-reason">{e(v.reason)}</p>{listing_icons(d, now, det)}'
-            f'<h1 class="lh-title">{e((c or {}).get("name_en") if (c and settled and not lot) else d.get("title") or key)}</h1>'
+            f'<h1 class="lh-title">{e((c or {}).get("name_en") if trusted else d.get("title") or key)}</h1>'
             f'<p class="lh-card">{e(card_line)}</p>'
-            + (f'<p class="lh-seller muted small">Listed as: {e(d.get("title"))}</p>' if (c and settled and not lot) else "")
+            + (f'<p class="lh-seller muted small">Listed as: {e(d.get("title"))}</p>' if trusted else "")
             + f'<p class="lh-conf">How sure we are {conf_meter(v)}</p>'
             + f'<div class="lh-actions">{"".join(actions)}</div></div></section>')
 

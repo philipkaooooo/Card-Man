@@ -140,3 +140,33 @@ def test_reprints_and_impossible_prices_are_never_watch_or_confirmed():
     assert suspect(fine) is None
     from cardman.aspect_identity import unsettled
     assert unsettled("Shining Celebi 106/105 Neo Revelation 1st Edition 30th Anniversary", {}) == "30th"
+
+
+def test_a_guide_price_at_a_fraction_of_the_ask_is_not_a_watch():
+    d = D(kinds=["REFERENCE_GAP"], all_in_home=28.34, ask_home=10.0,
+          title="The Pokemon Company Mewtwo GG44/GG70 Crown Zenith Full Art Holo Rare Eng",
+          scenarios=[sc(basis="reference", mid=237.0,
+                        label="Crown Zenith Galarian Gallery GG44/70 · Rare Holo VSTAR · Holo",
+                        pid="pk:EN:swsh12pt5gg-GG44:holo@pkm-swsh12pt5gg-GG44")])
+    v = verdict(d, "OPEN", M)
+    assert v.code == PASS and v.top is None and "not a bargain" in v.reason and "looks cheap" not in v.reason.lower()
+
+
+def test_a_different_photo_is_not_the_named_card():
+    import struct
+    import zlib
+    from cardman.photo_match import disagrees
+
+    def png(rgb):
+        raw = b"".join(b"\x00" + bytes(rgb) * 16 for _ in range(16))
+
+        def chunk(tag, data):
+            return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+
+        ihdr = struct.pack(">IIBBBBB", 16, 16, 8, 2, 0, 0, 0)
+        return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
+
+    assert disagrees(png((250, 220, 40)), png((30, 10, 40))) is True
+    assert disagrees(png((250, 220, 40)), png((248, 218, 42))) is False
+    assert disagrees(b"not an image", png((1, 2, 3))) is None
+
