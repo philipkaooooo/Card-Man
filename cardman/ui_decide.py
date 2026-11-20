@@ -134,7 +134,7 @@ def deal_card(key: str, d: dict, v: Verdict, cards, M, now: datetime, photos: di
         info.append(f'<span>Buy at {e(M(target))} or less</span>')
     href = f'/opp/{quote(key, safe="")}'
     from .ui_listing import pair_art
-    art = pair_art(key, d, photos, big=True)
+    art = pair_art(key, d, photos)
     lane = LANE[v.code]
     pill = (f'<span class="dpill p-{lane}" data-tip="{e(LABEL[v.code] + ": " + LANE_WHY[v.code])}">{_icon(v.code)}{e(LABEL[v.code])}</span>'
             + (f'<span class="cpoint">{e(check_point(d, v))}</span>' if v.code == CHECK else ""))
@@ -142,7 +142,7 @@ def deal_card(key: str, d: dict, v: Verdict, cards, M, now: datetime, photos: di
             + (f'<p class="dm-line">Worth paying up to <b>{e(M(top["max_buy"]))}</b></p>' if top.get("max_buy") and top.get("basis") == "sales" else "")
             + f'<p class="dm-line"><a href="{href}">Open the full listing</a></p></div></details>')
     return (f'<article class="deal d-{lane}" data-v="{v.code}"{f" data-since={chr(34)}{e(since)}{chr(34)}" if since else ""}>'
-            f'<a class="dart" href="{href}" tabindex="-1">{art}</a>'
+            f'<div class="dart">{art}</div>'
             f'<div class="dbody"><a class="dtitle" href="{href}">{e(name)}</a>{f"<span class=dsub>{e(sub)}</span>" if sub else ""}'
             f'<p class="dinfo">{"".join(info)}<span class="i-basis">{e(_basis(v))}</span></p>'
             f'{price_track(price, value, M)}<div class="dpills">{pill}</div>'
@@ -205,8 +205,8 @@ font-weight:500;border:1px solid var(--line);background:var(--surface);transitio
 border-radius:var(--r);box-shadow:var(--shadow);transition:transform .26s var(--ease),box-shadow .26s var(--ease),opacity .26s var(--ease);
 transition-delay:var(--d,0ms)}
 .deal:hover{transform:translateY(-2px);box-shadow:var(--shadow-hi)}
-.dart{position:relative;display:flex;align-items:flex-end;border-radius:10px;background:transparent;align-self:start}
-.dart:not(:has(.pair)){display:block;overflow:hidden;background:var(--soft);aspect-ratio:3/4}
+.dart{position:relative;display:flex;align-items:flex-start;border-radius:10px;background:transparent;align-self:start}
+.dart:not(:has(.shot)){display:block;overflow:hidden;background:var(--soft);aspect-ratio:3/4}
 .dart img.dphoto,.dart .dphoto{width:100%;height:100%;object-fit:cover;display:block;border-radius:0;transition:transform .4s var(--ease)}
 .deal:hover .dphoto{transform:scale(1.03)}
 .dart .refart{right:4px;bottom:4px;width:26px;height:37px;border-radius:3px}

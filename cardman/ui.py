@@ -285,6 +285,10 @@ document.querySelectorAll('[data-tip][title]').forEach(function(el){el.removeAtt
  document.addEventListener('keydown',function(ev){if(!g.isConnected)return;var inG=g.contains(document.activeElement)||zoom;
   if(!inG)return;if(ev.key==='ArrowRight'){go(i+1);ev.preventDefault()}else if(ev.key==='ArrowLeft'){go(i-1);ev.preventDefault()}
   else if(ev.key==='Escape')close()})})})();
+(function(){document.querySelectorAll('[data-reveal]').forEach(function(b){
+ b.addEventListener('click',function(ev){ev.preventDefault();ev.stopPropagation();
+  var box=b.parentElement&&b.parentElement.querySelector('.shot-real');if(box)box.hidden=!box.hidden;});
+});})();
 """
 
 
@@ -1854,6 +1858,13 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                         return self._page("search", c["name_en"], view_card(
                             st, idx, key, now, self._cur(), book=_book(st, now), catalog=idx.cat, home=_engine_home(st), token=token,
                             filters={k: qs.get(k, [""])[0][:300] for k in ("platform", "graded", "type", "v")}), qs, crumb=("Cards", "/pkm/search"))
+                if len(parts) == 2 and parts[0] == "character" and _re.fullmatch(r"[a-z0-9-]{1,48}", parts[1]):
+                    from .character import find_species
+                    who = find_species(idx.cat, parts[1]) if idx else None
+                    if not who:
+                        raise KeyError(parts[1])
+                    from .ui_home import view_character
+                    return self._page("search", who, view_character(idx, who, token, now), qs, crumb=("Cards", "/pkm/search"))
                 if parts == ["search"]:
                     from .ui_home import Money, view_search
                     q = qs.get("q", [""])[0][:120]
@@ -2241,6 +2252,20 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                                        + (f" (and its {len(twins)} copy on another site)." if twins else "."))
                     except KeyError:
                         self._redirect(back, err="no such sale")
+                elif parts == ["pkm", "character", "sale"] and pcards() is not None:
+                    from .ui_home import record_sale
+                    pid = form.get("printing") or ""
+                    card_key = pid.split("|")[0].rsplit("@", 1)[-1]
+                    back = form.get("back") or "/pkm/"
+                    if not back.startswith("/pkm/character/") or back.startswith("//"):
+                        back = "/pkm/"
+                    if not card_key.startswith("pkm-"):
+                        return self._redirect(back, err="pick a version of one card")
+                    try:
+                        record_sale(st, pcards().cat, card_key, form, now)
+                        self._redirect(back, msg="Sale added. It counts toward that version only.")
+                    except ValueError as x:
+                        self._redirect(back, err=str(x))
                 elif len(parts) == 4 and parts[0] == "pkm" and parts[1] == "card" and parts[3] == "sale" and pcards() is not None:
                     from .ui_home import record_sale
                     try:

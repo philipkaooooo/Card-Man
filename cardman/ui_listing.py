@@ -270,14 +270,8 @@ def lphoto(iid: str, n: int = 0, size: str = "m", alt: str = "", cls: str = "lph
     return (f'<img class="{cls}" src="/img/listing/{e(iid)}/{n}.jpg?s={size}" alt="{e(alt)}" loading="lazy" decoding="async">')
 
 
-_PAIR = {"match": ("same", "same", "Pixels agree: the listing photo is this card"),
-         "clash": ("diff", "different", "Pixels disagree: the listing photo is not this card"),
-         "unconfirmed": ("unsure", "not sure", "The listing photo is not a clear match for this card")}
-
-
 def pair_art(key: str, d: dict, photos: dict | None, *, big: bool = False) -> str:
-    """Official card picture, with the listing's own photo as a small one beside it. The word under the small
-    photo is the pixel result, not the title."""
+    """The official card only. The listing photo is in the page and stays hidden until the official picture is clicked."""
     from .ui_home import _listing_art, img
     if "LOT" in (d.get("kinds") or []):
         return _art(d, None)
@@ -286,14 +280,20 @@ def pair_art(key: str, d: dict, photos: dict | None, *, big: bool = False) -> st
     has = bool(iid and (photos or {}).get(iid))
     official = img(pc, "large" if big else "small", "What this version looks like", cls="card") if pc else ""
     if official and has:
-        kind, word, tip = _PAIR.get(d.get("photo"), ("open", "", "Listing photo next to the official picture"))
-        shot = lphoto(iid, 0, "s", "Listing photo", cls="pair-shot")
-        label = f"<small>{e(word)}</small>" if word else ""
-        return (f'<span class="pair{" big" if big else ""} p-{kind}">{official}'
-                f'<span class="pair-side" data-tip="{e(tip)}" tabindex="0">{shot}{label}</span></span>')
+        real = lphoto(iid, 0, "m" if big else "s", "Listing photo", cls="shot-photo")
+        return _shot(official, real, d.get("photo"), big=big)
     if has:
         return lphoto(iid, 0, "m" if big else "s", d.get("title") or "", cls="card")
     return official or _art(d, None)
+
+
+def _shot(official: str, real: str, photo: str | None, *, big: bool = False) -> str:
+    word = {"match": "Same card", "clash": "Different card", "unconfirmed": "Not sure"}.get(photo or "")
+    note = f'<small>{e(word)}</small>' if word else ""
+    size = " big" if big else ""
+    return (f'<span class="shot{size}"><button type="button" class="shot-off" data-reveal '
+            f'aria-label="Official picture. Click to see the listing photo.">{official}</button>'
+            f'<span class="shot-real" hidden>{real}{note}</span></span>')
 
 
 def _art_with_ref(key: str, d: dict, v, photos: dict | None, size: str = "m") -> str:
@@ -521,13 +521,14 @@ def view_one(st, cards, key: str, now: datetime, token: str, M, profile: dict | 
         thumbs = "".join(f'<button type="button" data-src="/img/listing/{e(iid)}/{i}.jpg?s=m" data-big="/img/listing/{e(iid)}/{i}.jpg?s=l" '
                          f'aria-label="Photo {i + 1} of {n}" aria-current="{str(i == 0).lower()}">{lphoto(iid, i, "s", f"Photo {i + 1}")}</button>'
                          for i in range(min(n, 12)))
-        ref_words = ("What this version looks like. Compare it with the seller's photos." if trusted
-                     else "The card the title names. Compare it with the seller's photos.")
-        shown = pair_art(key, d, {iid: n})
-        ref = (f'<div class="gref">{img(art_pc, "small", "Reference picture")}<span><b>Reference</b><br>{e(ref_words)}</span></div>') if art_pc and not lot else ""
-        art = (f'<div class="gallery" data-gallery>{shown}<div class="gmain"><img src="/img/listing/{e(iid)}/0.jpg?s=m" alt="Photo 1 of {n}" '
-               f'tabindex="0" role="button" aria-label="Seller\'s photo 1 of {n}. Press Enter to enlarge."></div>'
-               + (f'<div class="gthumbs">{thumbs}</div>' if n > 1 else "") + ref + '</div>')
+        real = (f'<div class="gmain"><img src="/img/listing/{e(iid)}/0.jpg?s=m" alt="Photo 1 of {n}" '
+                f'tabindex="0" role="button" aria-label="Seller\'s photo 1 of {n}. Press Enter to enlarge."></div>'
+                + (f'<div class="gthumbs">{thumbs}</div>' if n > 1 else ""))
+        if art_pc and not lot:
+            off = img(art_pc, "large", "What this version looks like", cls="card")
+            art = f'<div class="gallery" data-gallery>{_shot(off, real, d.get("photo"), big=True)}</div>'
+        else:
+            art = f'<div class="gallery" data-gallery>{real}</div>'
     else:
         art = _art(d, v, "", "card big")
     hero = (f'<section class="lhero vcard-{CLS[v.code]}"><div class="lh-art">{art}</div><div class="lh-body">'
@@ -540,22 +541,22 @@ def view_one(st, cards, key: str, now: datetime, token: str, M, profile: dict | 
 
     # -- details, closed by default
     sc = d.get("scenarios") or []
-    priced_rows = "".join(
-        f'<tr><td>{e(s.get("label"))}</td><td class="n">{(s.get("weight") or 0) * 100:.0f}%</td>'
-        f'<td>{e({"sales": "real sales", "reference": "price guide", "none": "no price"}.get(s.get("basis"), s.get("basis")))}</td>'
-        f'<td class="n">{s.get("n_sales") or 0}</td><td class="n">{M(s.get("resale_low"))}</td><td class="n">{M(s.get("resale_mid"))}</td>'
-        f'<td class="n">{M(s.get("max_buy"))}</td><td class="n">{"—" if s.get("p_loss") is None else f"{s['p_loss'] * 100:.0f}%"}</td>'
-        f'<td class="n">{"—" if s.get("months_to_sell") is None else f"{s['months_to_sell']:.1f}"}</td></tr>'
-        for s in sc if s.get("basis") != "none")
-    unpriced = [s for s in sc if s.get("basis") == "none"]
-    pricing = ('<details class="dsec"><summary>How we got this price</summary>'
-               + (('<div class="wrap"><table><tr><th>Version</th><th class="n">Chance it\'s this one</th><th>Price from</th><th class="n">Sales</th>'
-                   '<th class="n">Low</th><th class="n">Typical</th><th class="n">Worth up to</th><th class="n">Chance of a loss</th>'
-                   '<th class="n">Months to sell</th></tr>' + priced_rows + '</table></div>') if priced_rows else '<p class="muted">None of the versions it could be has a price yet.</p>')
-               + (f'<p class="muted small">{len(unpriced)} other version{"s" if len(unpriced) != 1 else ""} it could be '
-                  f'{"have" if len(unpriced) != 1 else "has"} no price yet.</p>' if unpriced else "")
-               + '<p class="why small">Low and typical come from recent real sales of that exact version. "Worth up to" is the most you can pay '
-               'and still make your target profit after all costs. Price guides never set it.</p></details>')
+    own = next((s for s in sc if settled and s.get("printing_id") == d.get("printing_id") and s.get("basis") == "sales"), None)
+    if own:
+        price_body = ('<div class="wrap"><table><tr><th>This version</th><th class="n">Sales</th><th class="n">Low</th>'
+                      '<th class="n">Typical</th><th class="n">Worth up to</th></tr>'
+                      f'<tr><td>{e(own.get("label"))}</td><td class="n">{own.get("n_sales") or 0}</td>'
+                      f'<td class="n">{M(own.get("resale_low"))}</td><td class="n">{M(own.get("resale_mid"))}</td>'
+                      f'<td class="n">{M(own.get("max_buy"))}</td></tr></table></div>'
+                      '<p class="why small">Only sales of this exact version. A different print of the same name is a different price and is not used here.</p>')
+    elif settled:
+        price_body = ('<p>No sale of this exact version, so it has no price here. '
+                      'Another version\'s sales are not this version\'s price.</p>')
+    else:
+        names = "".join(f'<li>{e(s.get("label"))}</li>' for s in sorted(sc, key=lambda s: -(s.get("weight") or 0))[:8] if s.get("label"))
+        price_body = ('<p>This listing is not one version yet. Each version has its own price, so none of them is used as this listing\'s price.</p>'
+                      + (f'<ul class="cands">{names}</ul>' if names else ""))
+    pricing = f'<details class="dsec"><summary>How we got this price</summary>{price_body}</details>'
 
     plain = {"CODE_NAME_MISMATCH": "Name and set code don't match", "RARITY_NOT_ON_CODE": "That rarity doesn't exist for this set code",
              "PHOTO_CONTRADICTS_SELLER": "The photo doesn't match the title", "RARITY_UNSTATED": "No rarity given",

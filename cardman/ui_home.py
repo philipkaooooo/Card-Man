@@ -190,6 +190,13 @@ def view_search(idx, q: str, st=None, M=None) -> str:
         return head + '<p class="empty">Type a card name in English or Japanese, a set code, or a passcode.</p>'
     if not hits:
         return head + f'<p class="empty">No card matches “{e(q)}”. Check the spelling, or try the set code printed under the artwork.</p>'
+    from .character import slug as _slug, species_of
+    from collections import Counter
+    specs = Counter(s for h in hits for s in species_of(h.name))
+    if specs and idx.card(hits[0].passcode) and (idx.card(hits[0].passcode) or {}).get("game") == "pkm":
+        who, n = specs.most_common(1)[0]
+        if n >= 2:
+            head += f'<p class="sub"><a href="/pkm/character/{e(_slug(who))}">Browse {e(who)} market</a>. Each card keeps its own price.</p>'
     tiles = []
     from collections import Counter
     same = Counter(h.name for h in hits)
@@ -296,8 +303,11 @@ def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalo
     pend = f'<div class="pend"><small>Pendulum effect</small>{_para(c.get("pend_en"))}</div>' if c.get("pend_en") else ""
     from .ui_chart import section
     if pkm:
+        from .character import slug as _slug, species_of
+        who = species_of(c.get("name_en") or "")[0]
         top = (f'<p class="crumb">{e(c.get("card_type") or "")}{" · " + e(c["type_line"]) if c.get("type_line") else ""}</p>'
                f'<h1 class="cname">{e(c["name_en"])}</h1>'
+               f'<p class="cja"><a href="/pkm/character/{e(_slug(who))}">{e(who)} market</a> · each card priced on its own</p>'
                f'<p class="cja">{e(c.get("set_name"))} · {e(c.get("number"))}/{e(c.get("printed_total"))} · {e(c.get("rarity") or "")}</p>')
         return (
             f'<div class="cardpage"><div class="cp-img">{img(passcode, "", c.get("name_en") or "", cls="card big")}</div>'
@@ -589,6 +599,64 @@ def record_sale(st, catalog, passcode: str, form: dict, now: datetime) -> str:
     return oid
 
 
+def view_character(idx, species: str, token: str, now: datetime) -> str:
+    """Every card of one character. Each keeps its own price. The right side records a sale of one exact version."""
+    from .character import cards_of, slug
+    from .games import card_href
+    cat = idx.cat
+    ids = cards_of(cat, species)
+    tiles = []
+    moves = []
+    options = []
+    priced = []
+    for cid in ids[:80]:
+        row = cat._cards[cid]
+        key = "pkm-" + cid
+        s = cat.set(row[3]) or {}
+        versions = cat.versions(cid)
+        lines = []
+        for v in versions:
+            g = cat.guide(v.id)
+            label = v.edition or "Standard"
+            if g:
+                lines.append(f'{e(label)} · guide {e(charts.fmt(g[0], "USD"))} on {e(g[1])}')
+                priced.append((g[0], f'{row[1]} · {s.get("name") or ""} {row[4]} · {label}'))
+                hist = cat.guide_history(v.id)
+                if len(hist) >= 2 and hist[0][1] != hist[-1][1]:
+                    moves.append(f'{e(row[1])} {e(label)} ({e(s.get("name") or "")}): {e(charts.fmt(hist[0][1], "USD"))} on {e(hist[0][0])} → {e(charts.fmt(hist[-1][1], "USD"))} on {e(hist[-1][0])}. This card only.')
+            options.append(f'<option value="{e(v.id)}">{e(row[1])} · {e(s.get("name") or "")} {e(row[4] or "")} · {e(label)}</option>')
+        own = "<br>".join(lines) if lines else "No price of its own yet."
+        tiles.append(f'<a class="ctile" href="{e(card_href(key))}">{img(key, "small", row[1])}'
+                     f'<span class="ct-name">{e(row[1])}</span>'
+                     f'<span class="ct-meta">{e(s.get("name") or "")} · {e(row[4] or "")}/{e(s.get("printed_total") or "")}</span>'
+                     f'<span class="ct-meta">{e(row[6] or "")}</span>'
+                     f'<span class="ct-mkt">{own}</span></a>')
+    priced.sort()
+    if len(priced) >= 2:
+        lo, hi = priced[0], priced[-1]
+        spread = (f'<p>The cheapest guide among these cards is {e(charts.fmt(lo[0], "USD"))} ({e(lo[1])}). '
+                  f'The highest is {e(charts.fmt(hi[0], "USD"))} ({e(hi[1])}). '
+                  'Those are different cards. The low one is not a price for the high one.</p>')
+    else:
+        spread = '<p>Not enough of these cards have their own guide price to compare.</p>'
+    trend = "".join(f'<p class="char-move">{m}</p>' for m in moves[:12]) or '<p class="muted">No card of this character has two guide points yet, so there is no move to show.</p>'
+    form = ""
+    if token and options:
+        form = (f'<form method="post" action="/pkm/character/sale" class="scanform">'
+                f'<input type="hidden" name="t" value="{e(token)}"><input type="hidden" name="back" value="/pkm/character/{e(slug(species))}">'
+                f'<label>Exact version<select name="printing" required>{"".join(options)}</select></label>'
+                '<label>Price<input name="amount" inputmode="decimal" required size="9"></label>'
+                '<label>Currency<select name="currency"><option>USD</option><option>TWD</option><option>JPY</option><option>EUR</option><option>GBP</option></select></label>'
+                f'<label>Date<input type="date" name="date" value="{now.date().isoformat()}" required></label>'
+                '<label>How it sold<select name="kind"><option value="transaction">Sold</option><option value="accepted_offer">Best offer accepted</option></select></label>'
+                '<button>Add sale</button></form>')
+    return (f'<div class="charpage"><div><h1>{e(species)}</h1>'
+            f'<p class="sub">{len(ids)} card{"s" if len(ids) != 1 else ""}. Each one has its own price. Nothing on this page is a price for a different card.</p>'
+            f'<div class="cgrid">{"".join(tiles) or "<p class=empty>No cards of this character.</p>"}</div>'
+            f'<section><h2>How these cards move</h2>{trend}{spread}</section></div>'
+            f'<aside class="char-side"><h2>Add a sale</h2><p class="why small">Pick the exact card and version. The sale counts for that version only.</p>{form}</aside></div>')
+
+
 HOME_CSS = """
 header .hsearch{flex:1;max-width:520px}
 form.search{position:relative;display:flex;gap:0;margin:0}
@@ -607,6 +675,12 @@ background:var(--surface);border:1px solid var(--line);border-radius:12px;paddin
 .sold-p{font-weight:700;font-variant-numeric:tabular-nums}
 .hero h1{font-size:clamp(28px,5vw,40px);letter-spacing:-.02em;margin:0 0 6px;display:block}.hero>p{color:var(--fg2);font-size:16px;margin:0 0 22px}
 .hero .try{font-size:13px;color:var(--muted);margin:14px 0 0}.hero .try a{color:var(--fg2)}
+.charpage{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:28px;align-items:start}
+.char-side{position:sticky;top:74px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px}
+.char-side h2{margin:0 0 6px;font-size:16px}.char-side label{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--muted);margin:0 0 8px}
+.char-side select,.char-side input{font-size:14px;color:var(--fg)}
+.char-move{font-size:13px;color:var(--fg2);margin:0 0 6px}
+@media(max-width:860px){.charpage{grid-template-columns:1fr}.char-side{position:static}}
 .shelf{background:none;border:0;padding:0;margin:26px 0}.shelf-h{display:flex;align-items:baseline;justify-content:space-between;margin:0 0 10px}
 .shelf-h h2{font-size:19px;margin:0}.shelf-h a{font-size:13px}
 .tiles-l{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(250px,100%),1fr));gap:12px}
