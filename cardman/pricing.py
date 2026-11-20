@@ -125,28 +125,41 @@ class RiskView:
 
 
 def risk_view(sales: list[Sale], est: PriceEstimate, ask: Decimal, acquisition: AcquisitionCosts, exit_costs: ExitCosts, *,
-              target_return: Decimal, capital_cost_monthly: Decimal, competing_listings: int = 0,
-              confidence: float = 0.8) -> RiskView:
+              target_return: Decimal, capital_cost_monthly: Decimal, competing_listings: float = 0,
+              confidence: float = 0.8, as_of: datetime | None = None) -> RiskView:
     """Resale drawn from the sales themselves, weighted by trust, scaled to the estimate. Holding time is charged as capital."""
     months = min(months_to_sell(est.sales_per_month, competing_listings), 36.0)
     cost = float(acquisition.all_in(ask))
     # Recentre on the estimate so learned bias and trend carry into every draw.
     base = statistics.median(s.price for s in sales) or 1.0
     scale = est.mid / base
-    seed = int(hashlib.sha256(f"{est.mid}{ask}{len(sales)}".encode()).hexdigest()[:12], 16)
+    # The seed depends on the sales, not the ask: the same resale draws price every ask, so max buy is one number for a
+    # card instead of moving with whatever the seller happens to ask.
+    seed = int(hashlib.sha256(repr((est.mid, sorted((s.when.isoformat(), s.price, s.trust) for s in sales))).encode()).hexdigest()[:12], 16)
     rng = random.Random(seed)
-    draws = rng.choices([s.price * scale for s in sales], [s.trust for s in sales], k=N_SIMS)
-    # Empirical draws understate tail risk on few sales: widen with the bootstrap error.
+    # Same weights as the estimate: trust, and recency when the decision time is known.
+    if as_of is not None:
+        weights = [s.trust * 0.5 ** (max(0.0, (as_of - s.when).total_seconds() / 86400) / HALF_LIFE_DAYS) for s in sales]
+    else:
+        weights = [s.trust for s in sales]
+    draws = rng.choices([s.price * scale for s in sales], weights, k=N_SIMS)
+    # Empirical draws understate tail risk on few sales: widen with the bootstrap error. The multiplier has mean 1
+    # (mu = -sd^2/2), so the extra spread does not quietly raise the expected resale.
     sd = max(0.0, (est.ci_high - est.ci_low) / 3.3 / max(est.mid, 1.0))
+    gross = sorted(d * rng.lognormvariate(-sd * sd / 2, sd) for d in draws)
     carry = cost * float(capital_cost_monthly) * months
-    profits = sorted(float(exit_costs.net(Decimal(str(round(d * rng.lognormvariate(0, sd), 2))))) - cost - carry for d in draws)
+    profits = sorted(float(exit_costs.net(Decimal(str(round(g, 2))))) - cost - carry for g in gross)
     mean = statistics.fmean(profits)
     k = max(1, N_SIMS // 10)
     p10, cvar = profits[k - 1], statistics.fmean(profits[:k])
     target = cost * float(target_return)
     ret = (mean / cost) if cost > 0 else None
-    ann = ((1 + ret) ** (12 / max(months, 1 / 12)) - 1) if ret is not None and ret > -1 else None
-    q_price = _wq([(s.price * scale, s.trust) for s in sales], 1 - confidence)
+    # Simple rate: compounding a two-week flip twenty-six times a year assumes a next deal that may not exist.
+    # Listing, payment and payout take time even for a fast seller: never annualize over less than a month.
+    ann = ret * 12 / max(months, 1.0) if ret is not None else None
+    # Max buy from the same simulated resale the probabilities use, so at ask == max_buy the chance of reaching the
+    # target is the stated confidence (net() is increasing, so its quantile is net() of the resale quantile).
+    q_price = gross[min(N_SIMS - 1, int((1 - confidence) * N_SIMS))]
     ceiling = buy_ceiling(CeilingInputs(Decimal(str(round(q_price, 2))), acquisition, exit_costs, target_return,
                                         Decimal(str(round(months, 2))), capital_cost_monthly)).buy_ceiling
     return RiskView(mean, sum(p < 0 for p in profits) / N_SIMS, sum(p >= target for p in profits) / N_SIMS, p10, cvar,

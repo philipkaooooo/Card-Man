@@ -1281,7 +1281,8 @@ def record_outcome(st: Store, form: dict, now: datetime) -> str:
 
 KIND_LABEL = {"UNDERPRICED": "Under max buy", "MISIDENTIFIED": "Misidentified", "HIDDEN_VARIANT": "Hidden variant",
               "SELLER_UNSURE": "Seller unsure", "REFERENCE_GAP": "Under reference price", "LOT_UNDERPRICED": "Lot worth more",
-              "LOT": "Lot", "GRADING": "Grading upside"}
+              "LOT": "Lot", "GRADING": "Grading upside", "RIGHT_PRINT_ONLY": "Only if right print",
+              "COLLECTION": "Collection / early era"}
 SEV_ICON = {"BLOCK": ("no", "✕"), "WARN": ("warnic", "!"), "UPSIDE": ("ok", "↑"), "INFO": ("na", "i")}
 STATUS_ORDER = {"ESCALATED": 0, "OPEN": 1, "SHELVED": 2, "REJECTED": 3}
 

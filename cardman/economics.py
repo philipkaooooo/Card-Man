@@ -28,8 +28,11 @@ class AcquisitionCosts:
 
     def linear(self) -> tuple[Decimal, Decimal]:
         """All-in cost = a * B + b."""
-        a = (1 + self.buyer_premium_pct) * (1 + self.import_duty_pct) + self.proxy_fee_pct + self.payment_fx_spread_pct
-        b = (self.proxy_fee_fixed + self.inbound_shipping * (1 + self.import_duty_pct + self.shipping_fx_spread_pct)
+        # Everything paid to the seller and proxy abroad (hammer, premium, proxy fees) goes through the card's FX spread;
+        # duty is paid at home, so it does not.
+        fx = self.payment_fx_spread_pct
+        a = (1 + self.buyer_premium_pct) * (1 + self.import_duty_pct) + self.proxy_fee_pct + fx * (1 + self.buyer_premium_pct + self.proxy_fee_pct)
+        b = (self.proxy_fee_fixed * (1 + fx) + self.inbound_shipping * (1 + self.import_duty_pct + self.shipping_fx_spread_pct)
              + self.insurance + self.grading)
         return a, b
 
