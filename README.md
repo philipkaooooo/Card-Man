@@ -120,7 +120,7 @@ Paste a title and description as the seller wrote them (English or Japanese) wit
 
 ### Run
 ```
-pip install pytest && python -m pytest -q                      # 219 pass
+pip install pytest && python -m pytest -q                      # 220 pass
 python -m cardman.sources                                       # re-probe every source
 python -m cardman.identity_cache sync                           # clone/update YAML Yugi, sync cache
 python -m cardman.slice examples/identity_only_LB-01.json examples/manual_import_TEMPLATE.csv
