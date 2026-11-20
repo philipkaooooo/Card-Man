@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from cardman.tcgplayer import (
-    asks_for, judge, misread, parse_product, screen, search_singles, seller_net, variants)
+    asks_for, judge, misread, parse_product, review, review_query, screen, search_singles, seller_net, variants)
 
 DATA = Path(__file__).parent / "data" / "tcgplayer"
 
@@ -160,3 +160,42 @@ def test_a_1st_edition_ask_does_not_use_unlimited_sales():
     assert [p.product_id for p in got] == [21792]
     with pytest.raises(ValueError):
         search_singles("magic", "x", post=post)
+
+
+def test_a_page_of_presales_is_skipped_for_the_next_in_scope_single():
+    hit = load("lob001_search_hit.json")
+    note = {"number": "MAMS-EN001", "detailNote": "This product is a Presale item."}
+    presales = [dict(hit, productId=100 + i, listings=[], customAttributes=note) for i in range(10)]
+    pages = [{"results": [{"results": presales}]}, {"results": [{"results": [hit]}]}]
+
+    def post(url, body, timeout):
+        assert body["size"] == 10
+        return pages.pop(0)
+
+    got = search_singles("yugioh", "Blue-Eyes", size=1, post=post)
+    assert [p.product_id for p in got] == [21792] and pages == []
+    hit = dict(load("lob001_search_hit.json"), totalListings=151)
+    product = parse_product(hit)
+    assert product.listed == 151 and len(product.listings) == 3
+    row = review([product], {21792: load("lob001_quarter.json")})[0]
+    assert row.judged == 3 and row.listed == 151 and "not a return" in row.misread
+    assert {(r.condition, r.label) for r in row.reads} == {("Near Mint", "NO"), ("Damaged", "NO")}
+
+
+def test_a_failed_history_abstains_and_is_not_fetched_twice():
+    hit = load("lob001_search_hit.json")
+    payload = {"results": [{"results": [hit, hit]}]}
+
+    def search(game, query, size=10):
+        return search_singles(game, query, size=size, post=lambda url, body, timeout: payload)
+
+    calls = []
+
+    def history(pid, span):
+        calls.append((pid, span))
+        raise TimeoutError("down")
+
+    rows = review_query("yugioh", "Blue-Eyes", search=search, history=history)
+    assert calls == [(21792, "quarter")] and len(rows) == 2
+    assert rows[0].history_note == "history failed: TimeoutError"
+    assert {r.label for r in rows[0].reads} == {"ABSTAIN"}

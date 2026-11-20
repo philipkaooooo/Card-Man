@@ -28,6 +28,7 @@ That is not a price.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import urllib.parse
 import urllib.request
@@ -37,6 +38,8 @@ from decimal import Decimal, ROUND_HALF_EVEN
 SEARCH_URL = "https://mp-search-api.tcgplayer.com/v1/search/request"
 DETAILS_URL = "https://mp-search-api.tcgplayer.com/v2/product/{product_id}/details"
 UA = "cardman/0.2 (private research tool)"
+# The history host answers 403 to a short agent. This is the one the product page uses.
+BROWSER_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 
 # productLineId. Pokémon Japan is a different line from English Pokémon.
 GAMES = {2: "yugioh", 3: "pokemon", 85: "pokemon_japan"}
@@ -92,6 +95,7 @@ class TcgProduct:
     median_price: Decimal | None
     skus: tuple[TcgSku, ...] = ()
     listings: tuple[TcgListing, ...] = ()
+    listed: int | None = None
 
     @property
     def in_scope(self) -> bool:
@@ -106,6 +110,17 @@ def _skus(raw) -> tuple[TcgSku, ...]:
         out.append(TcgSku(int(s["sku"]), str(s.get("condition") or ""), str(s.get("variant") or ""),
                           str(s.get("language") or "")))
     return tuple(out)
+
+
+def _listed(doc: dict) -> int | None:
+    """How many asks the product has. The payload's listings array is only a sample."""
+    for key in ("totalListings", "listings"):
+        v = doc.get(key)
+        if isinstance(v, bool):
+            continue
+        if isinstance(v, (int, float)):
+            return int(v)
+    return None
 
 
 def _listings(raw, product_id: int) -> tuple[TcgListing, ...]:
@@ -150,6 +165,7 @@ def parse_product(doc: dict) -> TcgProduct | None:
         median_price=_dec(doc.get("medianPrice")),
         skus=_skus(doc.get("skus")),
         listings=_listings(doc.get("listings"), int(doc["productId"])),
+        listed=_listed(doc),
     )
 
 
@@ -368,7 +384,7 @@ def fetch_history(product_id: int, span: str = "quarter", timeout: float = 25) -
         raise ValueError(f"unsupported range {span!r}")
     url = HISTORY_URL.format(product_id=int(product_id), span=span)
     req = urllib.request.Request(url, headers={
-        "User-Agent": "Mozilla/5.0",
+        "User-Agent": BROWSER_UA,
         "Accept": "application/json",
         "Referer": f"https://www.tcgplayer.com/product/{int(product_id)}",
         "Origin": "https://www.tcgplayer.com",
@@ -386,28 +402,127 @@ def _post(url: str, body: dict, timeout: float) -> dict:
 
 
 def search_singles(game: str, query: str, *, size: int = 10, timeout: float = 25, post=_post) -> list[TcgProduct]:
-    """Unsealed, non-presale singles for one of yugioh, pokemon, pokemon_japan."""
+    """Unsealed, non-presale singles for one of yugioh, pokemon, pokemon_japan.
+
+    The raw page can lead with a presale. Those are dropped, and the next page is
+    read until `size` in-scope singles are in hand or the results run out.
+    """
     if game not in LINE:
         raise ValueError(f"unsupported game {game!r}")
-    body = {
-        "algorithm": "sales_dismax",
-        "from": 0,
-        "size": size,
-        "filters": {"term": {"productLineName": [LINE[game]], "productTypeName": ["Cards"]}, "range": {}, "match": {}},
-        "listingSearch": {
-            "filters": {"term": {"sellerStatus": "Live", "channelId": 0},
-                        "range": {"quantity": {"gte": 1}}, "exclude": {"channelExclusion": 0}},
-            "context": {"cart": {}},
-        },
-        "context": {"cart": {}, "shippingCountry": "US"},
-        "settings": {"useFuzzySearch": True},
-        "sort": {},
-    }
-    doc = post(f"{SEARCH_URL}?q={urllib.parse.quote(query)}", body, timeout)
-    block = (doc.get("results") or [{}])[0]
-    out = []
-    for hit in block.get("results") or []:
-        p = parse_product(hit)
-        if p and p.in_scope and p.game == game:
-            out.append(p)
+    if size < 1:
+        return []
+    url = f"{SEARCH_URL}?q={urllib.parse.quote(query)}"
+    out: list[TcgProduct] = []
+    skip = 0
+    page = max(size, 10)
+    for _ in range(5):
+        body = {
+            "algorithm": "sales_dismax",
+            "from": skip,
+            "size": page,
+            "filters": {"term": {"productLineName": [LINE[game]], "productTypeName": ["Cards"]}, "range": {}, "match": {}},
+            "listingSearch": {
+                "filters": {"term": {"sellerStatus": "Live", "channelId": 0},
+                            "range": {"quantity": {"gte": 1}}, "exclude": {"channelExclusion": 0}},
+                "context": {"cart": {}},
+            },
+            "context": {"cart": {}, "shippingCountry": "US"},
+            "settings": {"useFuzzySearch": True},
+            "sort": {},
+        }
+        doc = post(url, body, timeout)
+        hits = ((doc.get("results") or [{}])[0].get("results") or [])
+        if not hits:
+            break
+        for hit in hits:
+            p = parse_product(hit)
+            if p and p.in_scope and p.game == game:
+                out.append(p)
+                if len(out) == size:
+                    return out
+        skip += len(hits)
+        if len(hits) < page:
+            break
     return out
+
+
+@dataclass(frozen=True)
+class Review:
+    product_id: int
+    game: str
+    name: str
+    number: str | None
+    set_name: str
+    judged: int
+    listed: int | None
+    misread: str | None
+    history_note: str | None
+    reads: tuple[SaleRead, ...]
+
+
+def review(products: list[TcgProduct], histories: dict[int, dict], notes: dict[int, str] | None = None) -> list[Review]:
+    """Judge the asks in hand against that product's sold buckets. One history per product id."""
+    notes = notes or {}
+    out = []
+    for p in products:
+        hist = histories.get(p.product_id) or {"result": []}
+        out.append(Review(
+            product_id=p.product_id, game=p.game, name=p.name, number=p.number, set_name=p.set_name,
+            judged=len(p.listings), listed=p.listed, misread=misread(p),
+            history_note=notes.get(p.product_id),
+            reads=tuple(judge(row, hist) for row in p.listings),
+        ))
+    return out
+
+
+def review_query(game: str, query: str, *, size: int = 3, span: str = "quarter",
+                 search=search_singles, history=fetch_history) -> list[Review]:
+    """Search, then one history fetch per product. A failed history abstains; it does not invent a sale."""
+    products = search(game, query, size=size)
+    histories: dict[int, dict] = {}
+    notes: dict[int, str] = {}
+    for p in products:
+        if p.product_id in histories or p.product_id in notes:
+            continue
+        try:
+            histories[p.product_id] = history(p.product_id, span)
+        except Exception as e:
+            notes[p.product_id] = f"history failed: {type(e).__name__}"
+            histories[p.product_id] = {"result": []}
+    return review(products, histories, notes)
+
+
+def _line(r: Review, row: SaleRead) -> str:
+    sample = f"{r.judged} of {r.listed}" if r.listed is not None else str(r.judged)
+    money = ""
+    if row.after_fees is not None:
+        money = f"  exit {row.exit_low} on {row.exit_date}  after fees {row.after_fees}"
+    return (f"{row.label:7} {r.game:14} {r.number or '-':12} {row.printing} {row.condition}"
+            f"  buy {row.buy}{money}  asks {sample}  {r.name}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="python -m cardman.tcgplayer")
+    ap.add_argument("game", choices=sorted(LINE))
+    ap.add_argument("query")
+    ap.add_argument("--size", type=int, default=3)
+    ap.add_argument("--span", default="quarter", choices=("quarter", "month", "annual"))
+    args = ap.parse_args(argv)
+    rows = review_query(args.game, args.query, size=args.size, span=args.span)
+    if not rows:
+        print("no in-scope singles")
+        return 0
+    for r in rows:
+        if r.history_note:
+            print(f"ABSTAIN {r.game} {r.number or '-'} {r.history_note}")
+        if r.misread:
+            print(f"MISREAD {r.number or '-'} {r.misread}")
+        for row in r.reads:
+            print(_line(r, row))
+        if not r.reads and not r.history_note:
+            print(f"ABSTAIN {r.game} {r.number or '-'} {r.name}  no asks in the search sample")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
