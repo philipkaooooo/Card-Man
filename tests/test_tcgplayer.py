@@ -89,24 +89,45 @@ def test_commission_caps_at_75_dollars():
     assert seller_net(Decimal("100")) == Decimal("86.45")
 
 
-def test_near_mint_unlimited_ask_is_above_the_last_cleared_low():
+def test_near_mint_unlimited_ask_is_above_the_median_cleared_low():
     hit = load("lob001_search_hit.json")
     listing = parse_product(hit).listings[0]
     assert listing.condition == "Near Mint" and listing.printing == "Unlimited"
     row = judge(listing, load("lob001_quarter.json"))
-    assert row.label == "NO"
+    assert row.label == "NO" and row.sales == 10
+    # 108.95 is in the book. The median low is still 119.99, and the ask is above it.
     assert row.exit_low == Decimal("119.99") and row.exit_date == "2026-11-14"
-    assert row.sales == 10 and row.after_fees < 0
+    assert "108.95" in row.why and row.after_fees < 0
 
 
-def test_damaged_ask_under_its_own_cleared_low_is_a_look_not_a_return():
+def test_one_high_damaged_day_does_not_set_the_exit():
     hit = load("lob001_search_hit.json")
     listing = parse_product(hit).listings[1]
-    assert listing.condition == "Damaged"
+    assert listing.condition == "Damaged" and listing.price == Decimal("19.87")
     row = judge(listing, load("lob001_quarter.json"))
-    assert row.label == "LOOK" and row.exit_low == Decimal("26.6")
-    assert row.after_fees == Decimal("2.91")
-    assert "not a return" in row.why and row.sales >= 3
+    # Five of the ten sales cleared at 19. The 26.60 day is real and is not the exit.
+    assert row.label == "NO" and row.exit_low == Decimal("19") and row.sales == 10
+    assert row.after_fees == Decimal("-3.69")
+    assert "26.6" in row.why
+
+
+def test_the_median_low_is_the_exit_when_one_bucket_is_high():
+    listing = parse_product(load("lob001_search_hit.json")).listings[1]
+    listing = type(listing)(**{**listing.__dict__, "price": Decimal("10"), "shipping": Decimal("0"),
+                               "condition": "Near Mint", "printing": "Unlimited"})
+    history = {"result": [{"skuId": "1", "variant": "Unlimited", "condition": "Near Mint", "language": "English",
+                           "buckets": [
+                               {"bucketStartDate": "2026-11-01", "transactionCount": "1", "lowSalePrice": "40",
+                                "highSalePrice": "40", "marketPrice": "40"},
+                               {"bucketStartDate": "2026-11-02", "transactionCount": "1", "lowSalePrice": "40",
+                                "highSalePrice": "40", "marketPrice": "40"},
+                               {"bucketStartDate": "2026-11-03", "transactionCount": "1", "lowSalePrice": "100",
+                                "highSalePrice": "100", "marketPrice": "40"},
+                           ]}]}
+    row = judge(listing, history)
+    assert row.label == "LOOK" and row.exit_low == Decimal("40") and row.sales == 3
+    assert row.after_fees == Decimal("24.40")
+    assert "not a return" in row.why.lower()
 
 
 def test_two_1st_edition_prints_a_year_apart_are_not_a_book():

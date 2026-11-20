@@ -118,7 +118,7 @@ Paste a title and description as the seller wrote them (English or Japanese) wit
 
 ### Run
 ```
-pip install pytest && python -m pytest -q                      # 207 pass
+pip install pytest && python -m pytest -q                      # 219 pass
 python -m cardman.sources                                       # re-probe every source
 python -m cardman.identity_cache sync                           # clone/update YAML Yugi, sync cache
 python -m cardman.slice examples/identity_only_LB-01.json examples/manual_import_TEMPLATE.csv
@@ -129,10 +129,46 @@ python -m cardman.ui --store data/store/evidence.sqlite                         
 ```
 
 ### Remaining gaps
-1. Network policy: open the hosts above, then test YGOResources (edition-level data) and YGOPRODeck live.
-2. EN edition (1st / Unlimited / Limited) and release dates: not in YAML Yugi; EN prints abstain until a
-   source with editions is reachable. Asian-English prints: no source yet (codes are quarantined on sight).
-3. eBay app keys for Browse; account exports for Product Research; no sold-data source is reachable yet,
-   so there are no real market observations.
-4. FX rates are still per listing file; comps from older runs need a rate near their sale date in that file.
-5. Image/OCR, grading sensitivities, Taiwan/JP sources, portfolio outcomes: not started.
+1. Editions. YAML, YGOResources and YGOPRODeck still have no 1st / Unlimited / Limited field. YGOResources
+   prints are `{code, date}` only (live revision 33276). Yugipedia galleries are the check, and they are not a
+   stamp photo. Worldwide English is Unlimited-only, NA is 1st and Unlimited, for LOB, MRD, Spell Ruler, PSV,
+   LON, LOD, DCR and IOC. `editions_for` drops 1st from a code whose suffix starts with EN
+   (`LOB-EN001`). The NA code with no language segment (`LOB-001`) keeps both. A verified 1st
+   on `LOB-EN001` is a CONFLICT, not a price. Magic Ruler redirects to Spell Ruler; the
+   1st-edition NA gallery is titled Magic Ruler. `code_key` still collapses `LOB-EN001` onto
+   `LOB-001` so a date can be found. `is_original` True means that key holds the earliest
+   listed date, not that the card is a 1st Edition.
+2. Asian-English. YGOResources does have AE code and date. On the vintage samples those codes collide with
+   English: `LOB-001`, `SDK-001`, `LOB-005`, `SDY-006`, `MFC-000`. Quarantine stays. Do not merge them into
+   the EN namespace.
+3. Japanese prints on YGOResources are not the catalog. Konami ids 4007, 4041 and 4766 each returned one
+   2026 anniversary row; the pinned YAML has 58, 55 and 37. No normalizer until a ja payload is complete.
+   yaml-yugi HEAD `d3b999759760` vs the pin: English rows on the six pinned cards did not change, and no
+   edition field appeared. Three new JA ultras did: `MVB1-JP010` Blue-Eyes, `MVB1-JP027` Dark Magician,
+   `MVB1-JP028` Dark Magician Girl, all the Dark Side of Dimensions 10th Anniversary Movie Box.
+4. Solds. Browse, when keyed, is asks and bids. Product Research has no developer endpoint. Nothing here
+   added a settled comp. TCGplayer's public product page is readable without a partner key
+   (`cardman/tcgplayer.py`): a product is one card in one set, a SKU is condition × variant × language.
+   `marketPrice` is not a sale and, on LOB-001 product 21792, one number covers 1st Edition and Unlimited.
+   `screen` buys the cheapest ask of one SKU and exits at the next ask of that same SKU after a
+   Level 1-4 fee (10.75% capped at $75, plus 2.5% and $0.30). A gap that dies is NO. A gap that
+   survives is LOOK, and it is still not a return. The per-listing sales table is signed and a
+   naked `latestsales` path stays closed. The chart is not: `price/history/{id}/detailed` returns
+   cleared low and high per SKU when called the way the product page calls it. `judge` buys an ask
+   only against that same variant, condition and language. A low under 20% of its own bucket's
+   market price is thrown out. Fewer than three usable sales is THIN, not a buy. The exit is the
+   transaction-weighted median of the bucket lows, so one high day cannot set it. On the 2026-11-21
+   pull, Unlimited Damaged cleared ten times, five of them at 19, and the 26.60 day is not the exit:
+   the 19.87 ask is NO after fees. 1st Edition Near Mint cleared twice in a year, at 14.99 and 4000,
+   so it is not a book. Unlimited Near Mint's median low was 119.99 and the 161.99 ask is NO.
+   Market minus lowest on 21792 is a misread. The cheap ask is Damaged Unlimited.
+   LOB-EN001 25th (486054) and Worldwide English (476160) are different products. Pokémon is line 3 and
+   Pokémon Japan is line 85; neither is fed to the Yu-Gi-Oh resolver. PriceCharting and YGOPRODeck
+   `card_prices` / `set_price` are not sales either.
+5. FX. A mid print, not wired into the store: USD/TWD 32.986624 and USD/JPY 159.74951 at 2026-11-20 00:02:32
+   UTC (open.er-api). Frankfurter JPY 159.97 on 2026-11-19, and no TWD. `fx.py` rejects a rate older than
+   one day for the timestamp being converted. Old comps still need a rate near their own sale date.
+6. Costs. `data/profile.json` is still absent. The assumed file uses the published eBay.com CCG rate,
+   13.25%, plus the $0.40 per-order fee as 13.19 TWD at the print above. Scan's US-unit costs use $0.40
+   directly. 13.25% of buyer-paid shipping is still not in either model. These are not a measured Taipei payout.
+7. Still closed: PSA cert (403), Yahoo Auctions closed results (500), OCR (needs images and `swiftc`).

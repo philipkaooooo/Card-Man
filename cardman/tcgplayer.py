@@ -21,8 +21,10 @@ Sold buckets, per SKU, are public at
 ``GET https://infinite-api.tcgplayer.com/price/history/{id}/detailed?range=quarter``
 when the request carries a browser user agent and the product page as referer.
 A naked ``latestsales`` path is still 403. Each bucket has a low and a high for
-that condition and variant, not one receipt. 1st Edition Near Mint of product
-21792 cleared twice in the year pulled 2026-11-21: 14.99 and 4000. That is not a price.
+that condition and variant, not one receipt. The exit is the transaction-weighted
+median of those lows. One high day does not set it. 1st Edition Near Mint of
+product 21792 cleared twice in the year pulled 2026-11-21: 14.99 and 4000.
+That is not a price.
 """
 from __future__ import annotations
 
@@ -304,12 +306,28 @@ class SaleRead:
     why: str
 
 
+def _weighted_median_low(buckets: list[SoldBucket]) -> SoldBucket:
+    """Lower median of the lows, each bucket repeated once per transaction.
+
+    A day with a range counts every sale at that day's low. That is the floor of
+    the day, not the receipt, and it keeps one high print from setting the exit.
+    """
+    rows = sorted(buckets, key=lambda b: (b.low, b.date))
+    need = (sum(b.transactions for b in rows) + 1) // 2
+    seen = 0
+    for b in rows:
+        seen += b.transactions
+        if seen >= need:
+            return b
+    return rows[-1]
+
+
 def judge(listing: TcgListing, history: dict) -> SaleRead:
     """Buy this ask only against cleared sales of the same variant, condition and language.
 
-    The exit is the low of the newest bucket that is not an outlier, after Level 1-4 fees.
-    Fewer than three such sales is THIN: the prices are shown and nothing is bought.
-    LOOK is still not a return. The bucket is a low and a high, not a receipt.
+    The exit is the transaction-weighted median of the usable bucket lows, after
+    Level 1-4 fees. Fewer than three usable sales is THIN. A low under 20% of its
+    own bucket's market price is rejected. LOOK is still not a return.
     """
     same = [b for b in _buckets(history)
             if b.variant == listing.printing and b.condition == listing.condition and b.language == listing.language]
@@ -326,18 +344,22 @@ def judge(listing: TcgListing, history: dict) -> SaleRead:
             span = f" usable prints {min(b.low for b in good)} to {max(b.low for b in good)}."
         dropped = ""
         if junk:
-            dropped = " Rejected " + ", ".join(f"{b.low} on {b.date} against a bucket market of {b.market}" for b in junk) + "."
+            dropped = " Rejected " + ", ".join(
+                f"{b.low} on {b.date} against a bucket market of {b.market}" for b in junk) + "."
         return SaleRead(label="THIN", sales=sales,
                         why=f"{sales} usable sale(s) of this SKU.{span}{dropped} Not a book.", **base)
-    newest = max(good, key=lambda b: b.date)
-    after = seller_net(newest.low) - _all_in(listing)
-    why = (f"newest cleared low {newest.low} on {newest.date}, {sales} usable sales in the window. "
-           f"A bucket low is not a receipt, so this is not a return.")
+    pick = _weighted_median_low(good)
+    after = seller_net(pick.low) - _all_in(listing)
+    lo, hi = min(b.low for b in good), max(b.low for b in good)
+    why = (f"weighted-median bucket low {pick.low} on {pick.date}; usable lows {lo} to {hi}; "
+           f"{sales} sales. Each sale in a bucket is counted at that day's low, not at a receipt. "
+           f"Not a return.")
     label = "LOOK" if after > 0 else "NO"
     if label == "NO":
-        why = "the ask is not under the newest cleared low of this SKU after Level 1-4 fees. " + why
-    return SaleRead(label=label, sales=sales, exit_low=newest.low, exit_date=newest.date,
-                    after_fees=after, why=why, **{k: v for k, v in base.items() if k not in ("exit_low", "exit_date", "after_fees")})
+        why = "the ask is not under the median cleared low of this SKU after Level 1-4 fees. " + why
+    return SaleRead(label=label, sales=sales, exit_low=pick.low, exit_date=pick.date,
+                    after_fees=after, why=why,
+                    **{k: v for k, v in base.items() if k not in ("exit_low", "exit_date", "after_fees")})
 
 
 def fetch_history(product_id: int, span: str = "quarter", timeout: float = 25) -> dict:
