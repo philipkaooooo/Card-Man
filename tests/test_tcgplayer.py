@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from cardman.tcgplayer import asks_for, parse_product, search_singles, variants
+from cardman.tcgplayer import asks_for, misread, parse_product, screen, search_singles, seller_net, variants
 
 DATA = Path(__file__).parent / "data" / "tcgplayer"
 
@@ -56,6 +56,36 @@ def test_sealed_other_games_and_presale_are_out_of_scope():
     assert parse_product(presale).presale is True and parse_product(presale).in_scope is False
     japan = dict(base, productLineId=85, productLineName="Pokemon Japan")
     assert parse_product(japan).game == "pokemon_japan"
+
+
+def test_the_market_gap_on_lob001_is_a_misread_and_the_same_sku_gap_dies():
+    p = parse_product(load("lob001_search_hit.json"))
+    text = misread(p)
+    assert text is not None and "not a return" in text and "Damaged" in text
+    rows = { (r.printing, r.condition): r for r in screen(p) }
+    damaged = rows[("Unlimited", "Damaged")]
+    assert damaged.label == "NO" and damaged.after_fees < 0
+    assert damaged.buy == Decimal("19.87") and damaged.exit_ask == Decimal("19.90")
+    # one Near Mint ask: nothing to undercut
+    assert rows[("Unlimited", "Near Mint")].label == "ABSTAIN"
+
+
+def test_a_same_sku_gap_that_survives_fees_is_a_look_not_a_return():
+    hit = load("lob001_search_hit.json")
+    hit["listings"] = [
+        {"listingId": 1, "productId": 21792, "price": 40, "shippingPrice": 0,
+         "condition": "Near Mint", "printing": "1st Edition", "language": "English", "quantity": 1},
+        {"listingId": 2, "productId": 21792, "price": 80, "shippingPrice": 0,
+         "condition": "Near Mint", "printing": "1st Edition", "language": "English", "quantity": 1},
+    ]
+    row = screen(parse_product(hit))[0]
+    assert row.label == "LOOK" and row.after_fees > 0 and "not a settled sale" in row.why
+
+
+def test_commission_caps_at_75_dollars():
+    # 10.75% of 1000 is 107.50. The cap keeps 75. Then 2.5% is 25, plus 0.30.
+    assert seller_net(Decimal("1000")) == Decimal("899.70")
+    assert seller_net(Decimal("100")) == Decimal("86.45")
 
 
 def test_search_keeps_only_in_scope_singles_of_the_requested_game():

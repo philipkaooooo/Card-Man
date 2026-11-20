@@ -147,6 +147,10 @@ python -m cardman.ui --store data/store/evidence.sqlite                         
    added a settled comp. TCGplayer's public product page is readable without a partner key
    (`cardman/tcgplayer.py`): a product is one card in one set, a SKU is condition × variant × language.
    `marketPrice` is not a sale and, on LOB-001 product 21792, one number covers 1st Edition and Unlimited.
+   `screen` buys the cheapest ask of one SKU and exits at the next ask of that same SKU after a
+   Level 1-4 fee (10.75% capped at $75, plus 2.5% and $0.30). A gap that dies is NO. A gap that
+   survives is LOOK, and it is still not a return: no sold history was available (the sales endpoints
+   answered 403 and 404). Market minus lowest on 21792 is a misread. The cheap ask is Damaged Unlimited.
    LOB-EN001 25th (486054) and Worldwide English (476160) are different products. Pokémon is line 3 and
    Pokémon Japan is line 85; neither is fed to the Yu-Gi-Oh resolver. PriceCharting and YGOPRODeck
    `card_prices` / `set_price` are not sales either.

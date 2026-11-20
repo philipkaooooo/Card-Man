@@ -23,7 +23,7 @@ import json
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_EVEN
 
 SEARCH_URL = "https://mp-search-api.tcgplayer.com/v1/search/request"
 DETAILS_URL = "https://mp-search-api.tcgplayer.com/v2/product/{product_id}/details"
@@ -156,6 +156,87 @@ def asks_for(product: TcgProduct, *, variant: str | None = None, condition: str 
     if condition is not None:
         rows = tuple(r for r in rows if r.condition == condition)
     return rows
+
+
+# Level 1-4 seller. help.tcgplayer.com "TCGplayer Fees", checked 2026-11-21.
+# 10.75% of the item, capped at $75, plus 2.5% + $0.30. No sales tax in this number.
+# Not Pro, not Direct. Commission on shipping you charge is not included because the
+# exit price below is the next ask's all-in and shipping charged is zero.
+COMMISSION = Decimal("0.1075")
+COMMISSION_CAP = Decimal("75")
+TXN_PCT = Decimal("0.025")
+TXN_FIXED = Decimal("0.30")
+
+
+def _cents(v: Decimal) -> Decimal:
+    return v.quantize(Decimal("0.01"), rounding=ROUND_HALF_EVEN)
+
+
+def seller_net(item: Decimal) -> Decimal:
+    """What a Level 1-4 seller keeps from an item price. Not a prediction that it sells."""
+    commission = min(item * COMMISSION, COMMISSION_CAP)
+    return _cents(item - commission - item * TXN_PCT - TXN_FIXED)
+
+
+def _all_in(row: TcgListing) -> Decimal:
+    return row.price + (row.shipping or Decimal(0))
+
+
+@dataclass(frozen=True)
+class SkuRead:
+    label: str
+    product_id: int
+    number: str | None
+    name: str
+    printing: str
+    condition: str
+    language: str
+    n_asks: int
+    buy: Decimal | None
+    exit_ask: Decimal | None
+    after_fees: Decimal | None
+    why: str
+
+
+def screen(product: TcgProduct) -> list[SkuRead]:
+    """Label each SKU from its own asks. LOOK is not a return. There is no sold comp here.
+
+    Buy the cheapest all-in. The exit is the next all-in of the same printing, condition
+    and language, after Level 1-4 fees. A gap that dies is NO. One ask is ABSTAIN.
+    """
+    groups: dict[tuple[str, str, str], list[TcgListing]] = {}
+    for row in product.listings:
+        groups.setdefault((row.printing, row.condition, row.language), []).append(row)
+    out = []
+    for (printing, condition, language), rows in sorted(groups.items()):
+        rows.sort(key=_all_in)
+        base = dict(product_id=product.product_id, number=product.number, name=product.name,
+                    printing=printing, condition=condition, language=language, n_asks=len(rows))
+        if len(rows) < 2:
+            out.append(SkuRead(label="ABSTAIN", buy=_all_in(rows[0]), exit_ask=None, after_fees=None,
+                               why="one ask of this SKU; no second ask to sell under", **base))
+            continue
+        buy, exit_ask = _all_in(rows[0]), _all_in(rows[1])
+        after = seller_net(exit_ask) - buy
+        if after > 0:
+            label, why = "LOOK", "same-SKU asks only; not a settled sale, so this is not a return yet"
+        else:
+            label, why = "NO", "the gap dies after Level 1-4 fees (10.75% capped at $75, plus 2.5% and $0.30)"
+        out.append(SkuRead(label=label, buy=buy, exit_ask=exit_ask, after_fees=after, why=why, **base))
+    return out
+
+
+def misread(product: TcgProduct) -> str | None:
+    """The headline TCGplayer leaves on the page: market minus lowest, across every SKU."""
+    if product.market_price is None or product.lowest_price is None or not product.listings:
+        return None
+    gap = product.market_price - product.lowest_price
+    if gap <= 0:
+        return None
+    cheap = min(product.listings, key=_all_in)
+    return (f"market {product.market_price} minus lowest {product.lowest_price} is {gap}. "
+            f"The cheap ask in hand is {cheap.printing} {cheap.condition} at {_all_in(cheap)}. "
+            f"Market price is one number for every SKU. That gap is not a return.")
 
 
 def _post(url: str, body: dict, timeout: float) -> dict:
