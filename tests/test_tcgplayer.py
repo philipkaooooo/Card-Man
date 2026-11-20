@@ -6,8 +6,9 @@ from pathlib import Path
 import pytest
 
 from cardman.tcgplayer import (
-    asks_for, assemble, fetch_listings, judge, label_listing, misread, page_html, parse_product, review,
-    review_query, screen, search_singles, seller_net, variants)
+    asks_for, assemble, deepen, fetch_listings, judge, label_listing, misread, needs_cheap_page,
+    page_html, parse_product, review, review_query, scan, screen, search_singles, seller_net,
+    variants, worth_history)
 from cardman.store import Store
 
 DATA = Path(__file__).parent / "data" / "tcgplayer"
@@ -309,3 +310,121 @@ def test_paging_keeps_this_product_only_and_a_count_is_not_asks():
     }], 115)
     assert product.listed == 115 and len(product.listings) == 1
     assert label_listing(product, product.listings[0], None).label == "watch"
+
+
+def _at_market(hit, market, listings, lowest=None, listed=None):
+    doc = dict(hit, marketPrice=market, listings=listings,
+               totalListings=len(listings) if listed is None else listed)
+    if lowest is not None:
+        doc["lowestPrice"] = lowest
+    return parse_product(doc)
+
+
+def test_an_ask_that_cannot_clear_fees_at_market_skips_history():
+    hit = load("lob001_search_hit.json")
+    # Market 10. seller_net is about 8.38. An ask of 9 cannot win even at that market.
+    hopeless = _at_market(hit, 10, [{"listingId": 1, "productId": 21792, "price": 9, "shippingPrice": 0,
+                                     "condition": "Near Mint", "printing": "Unlimited", "language": "English", "quantity": 1}])
+    cheap = _at_market(hit, 10, [{"listingId": 2, "productId": 50, "price": 2, "shippingPrice": 0,
+                                  "condition": "Near Mint", "printing": "Unlimited", "language": "English", "quantity": 1}])
+    cheap = type(cheap)(**{**cheap.__dict__, "product_id": 50})
+    assert worth_history(hopeless) is False and worth_history(cheap) is True
+    assert needs_cheap_page(hopeless) is False and needs_cheap_page(cheap) is False
+    calls = []
+
+    def search(game, query, size=10, sort=None):
+        assert sort == ("sales", "desc")
+        return [hopeless, cheap]
+
+    def fetch(pid, span):
+        calls.append(pid)
+        return {"result": []}
+
+    result = scan("yugioh", "", size=2, cache_dir=None, search=search, fetch=fetch, cheap=lambda p: p)
+    assert calls == [50] and result.checked == 2 and result.fetched == 1 and result.skipped == 1
+    assert result.looks == () and result.deepened == 0
+
+
+def test_a_second_scan_uses_the_cached_book(tmp_path):
+    hit = load("lob001_search_hit.json")
+    product = parse_product(hit)
+    calls = []
+
+    def search(game, query, size=10, sort=None):
+        return [product]
+
+    def fetch(pid, span):
+        calls.append(pid)
+        return load("lob001_quarter.json")
+
+    first = scan("yugioh", "LOB-001", cache_dir=str(tmp_path), search=search, fetch=fetch, cheap=lambda p: p)
+    second = scan("yugioh", "LOB-001", cache_dir=str(tmp_path), search=search, fetch=fetch, cheap=lambda p: p)
+    assert calls == [21792] and second.cache_hits == 1 and second.fetched == 0
+    assert first.closest and first.closest[0].read.label == "NO"
+
+
+def test_a_floor_missing_from_the_sample_is_priced_off_the_cheap_page():
+    hit = load("lob001_search_hit.json")
+    sample = _at_market(hit, 100, [{
+        "listingId": 1, "productId": 21792, "price": 90, "shippingPrice": 0,
+        "condition": "Near Mint", "printing": "Unlimited", "language": "English", "quantity": 1,
+    }], lowest=10, listed=40)
+    assert needs_cheap_page(sample)
+    floor = {
+        "listingId": 9, "productId": 21792, "price": 10, "shippingPrice": 0,
+        "condition": "Near Mint", "printing": "Unlimited", "language": "English", "quantity": 1,
+    }
+
+    def fetch(pid, span):
+        return {"result": [{"skuId": "1", "variant": "Unlimited", "condition": "Near Mint",
+                            "language": "English", "buckets": [
+                                {"bucketStartDate": f"2026-11-0{i}", "transactionCount": "1",
+                                 "lowSalePrice": "40", "highSalePrice": "40", "marketPrice": "40"}
+                                for i in range(1, 4)]}]}
+
+    result = scan("yugioh", "x", cache_dir=None, search=lambda *a, **k: [sample], fetch=fetch,
+                  cheap=lambda product: _at_market(hit, 100, [floor], lowest=10, listed=40))
+    assert result.deepened == 1 and result.fetched == 1
+    assert result.looks[0].read.buy == Decimal("10") and result.looks[0].decision == "2x"
+    assert "Not a return" in result.looks[0].read.why
+
+
+def test_shipping_that_kills_the_floor_skips_the_book():
+    hit = load("lob001_search_hit.json")
+    sample = _at_market(hit, 10, [{
+        "listingId": 1, "productId": 21792, "price": 9, "shippingPrice": 0,
+        "condition": "Near Mint", "printing": "Unlimited", "language": "English", "quantity": 1,
+    }], lowest=5, listed=20)
+    assert worth_history(sample) is True
+    calls = []
+
+    def cheap(product):
+        return _at_market(hit, 10, [{
+            "listingId": 4, "productId": 21792, "price": 5, "shippingPrice": 6,
+            "condition": "Near Mint", "printing": "Unlimited", "language": "English", "quantity": 1,
+        }], lowest=5, listed=20)
+
+    result = scan("yugioh", "x", cache_dir=None, search=lambda *a, **k: [sample],
+                  fetch=lambda pid, span: calls.append(pid) or {"result": []}, cheap=cheap)
+    assert calls == [] and result.fetched == 0 and result.deepened == 1 and result.skipped == 1
+
+
+def test_near_mint_is_added_when_the_cheap_page_is_all_played():
+    hit = load("lob001_search_hit.json")
+    sample = _at_market(hit, 100, [{
+        "listingId": 1, "productId": 21792, "price": 90, "shippingPrice": 0,
+        "condition": "Damaged", "printing": "Unlimited", "language": "English", "quantity": 1,
+    }], lowest=10, listed=80)
+    damaged = [{"listingId": 2, "productId": 21792, "price": 10, "shippingPrice": 0,
+                "condition": "Damaged", "printing": "Unlimited", "language": "English", "quantity": 1}]
+    nm = [{"listingId": 3, "productId": 21792, "price": 30, "shippingPrice": 0,
+           "condition": "Near Mint", "printing": "Unlimited", "language": "English", "quantity": 1}]
+
+    def post(url, body, timeout=25):
+        rows = nm if "condition" in body["filters"]["term"] else damaged
+        assert body["size"] == 50 and body["from"] == 0
+        return {"results": [{"totalResults": 80, "results": rows}]}
+
+    out = deepen(sample, post=post)
+    assert {row.condition for row in out.listings} == {"Damaged", "Near Mint"}
+    assert out.listed == 80

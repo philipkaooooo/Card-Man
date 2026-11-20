@@ -30,11 +30,18 @@ from __future__ import annotations
 
 import argparse
 import html
+import http.client
 import json
+import ssl
+import threading
+import time
+import urllib.error
 import urllib.parse
-import urllib.request
-from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, replace
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_EVEN
+from pathlib import Path
 
 SEARCH_URL = "https://mp-search-api.tcgplayer.com/v1/search/request"
 DETAILS_URL = "https://mp-search-api.tcgplayer.com/v2/product/{product_id}/details"
@@ -267,6 +274,10 @@ def misread(product: TcgProduct) -> str | None:
 
 
 HISTORY_URL = "https://infinite-api.tcgplayer.com/price/history/{product_id}/detailed?range={span}"
+# Listings rejects size 100. 50 is the largest page that returned, and it is one round trip.
+CHEAP_PAGE = 50
+_SSL = ssl.create_default_context()
+_TLS = threading.local()
 # A cleared low under this fraction of the same bucket's market price is a bad print, not a comp.
 # 14.99 against a bucket market of 2007.50 on 1st Edition Near Mint is the case.
 OUTLIER = Decimal("0.2")
@@ -434,30 +445,87 @@ def judge(listing: TcgListing, history: dict) -> SaleRead:
                     **{k: v for k, v in base.items() if k not in ("exit_low", "exit_date", "after_fees")})
 
 
+def _conn(host: str, timeout: float) -> http.client.HTTPSConnection:
+    pool = getattr(_TLS, "pool", None)
+    if pool is None:
+        pool = {}
+        _TLS.pool = pool
+    conn = pool.get(host)
+    if conn is None:
+        conn = http.client.HTTPSConnection(host, timeout=timeout, context=_SSL)
+        pool[host] = conn
+    else:
+        conn.timeout = timeout
+    return conn
+
+
+def _drop(host: str) -> None:
+    pool = getattr(_TLS, "pool", None) or {}
+    conn = pool.pop(host, None)
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _request(method: str, url: str, headers: dict, body: bytes | None, timeout: float) -> bytes:
+    """One HTTPS call, retried on 429 and 5xx. The connection stays on this thread and is reused."""
+    parsed = urllib.parse.urlparse(url)
+    path = parsed.path or "/"
+    if parsed.query:
+        path += "?" + parsed.query
+    last: Exception | None = None
+    for attempt in range(3):
+        conn = _conn(parsed.netloc, timeout)
+        try:
+            conn.request(method, path, body=body, headers=headers)
+            resp = conn.getresponse()
+            data = resp.read()
+            status = resp.status
+            reason = resp.reason
+            hdrs = resp.headers
+        except Exception as e:
+            _drop(parsed.netloc)
+            last = e
+            if attempt == 2:
+                raise
+            time.sleep(0.4 * (attempt + 1))
+            continue
+        if status in (429, 500, 502, 503) and attempt < 2:
+            _drop(parsed.netloc)
+            last = urllib.error.HTTPError(url, status, reason, hdrs, None)
+            time.sleep(0.4 * (attempt + 1))
+            continue
+        if status >= 400:
+            raise urllib.error.HTTPError(url, status, reason, hdrs, None)
+        return data
+    raise last or RuntimeError(url)
+
+
 def fetch_history(product_id: int, span: str = "quarter", timeout: float = 25) -> dict:
     """The chart the product page draws. range is quarter, month or annual."""
     if span not in ("quarter", "month", "annual"):
         raise ValueError(f"unsupported range {span!r}")
     url = HISTORY_URL.format(product_id=int(product_id), span=span)
-    req = urllib.request.Request(url, headers={
+    raw = _request("GET", url, {
         "User-Agent": BROWSER_UA,
         "Accept": "application/json",
         "Referer": f"https://www.tcgplayer.com/product/{int(product_id)}",
         "Origin": "https://www.tcgplayer.com",
-    })
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode())
+    }, None, timeout)
+    return json.loads(raw.decode())
 
 
 def _post(url: str, body: dict, timeout: float) -> dict:
-    req = urllib.request.Request(
-        url, data=json.dumps(body).encode(), method="POST",
-        headers={"User-Agent": UA, "Accept": "application/json", "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode())
+    raw = _request("POST", url, {
+        "User-Agent": UA, "Accept": "application/json", "Content-Type": "application/json",
+    }, json.dumps(body).encode(), timeout)
+    return json.loads(raw.decode())
 
 
-def search_singles(game: str, query: str, *, size: int = 10, timeout: float = 25, post=_post) -> list[TcgProduct]:
+def search_singles(game: str, query: str, *, size: int = 10, timeout: float = 25, post=_post,
+                   sort: tuple[str, str] | None = None) -> list[TcgProduct]:
     """Unsealed, non-presale singles for one of yugioh, pokemon, pokemon_japan.
 
     The raw page can lead with a presale. Those are dropped, and the next page is
@@ -484,7 +552,7 @@ def search_singles(game: str, query: str, *, size: int = 10, timeout: float = 25
             },
             "context": {"cart": {}, "shippingCountry": "US"},
             "settings": {"useFuzzySearch": True},
-            "sort": {},
+            "sort": {"field": sort[0], "order": sort[1]} if sort else {},
         }
         doc = post(url, body, timeout)
         hits = ((doc.get("results") or [{}])[0].get("results") or [])
@@ -627,22 +695,24 @@ def label_listing(product: TcgProduct, listing: TcgListing, history: dict | None
                 True, sale.sales, sale.exit_low, sale.after_fees, multiple, why + sale.why)
 
 
-def _listing_query(start: int, size: int) -> dict:
+def _listing_query(start: int, size: int, term: dict | None = None) -> dict:
+    filters = {"sellerStatus": "Live", "channelId": 0}
+    if term:
+        filters.update(term)
     return {
         "from": start, "size": size,
-        "filters": {"term": {"sellerStatus": "Live", "channelId": 0},
-                    "range": {"quantity": {"gte": 1}}, "exclude": {"channelExclusion": 0}},
+        "filters": {"term": filters, "range": {"quantity": {"gte": 1}}, "exclude": {"channelExclusion": 0}},
         "context": {"cart": {}, "shippingCountry": "US"},
         "sort": {"field": "price+shipping", "order": "asc"},
     }
 
 
-def fetch_listings(product_id: int, *, post=None, page_size: int = 50, timeout: float = 25
-                   ) -> tuple[list[dict], int | None]:
-    """Every ask this product's listings call returns. Another product's row is dropped.
+def fetch_listings(product_id: int, *, post=None, page_size: int = 50, timeout: float = 25,
+                   max_pages: int = 40, term: dict | None = None) -> tuple[list[dict], int | None]:
+    """Asks this product's listings call returns, cheapest all-in first. Another product's row is dropped.
 
-    Stops on an empty page, a page that adds nothing, a short page, or the reported total.
-    Asks that were not in the pull are not invented.
+    Stops on an empty page, a page that adds nothing, a short page, the reported total, or `max_pages`.
+    Asks that were not in the pull are not invented. A scan uses max_pages=1. A product pull does not.
     """
     post = post or _post_browser
     seen: dict[int, dict] = {}
@@ -655,8 +725,8 @@ def fetch_listings(product_id: int, *, post=None, page_size: int = 50, timeout: 
         except TypeError:
             return post(url, body)
 
-    for page in range(40):
-        block = (ask(_listing_query(page * page_size, page_size)).get("results") or [{}])[0]
+    for page in range(max_pages):
+        block = (ask(_listing_query(page * page_size, page_size, term)).get("results") or [{}])[0]
         if total is None and block.get("totalResults") is not None:
             total = int(block["totalResults"])
         rows = [r for r in (block.get("results") or []) if isinstance(r, dict) and r.get("listingId") is not None]
@@ -677,20 +747,20 @@ def fetch_listings(product_id: int, *, post=None, page_size: int = 50, timeout: 
 
 
 def _post_browser(url: str, body: dict, timeout: float = 25) -> dict:
-    req = urllib.request.Request(
-        url, data=json.dumps(body).encode(), method="POST",
-        headers={"User-Agent": BROWSER_UA, "Accept": "application/json", "Content-Type": "application/json",
-                 "Referer": "https://www.tcgplayer.com/", "Origin": "https://www.tcgplayer.com"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode())
+    raw = _request("POST", url, {
+        "User-Agent": BROWSER_UA, "Accept": "application/json", "Content-Type": "application/json",
+        "Referer": "https://www.tcgplayer.com/", "Origin": "https://www.tcgplayer.com",
+    }, json.dumps(body).encode(), timeout)
+    return json.loads(raw.decode())
 
 
 def fetch_details(product_id: int, timeout: float = 25) -> dict:
     url = DETAILS_URL.format(product_id=int(product_id))
-    req = urllib.request.Request(url, headers={"User-Agent": BROWSER_UA, "Accept": "application/json",
-                                               "Referer": f"https://www.tcgplayer.com/product/{int(product_id)}"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode())
+    raw = _request("GET", url, {
+        "User-Agent": BROWSER_UA, "Accept": "application/json",
+        "Referer": f"https://www.tcgplayer.com/product/{int(product_id)}",
+    }, None, timeout)
+    return json.loads(raw.decode())
 
 
 def assemble(details: dict, rows: list[dict], total: int | None) -> TcgProduct | None:
@@ -701,6 +771,203 @@ def assemble(details: dict, rows: list[dict], total: int | None) -> TcgProduct |
         doc.pop("listings", None)
     doc["listings"] = rows
     return parse_product(doc)
+
+
+def worth_history(product: TcgProduct) -> bool:
+    """False when no ask we can see, and no unseen floor, can clear fees at the page's market.
+
+    That market mixes SKUs, so this only drops a hopeless card. A cheap ask still gets its own book.
+    Once the cheap page is in hand, a posted floor that is already one of those asks does not
+    force a fetch the all-in has already lost.
+    """
+    if product.market_price is None or product.market_price <= 0:
+        return bool(product.listings) or (product.lowest_price is not None and product.lowest_price > 0)
+    ceiling = seller_net(product.market_price)
+    if any(_all_in(row) < ceiling for row in product.listings):
+        return True
+    held = min((row.price for row in product.listings), default=None)
+    return bool(product.lowest_price is not None and product.lowest_price > 0
+                and product.lowest_price < ceiling and (held is None or product.lowest_price < held))
+
+
+def needs_cheap_page(product: TcgProduct) -> bool:
+    """Search carries about three asks. The book is the cheapest page, not that sample."""
+    if not worth_history(product):
+        return False
+    if product.listed is not None and product.listed <= len(product.listings):
+        return False
+    return len(product.listings) < CHEAP_PAGE
+
+
+def _with_asks(product: TcgProduct, groups: list[tuple[list[dict], int | None]]) -> TcgProduct:
+    seen: dict[int, dict] = {}
+    total = product.listed
+    for rows, tot in groups:
+        if tot is not None:
+            total = tot
+        for row in rows:
+            if isinstance(row, dict) and row.get("listingId") is not None:
+                seen.setdefault(int(row["listingId"]), row)
+    listings = _listings(list(seen.values()), product.product_id)
+    if not listings:
+        return product
+    return replace(product, listings=listings, listed=total if total is not None else product.listed)
+
+
+def deepen(product: TcgProduct, *, post=None) -> TcgProduct:
+    """Replace the search sample with the cheapest page. Near Mint is added when that page had none.
+
+    A failed call leaves the sample in place. Asks the call did not return are not invented.
+    """
+    if not needs_cheap_page(product):
+        return product
+    try:
+        rows, total = fetch_listings(product.product_id, post=post, page_size=CHEAP_PAGE, max_pages=1)
+    except Exception:
+        return product
+    groups: list[tuple[list[dict], int | None]] = [(rows, total)]
+    if rows and total is not None and total > len(rows) and not any(
+            str(r.get("condition") or "") == "Near Mint" for r in rows):
+        try:
+            nm, _ = fetch_listings(product.product_id, post=post, page_size=CHEAP_PAGE, max_pages=1,
+                                   term={"condition": ["Near Mint"]})
+            groups.append((nm, None))
+        except Exception:
+            pass
+    return _with_asks(product, groups)
+
+
+def _cache_get(directory: Path, product_id: int, span: str, now: datetime, hours: float):
+    path = directory / f"{product_id}-{span}.json"
+    if not path.exists():
+        return None
+    try:
+        saved = json.loads(path.read_text())
+        fetched = datetime.fromisoformat(saved["fetched"])
+    except (OSError, ValueError, KeyError, json.JSONDecodeError):
+        return None
+    if now - fetched > timedelta(hours=hours):
+        return None
+    return saved.get("doc")
+
+
+def _cache_put(directory: Path, product_id: int, span: str, doc: dict, now: datetime) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{product_id}-{span}.json"
+    path.write_text(json.dumps({"fetched": now.isoformat(), "doc": doc}))
+
+
+@dataclass(frozen=True)
+class Hit:
+    product_id: int
+    game: str
+    name: str
+    number: str | None
+    read: SaleRead
+    decision: str = ""
+    call: Call | None = None
+
+
+@dataclass(frozen=True)
+class ScanResult:
+    checked: int
+    fetched: int
+    skipped: int
+    cache_hits: int
+    seconds: float
+    looks: tuple[Hit, ...]
+    closest: tuple[Hit, ...]
+    deepened: int = 0
+    asks: int = 0
+
+
+def _hits(reviews: list[Review]) -> list[Hit]:
+    out = []
+    for r in reviews:
+        calls = r.calls
+        for i, row in enumerate(r.reads):
+            if row.label not in ("LOOK", "NO"):
+                continue
+            call = calls[i] if i < len(calls) else None
+            out.append(Hit(r.product_id, r.game, r.name, r.number, row,
+                           call.label if call is not None else row.label, call))
+    return out
+
+
+def scan(game: str, query: str = "", *, size: int = 24, span: str = "quarter", workers: int = 8,
+         cache_dir: str | None = "data/cache/tcg", cache_hours: float = 6, search=search_singles,
+         fetch=fetch_history, cheap=None, now: datetime | None = None) -> ScanResult:
+    """Sales-sorted singles. The cheap page is pulled before the book, and only when a floor could clear.
+
+    History for the survivors runs in parallel with that pull, one book per product. A second scan
+    inside `cache_hours` reads the book off disk. 2x and buy are asks under that product's own SKU
+    after Level 1-4 fees. Neither is a settled return. Asks past the cheapest page are not judged,
+    except Near Mint when the cheap page had none.
+    """
+    if game not in LINE:
+        raise ValueError(f"unsupported game {game!r}")
+    started = time.perf_counter()
+    now = now or datetime.now(timezone.utc)
+    products = list(search(game, query, size=size, sort=("sales", "desc")))
+    directory = Path(cache_dir) if cache_dir else None
+    cheap_fn = cheap or deepen
+
+    def work(product: TcgProduct):
+        original = tuple(row.listing_id for row in product.listings)
+        did = False
+        if needs_cheap_page(product):
+            product = cheap_fn(product)
+            did = tuple(row.listing_id for row in product.listings) != original
+        if not worth_history(product):
+            return product, did, None, None
+        if directory is not None:
+            cached = _cache_get(directory, product.product_id, span, now, cache_hours)
+            if cached is not None:
+                return product, did, cached, "cache"
+        try:
+            doc = fetch(product.product_id, span)
+        except Exception as e:
+            return product, did, {"result": []}, f"history failed: {type(e).__name__}"
+        if directory is not None:
+            _cache_put(directory, product.product_id, span, doc, now)
+        return product, did, doc, "net"
+
+    if products:
+        with ThreadPoolExecutor(max_workers=max(1, min(workers, len(products)))) as pool:
+            done = list(pool.map(work, products))
+    else:
+        done = []
+    keep = []
+    histories: dict[int, dict] = {}
+    notes: dict[int, str] = {}
+    fetched = cache_hits = deepened = 0
+    seen: set[int] = set()
+    for product, did, doc, how in done:
+        if did:
+            deepened += 1
+        if doc is None or product.product_id in seen:
+            continue
+        seen.add(product.product_id)
+        keep.append(product)
+        histories[product.product_id] = doc
+        if how == "cache":
+            cache_hits += 1
+        elif how == "net":
+            fetched += 1
+        elif isinstance(how, str) and how.startswith("history failed"):
+            notes[product.product_id] = how
+            fetched += 1
+    reviews = review(keep, histories, notes)
+    ranked = _hits(reviews)
+    order = {"2x": 0, "buy": 1}
+    looks = tuple(sorted((h for h in ranked if h.read.label == "LOOK"),
+                         key=lambda h: (order.get(h.decision, 2), -(h.read.after_fees or Decimal(0)))))
+    closest = tuple(sorted((h for h in ranked if h.read.label == "NO"),
+                           key=lambda h: h.read.after_fees if h.read.after_fees is not None else Decimal("-1e9"),
+                           reverse=True)[:5])
+    return ScanResult(len(products), fetched, len(products) - len(keep), cache_hits,
+                      time.perf_counter() - started, looks, closest, deepened,
+                      sum(len(p.listings) for p in keep))
 
 
 def _line(r: Review, row: SaleRead, call: Call | None = None) -> str:
@@ -816,10 +1083,48 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--store", default="data/store/evidence.sqlite")
     ap.add_argument("--size", type=int, default=3)
     ap.add_argument("--span", default="quarter", choices=("quarter", "month", "annual"))
+    ap.add_argument("--scan", action="store_true",
+                    help="sales-sorted page; cheap asks only, history only where a floor could clear fees")
     ap.add_argument("--html", help="write one chart per SKU, with the same numbers in a table")
     args = ap.parse_args(argv)
     if args.product:
         return pull(args.product, args.span, args.store)
+    if args.scan:
+        if not args.game:
+            ap.error("give a game, or --product ID")
+        size = 48 if args.size == 3 else args.size
+        result = scan(args.game, args.query or "", size=size, span=args.span)
+        print(f"checked {result.checked}  deepened {result.deepened}  asks {result.asks}  "
+              f"fetched {result.fetched}  skipped {result.skipped}  cache {result.cache_hits}  "
+              f"{result.seconds:.2f}s")
+        if result.deepened:
+            print(f"cheap page pulled for {result.deepened}; asks beyond that page were not judged")
+        if not result.looks:
+            print("no ask under its own SKU after fees")
+        for h in result.looks:
+            last = h.read.series[-1] if h.read.series else None
+            fresh = f"  newest {last[0][5:]} {last[1]}×{last[2]}" if last else ""
+            stale = ""
+            if last and h.read.buy is not None and last[1] <= h.read.buy:
+                stale = "  newest low is not above the all-in"
+            shown = h.decision if h.decision in ("2x", "buy") else "LOOK"
+            print(f"{shown:5} {h.game:14} {h.number or '-':12} {h.read.printing} {h.read.condition}"
+                  f"  buy {h.read.buy}  exit {h.read.exit_low}  after fees {h.read.after_fees}"
+                  f"  sales {h.read.sales}{fresh}{stale}  not a return  {h.name}")
+        for h in result.closest:
+            move = f"  {h.read.direction} {h.read.prior_low}→{h.read.recent_low}" if h.read.direction else ""
+            print(f"close   {h.game:14} {h.number or '-':12} {h.read.printing} {h.read.condition}"
+                  f"  buy {h.read.buy}  exit {h.read.exit_low}  after fees {h.read.after_fees}{move}  {h.name}")
+        actionable = [h.call for h in result.looks
+                      if h.call is not None and h.call.typed and h.call.label in ("2x", "buy")]
+        if actionable:
+            from .store import Store
+            written, refused = Store(args.store).save_public_listings(
+                [c.row() for c in actionable], datetime.now(timezone.utc))
+            print(f"stored {written}")
+            for line in refused:
+                print(f"refused {line}")
+        return 0
     if not args.game or not args.query:
         ap.error("give a game and a query, or --product ID")
     rows = review_query(args.game, args.query, size=args.size, span=args.span)
