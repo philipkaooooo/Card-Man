@@ -122,6 +122,14 @@ Paste a title and description as the seller wrote them (English or Japanese) wit
   market, one cheapest page of 50 replaces that sample, and Near Mint is added when that page had none.
   The sold book is fetched only for what still survives, in parallel, and reused for six hours. 2x and
   buy from that page are stored. Asks past it are not judged. 2x and buy are not settled returns.
+- A dated post (`post.py`) is not a price source. One photo region can carry one number, and that
+  number is a seller claim. It is attached to a SKU only when the code, variant, condition and
+  language were read from that same region. A worldwide English code stamped 1st is a contradiction.
+  An unsuffixed code that also exists as Asian-English stays quarantined until a product id is given.
+  `LOB-EN001` is not product 21792. Scored against that SKU's own exit, the quote is the book, a copy
+  of the mixed market, the high day, the older half, or just off. A damaged LOB-001 quoted at 119
+  repeats the 119.14 market; the damaged exit is 19. None of these is a sale, and a caption that
+  says sold is not a receipt. A number outside the photo prices nothing.
 - English edition rules (`data/edition_rules.json`, hand-written, to be checked against a source) split edition-less
   English prints into edition scenarios priced from confirmed-edition sales.
 - Costs come from `data/profile.json`; until it exists the engine uses `examples/cost_profiles_ASSUMED.json`.
@@ -130,7 +138,7 @@ Paste a title and description as the seller wrote them (English or Japanese) wit
 
 ### Run
 ```
-pip install pytest && python -m pytest -q                      # 233 pass
+pip install pytest && python -m pytest -q                      # 244 pass
 python -m cardman.sources                                       # re-probe every source
 python -m cardman.identity_cache sync                           # clone/update YAML Yugi, sync cache
 python -m cardman.slice examples/identity_only_LB-01.json examples/manual_import_TEMPLATE.csv
@@ -140,6 +148,7 @@ python -m cardman.ui --store data/store/evidence.sqlite                         
 python -m cardman.tcgplayer --product 21792                                 # every ask for one card, labeled and stored
 python -m cardman.tcgplayer pokemon charizard --scan --size 16              # sales-sorted; cheap page, then history only if a floor could clear fees
 python -m cardman.tcgplayer yugioh "LOB-001" --html lob.html                  # same-SKU asks, the trend, and a chart of the bucket lows
+python -m cardman.post examples/post_region_TEMPLATE.jsonl                   # a quote is a claim; the template is synthetic
 # the Scan page needs the identity cache: python -m cardman.identity_cache sync
 ```
 
