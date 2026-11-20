@@ -110,6 +110,8 @@ Paste a title and description as the seller wrote them (English or Japanese) wit
   nothing sold in 45 days, there is no pay-up-to: the last-10 window is not used instead. A small settled
   sample with no such flag still uses its own low sale. The prior month stays in the history. A cross-posted
   sale has to match within 0.1% and one day. Listing counts add only this printing.
+- The keyword scanner (`market_live.py`, `spread.py`) does not run. A search mixes printings and a scraped
+  tile is not a sale. One product's SKUs are `python -m cardman.tcgplayer`.
 - English edition rules (`data/edition_rules.json`, hand-written, to be checked against a source) split edition-less
   English prints into edition scenarios priced from confirmed-edition sales.
 - Costs come from `data/profile.json`; until it exists the engine uses `examples/cost_profiles_ASSUMED.json`.
