@@ -126,6 +126,14 @@ def verdict(d: dict, status: str, M) -> Verdict:
 
     if status == "REJECTED":
         return V(PASS, "Skip", "Not a single card we can price (a proxy, a different game, or not what it says).")
+    if d.get("photo") == "clash":
+        return Verdict(PASS, "Skip",
+                       "The seller's photo is not the card the title names. That card's price does not apply to this listing.",
+                       "Low", ["The photo and the catalog picture are different cards"], None, None)
+    if d.get("photo") == "unconfirmed":
+        return Verdict(CHECK, "2x Check",
+                       "The seller's photo has not been matched to one card, so no price is attached.",
+                       "Low", ["A photo is on the listing and it does not confirm the title"], None, None)
     sus = suspect(d)
     if sus:
         return Verdict(PASS, "Skip", sus, "Low", why, None, None)
@@ -327,7 +335,7 @@ def row_html(key: str, d: dict, v: Verdict, cards, M, now: datetime, sparks: dic
     name, sub = d.get("title") or key, ""
     pc = _passcode(top)
     c = cards.card(pc) if (pc and cards is not None and not lot) else None
-    if c and d.get("printing_id"):
+    if c and d.get("printing_id") and d.get("photo") in (None, "none", "match"):
         name = c.get("name_en") or name
     likely = _likely(d) or top
     if likely and likely.get("label") and not lot:
@@ -359,8 +367,10 @@ def _decoded(st, game: str | None) -> list[tuple]:
 
 def decisions(st, M, game: str | None = None) -> list[tuple]:
     """Every listing of one game (or all) with its verdict: (key, status, payload, verdict). Games never mix."""
+    from .photo_match import apply
     out = []
     for key, status, d in _decoded(st, game):
+        d = apply(d, key, st.db)
         out.append((key, status, d, verdict(d, status, M)))
     return out
 
@@ -421,22 +431,18 @@ def view_one(st, cards, key: str, now: datetime, token: str, M, profile: dict | 
         raise KeyError(key)
     stage, status, pj, sid = row
     d = json.loads(pj)
-    v = verdict(d, status, M)
+    from .photo_match import apply
     claim = _likely(d) or {}
+    d = apply(d, key, st.db)
+    v = verdict(d, status, M)
     claim_pc = _passcode(claim)
-    iid = item_id_of(key, d)
-    if (claim_pc or "").startswith("pkm-") and iid and photos_disagree(
-            _cached_listing_photo(iid), _cached_catalog_photo(claim_pc[4:])):
-        v = Verdict(PASS, "Skip",
-                    "The seller's photo is not the card the title names. That card's price does not apply to this listing.",
-                    "Low", ["The photo and the catalog picture are different cards"], None, None)
     meta = listing_meta(st, key)
     top = v.top
     pc = _passcode(top) or claim_pc
     c = cards.card(pc) if (pc and cards is not None) else None
     lot = "LOT" in (d.get("kinds") or [])
     settled = bool(d.get("printing_id"))
-    trusted = bool(c and settled and not lot and top is not None)
+    trusted = d.get("photo") == "match" and bool(c and not lot)
     card_line = ("Lot: " + (f"{_lot_size(d)} cards" if _lot_size(d) else "several cards")) if lot else \
         (" · ".join((claim or top or {}).get("label", "").split(" · ")[:3]) + ("" if settled else "  (probably; version not certain)")) \
         if (claim or top) else "Card not identified yet"
@@ -475,11 +481,10 @@ def view_one(st, cards, key: str, now: datetime, token: str, M, profile: dict | 
         actions.append(f'<a class="btn" href="{e(url)}" target="_blank" rel="noreferrer noopener">Open the listing ↗</a>')
     if v.code == CHECK or not settled:
         actions.append('<a class="btn ghost" href="#confirm">Tell us which version it is</a>')
-    if c:
+    if c and d.get("photo") == "match":
         pid = (top or claim).get("printing_id")
         href = card_href(pc) + (("?v=" + quote(pid, safe="")) if pid else "")
-        label = "See this card's prices" if trusted else "The title claims this card"
-        actions.append(f'<a class="btn ghost" href="{e(href)}">{e(label)}</a>')
+        actions.append(f'<a class="btn ghost" href="{e(href)}">See this card\'s prices</a>')
     if sid:
         actions.append(f'<a class="btn ghost" href="/deal/{e(sid)}">Full math</a>')
 

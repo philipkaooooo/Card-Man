@@ -7,6 +7,7 @@ Uncertain pairs are left alone: this only speaks when the two pictures clearly d
 from __future__ import annotations
 
 import io
+import re
 import struct
 import subprocess
 import sys
@@ -161,3 +162,96 @@ def _jpeg(data: bytes) -> tuple[int, int, list[int]] | None:
             return _bmp(dst.read_bytes())
     except (OSError, subprocess.TimeoutExpired):
         return None
+
+
+def apply(d: dict, key: str = "", db=None, *, listing_root: Path | None = None, image_root: Path | None = None) -> dict:
+    """A listing is one catalog card only when its photo is that card's picture.
+
+    No seller photo: left as the engine stored it (photo "none").
+    A photo that is clearly a different picture: unbound (photo "clash"). The card's price is removed.
+    A photo that is not a clear match: unbound (photo "unconfirmed"). No name and no price are attached.
+    """
+    if "LOT" in (d.get("kinds") or []):
+        return {**d, "photo": "none"}
+    iid = _item_id(key, d)
+    seller = _listing_bytes(iid, listing_root) if iid else None
+    has_photo = seller is not None or _listed_images(db, iid)
+    if not has_photo:
+        return {**d, "photo": "none"}
+    pcs = _passcodes(d)
+    if len(pcs) != 1:
+        return _unbind(d, "unconfirmed")
+    catalog = _catalog_bytes(pcs[0], image_root)
+    if seller and catalog:
+        same = disagrees(seller, catalog)
+        if same is False:
+            return {**d, "photo": "match"}
+        if same is True:
+            return _unbind(d, "clash")
+    return _unbind(d, "unconfirmed")
+
+
+def _unbind(d: dict, photo: str) -> dict:
+    kinds = [k for k in (d.get("kinds") or []) if k not in ("REFERENCE_GAP", "UNDERPRICED", "RIGHT_PRINT_ONLY")]
+    if photo == "clash":
+        kinds.append("PHOTO_REJECTED")
+    scenarios = []
+    for s in d.get("scenarios") or []:
+        scenarios.append({**s, "basis": "none", "resale_mid": None, "resale_low": None, "max_buy": None,
+                          "profit_mid": None, "profit_low": None})
+    return {**d, "photo": photo, "printing_id": None, "expected_profit": None, "best_profit": None,
+            "kinds": kinds, "scenarios": scenarios}
+
+
+def _item_id(key: str, d: dict) -> str | None:
+    iid = (d or {}).get("listing_id") or (key.rsplit(":", 1)[-1] if str(key).startswith("ebay") else None)
+    return iid if iid and str(iid).isdigit() else None
+
+
+def _passcodes(d: dict) -> list[str]:
+    found = []
+    for s in d.get("scenarios") or []:
+        m = re.search(r"@([^@|]+)", s.get("printing_id") or "")
+        if m and m.group(1) not in found:
+            found.append(m.group(1))
+    if not found:
+        m = re.search(r"@([^@|]+)", d.get("printing_id") or "")
+        if m:
+            found.append(m.group(1))
+    return found
+
+
+def _listing_bytes(item_id: str, root: Path | None) -> bytes | None:
+    from .listing_detail import CACHE, cache_key
+    base = Path(root) if root is not None else CACHE
+    for size in ("s", "m"):
+        k = cache_key(item_id, 0, size)
+        path = base / k[:2] / f"{k}.img"
+        if path.exists() and path.stat().st_size > 32:
+            return path.read_bytes()
+    return None
+
+
+def _catalog_bytes(passcode: str, root: Path | None) -> bytes | None:
+    from .cardinfo import IMAGES
+    base = Path(root) if root is not None else IMAGES
+    if passcode.startswith("pkm-"):
+        cid = passcode[4:]
+        paths = [base / "pkm" / size / f"{cid}{ext}" for size in ("small", "large") for ext in (".png", ".jpg")]
+    else:
+        paths = [base / "artwork" / size / f"{passcode}.jpg" for size in ("small", "full")]
+    for path in paths:
+        if path.exists() and path.stat().st_size > 32:
+            return path.read_bytes()
+    return None
+
+
+def _listed_images(db, item_id: str | None) -> bool:
+    if db is None or not item_id:
+        return False
+    try:
+        from .listing_detail import get
+        return bool(get(db, item_id).get("images"))
+    except Exception:
+        return False
+

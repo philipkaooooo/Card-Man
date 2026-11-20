@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 
-THIS_CARD = 0.95
+INDEX_VERSION = "photo-match-1"
 _PC = re.compile(r"@([^@|]+)")   # passcode (Yu-Gi-Oh!) or pkm-<card id> (Pokémon); see games.py
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS card_listing (passcode TEXT NOT NULL, key TEXT NOT NULL, card_prob REAL NOT NULL, printing_id TEXT,
@@ -34,13 +34,16 @@ def ensure_index(st) -> None:
     have = {r[0] for r in st.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     if "opportunity" not in have:
         return
-    marker = "|".join(str(x) for x in st.db.execute("SELECT COUNT(*), MAX(updated_at) FROM opportunity").fetchone())
+    marker = INDEX_VERSION + "|" + "|".join(str(x) for x in st.db.execute("SELECT COUNT(*), MAX(updated_at) FROM opportunity").fetchone())
     row = st.db.execute("SELECT v FROM card_listing_meta WHERE k='marker'").fetchone()
     if row and row[0] == marker:
         return
     rows = []
+    from .photo_match import apply
     for key, status, pj in st.db.execute("SELECT key, status, payload_json FROM opportunity"):
-        d = json.loads(pj)
+        d = apply(json.loads(pj), key, st.db)
+        if d.get("photo") in ("clash", "unconfirmed"):
+            continue
         sc = d.get("scenarios") or []
         total = sum(s.get("weight") or 0 for s in sc)
         if not total:

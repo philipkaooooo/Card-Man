@@ -111,7 +111,7 @@ def deal_card(key: str, d: dict, v: Verdict, cards, M, now: datetime, photos: di
     name = d.get("title") or key
     pc = _passcode(top)
     c = cards.card(pc) if (pc and cards is not None and not lot) else None
-    if c and d.get("printing_id"):
+    if c and d.get("printing_id") and d.get("photo") in (None, "none", "match"):
         name = c.get("name_en") or name
     likely = _likely(d) or top
     sub = (" · ".join(likely["label"].split(" · ")[:3]) + ("" if d.get("printing_id") else " (probably)")

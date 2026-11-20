@@ -170,3 +170,41 @@ def test_a_different_photo_is_not_the_named_card():
     assert disagrees(png((250, 220, 40)), png((248, 218, 42))) is False
     assert disagrees(b"not an image", png((1, 2, 3))) is None
 
+
+def test_any_listing_with_a_different_photo_loses_the_card_and_its_price(tmp_path):
+    from cardman.listing_detail import cache_key
+    from cardman.photo_match import apply
+
+    def png(rgb):
+        import struct
+        import zlib
+        raw = b"".join(b"\x00" + bytes(rgb) * 16 for _ in range(16))
+
+        def chunk(tag, data):
+            return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+
+        ihdr = struct.pack(">IIBBBBB", 16, 16, 8, 2, 0, 0, 0)
+        return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
+
+    iid = "1218199929468"
+    k = cache_key(iid, 0, "s")
+    listing = tmp_path / "listing"
+    (listing / k[:2]).mkdir(parents=True)
+    (listing / k[:2] / f"{k}.img").write_bytes(png((30, 10, 40)))
+    images = tmp_path / "images"
+    (images / "pkm" / "small").mkdir(parents=True)
+    (images / "pkm" / "small" / "swsh12pt5gg-GG44.png").write_bytes(png((250, 220, 40)))
+    raw = D(kinds=["REFERENCE_GAP"], printing_id="pk:EN:swsh12pt5gg-GG44:holo@pkm-swsh12pt5gg-GG44", all_in_home=28.34,
+            scenarios=[sc(basis="reference", mid=237.0, pid="pk:EN:swsh12pt5gg-GG44:holo@pkm-swsh12pt5gg-GG44")])
+    out = apply(raw, f"ebay_browse:EBAY_US:{iid}", listing_root=listing, image_root=images)
+    assert out["photo"] == "clash" and out["printing_id"] is None
+    assert all(s["basis"] == "none" and s["resale_mid"] is None for s in out["scenarios"])
+    v = verdict(out, "OPEN", M)
+    assert v.code == PASS and v.top is None and "photo" in v.reason.lower()
+
+    (listing / k[:2] / f"{k}.img").write_bytes(png((250, 220, 40)))
+    matched = apply(raw, f"ebay_browse:EBAY_US:{iid}", listing_root=listing, image_root=images)
+    assert matched["photo"] == "match" and matched["printing_id"]
+    assert apply(raw, "yahoo_auctions_jp:x")["photo"] == "none"
+
+

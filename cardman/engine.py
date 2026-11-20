@@ -327,20 +327,35 @@ class Engine:
             return None
         rep.analyzed += 1
         op = evaluate_listing(r, an, book, self.catalog_for(r.game), self.ledger, now)
+        from .photo_match import apply
+        guarded = apply({**op.to_dict(), "listing_id": r.listing_id, "game": r.game}, key, self.db)
+        if guarded.get("photo") in ("clash", "unconfirmed"):
+            op.printing_id = None
+            op.expected_profit = None
+            op.kinds = [k for k in op.kinds if k not in ("REFERENCE_GAP", "UNDERPRICED", "RIGHT_PRINT_ONLY")]
+            if guarded.get("photo") == "clash" and "PHOTO_REJECTED" not in op.kinds:
+                op.kinds.append("PHOTO_REJECTED")
         snapshot = prev[2] if prev else None
-        escalated = self._escalate(r, an, op, verified, authenticity, book, now, rep) if r.game == "ygo" else None
+        escalated = (self._escalate(r, an, op, verified, authenticity, book, now, rep)
+                     if r.game == "ygo" and guarded.get("photo") not in ("clash", "unconfirmed") else None)
         if escalated:
             snapshot, op.stage, op.status = escalated
             rep.escalated += 1
         if op.status == REJECTED:
             rep.rejected += 1
+        body = {**op.to_dict(), "game": r.game, "kind": r.kind, "listing_id": r.listing_id,
+                "shipping": str(r.shipping) if r.shipping is not None else None, "price": str(r.price),
+                "currency": r.currency, "grade_company": r.grade_company, "grade": r.grade, "bids": r.bids,
+                "photo": guarded.get("photo")}
+        if guarded.get("photo") in ("clash", "unconfirmed"):
+            body["scenarios"] = guarded["scenarios"]
+            body["printing_id"] = None
+            body["expected_profit"] = None
+            body["kinds"] = op.kinds
         with self.db:
             self.db.execute("INSERT OR REPLACE INTO opportunity VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                             (key, op.stage, op.status, op.priority, op.expected_profit, op.evpi, json.dumps(op.kinds), op.printing_id, snapshot, fp,
-                             json.dumps({**op.to_dict(), "game": r.game, "kind": r.kind, "listing_id": r.listing_id,
-                                         "shipping": str(r.shipping) if r.shipping is not None else None, "price": str(r.price),
-                                         "currency": r.currency, "grade_company": r.grade_company, "grade": r.grade, "bids": r.bids},
-                                        ensure_ascii=False, default=str), prev[1] if prev else now.isoformat(), now.isoformat()))
+                             json.dumps(body, ensure_ascii=False, default=str), prev[1] if prev else now.isoformat(), now.isoformat()))
         return op
 
     def _escalate(self, r: RawListing, an, op: Opportunity, verified: dict, authenticity, book: PriceBook, now: datetime, rep: TickReport):
