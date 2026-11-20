@@ -1,5 +1,5 @@
 {
- "_note": "ASSUMED starting costs in home currency, not your real numbers. Copy to data/profile.json and correct them: every max-buy price depends on these. Your recorded outcomes then show how far off they are.",
+ "_note": "ASSUMED starting costs in home currency, not measured payouts. Copy to data/profile.json and correct them: every max-buy price depends on these. Recorded outcomes then show the miss. platform_fee_pct 0.1325 matches the published eBay.com CCG final-value rate (13.25% to $7500, 2.35% above; checked 2026-11-21). Not in this file: per-order fee $0.30 at $10 or under and $0.40 above, which is 13.19 TWD at USD/TWD 32.986624 (2026-11-20T00:02:32Z), and the percent applies to buyer-paid shipping and tax, not only the item. On the INTL route below, a 2-month hold and target 0.20, that 13.19 TWD of platform_fee_fixed moves the ceiling about 10 TWD. 13.25% of $20 charged shipping is about 87 TWD and never enters the ceiling. Do not promote these lines to data/profile.json until the payout is measured.",
  "home_currency": "TWD",
  "target_return": "0.20",
  "capital_cost_monthly": "0.01",

@@ -7,15 +7,20 @@ Scope and rules: see the project's CLAUDE.md execution contract (JP OCG + EN TCG
 ### Data access (tested, see `data/source_registry.json`)
 - **Working:** YAML Yugi (github.com/DawnbrandBots/yaml-yugi, compiled from Yugipedia) through the git proxy.
   Revision `f0bbcfe1` (2026-11-04): 14,416 cards, 86,185 JP/EN printings in the local cache.
-- **Blocked (HTTP 403 from the environment's network proxy):** YGOResources, YGOPRODeck, Konami DB, eBay,
-  TCGplayer, PriceCharting, PSA, Yahoo! Auctions JP, Mercari JP. The network setting has to allow these hosts.
+- **Blocked on 2026-11-04 (HTTP 403 from that environment's proxy):** YGOResources, YGOPRODeck, Konami DB, eBay,
+  TCGplayer, PriceCharting, PSA, Yahoo! Auctions JP, Mercari JP.
+- **Open network, 2026-11-21, same `probe`:** yaml-yugi git HEAD `d3b999759760` (pin remains `f0bbcfe1`). YGOResources,
+  YGOPRODeck, Konami and the Mercari homepage returned 200. TCGplayer 401 (bearer missing), PriceCharting 400
+  (token missing), eBay Browse with no OAuth 403, PSA 403, Yahoo Auctions 500. `probe` caps the read at 2048
+  bytes; a short 2xx is a pass. YGOPRODeck `LOB-EN001` is 163 bytes and passes. YGOResources `/manifest/0` is the
+  site-file manifest. Card bodies are `/data/card/<konami_id>`. `/data/meta/index/printcode` is 404.
 - **No credentials set:** eBay, TCGplayer, PriceCharting.
 
 ### Identity
 - `identity_sources.py`: YAML Yugi normalizer (family = Konami ID; artwork = passcode, so alternate-art
   passcodes stay separate; printing = region + set code + product + rarity). Placeholder codes like
   `MAMS-EN???` and entries without a rarity are `incomplete` and never resolve. YGOPRODeck / YGOResources
-  adapters exist but have not seen a live response.
+  answered live on 2026-11-21. There is still no YGOResources normalizer. See Remaining gaps.
 - `identity_cache.py`: SQLite cache. Sync is incremental by git blob hash, reads the committed bytes of a
   given revision, retires (never deletes) printings that vanish, keeps a per-printing history and a sync log,
   and leaves the previous revision intact if a sync fails. Real run: revision `6a82bdb8` -> `f0bbcfe1`
@@ -28,7 +33,8 @@ Scope and rules: see the project's CLAUDE.md execution contract (JP OCG + EN TCG
 ### Market
 - `ebay_browse.py`: OAuth client credentials, paginated search, backoff on 429/5xx, raw pages stored first,
   outage raises instead of returning "no listings". Maps to ACTIVE_ASKING / OBSERVED_BID only; Best Offer
-  flagged. Untested live (no keys, host blocked).
+  flagged. Registry on 2026-11-07 recorded a keyed live pull of 150 ACTIVE_ASKING across 3 queries.
+  Asks and bids only. A call with no OAuth is HTTP 403, which is not the tunnel failure.
 - Manual import (`examples/manual_import_TEMPLATE.csv`) is the path for sold, accepted-offer (eBay Product
   Research) and Japanese marketplace records until an API path opens.
 
@@ -101,15 +107,15 @@ Paste a title and description as the seller wrote them (English or Japanese) wit
 - Market signals: price shifts, volume spikes, regional gaps that survive costs, sellers listing a lot at once.
 - Pricing (`pricing.py`): recency- and trust-weighted quantiles, a robust trend that can lower (never raise) the
   estimate for the expected time to sell, liquidity, chance of loss and a max buy at a set confidence.
-- English edition rules (`data/edition_rules.json`, hand-written, to be checked against a source) split edition-less
-  English prints into edition scenarios priced from confirmed-edition sales.
+- English edition rules (`data/edition_rules.json`) were checked against Yugipedia galleries on 2026-11-21.
+  The arrays were not split. See Remaining gaps.
 - Costs come from `data/profile.json`; until it exists the engine uses `examples/cost_profiles_ASSUMED.json`.
 - The Results page and the engine share one outcome table: a purchase recorded in either place counts in both, and
   the engine's resale calibration learns from it.
 
 ### Run
 ```
-pip install pytest && python -m pytest -q                      # 179 pass
+pip install pytest && python -m pytest -q                      # 197 pass on 2026-11-21
 python -m cardman.sources                                       # re-probe every source
 python -m cardman.identity_cache sync                           # clone/update YAML Yugi, sync cache
 python -m cardman.slice examples/identity_only_LB-01.json examples/manual_import_TEMPLATE.csv
@@ -120,10 +126,29 @@ python -m cardman.ui --store data/store/evidence.sqlite                         
 ```
 
 ### Remaining gaps
-1. Network policy: open the hosts above, then test YGOResources (edition-level data) and YGOPRODeck live.
-2. EN edition (1st / Unlimited / Limited) and release dates: not in YAML Yugi; EN prints abstain until a
-   source with editions is reachable. Asian-English prints: no source yet (codes are quarantined on sight).
-3. eBay app keys for Browse; account exports for Product Research; no sold-data source is reachable yet,
-   so there are no real market observations.
-4. FX rates are still per listing file; comps from older runs need a rate near their sale date in that file.
-5. Image/OCR, grading sensitivities, Taiwan/JP sources, portfolio outcomes: not started.
+1. Editions. YAML, YGOResources and YGOPRODeck still have no 1st / Unlimited / Limited field. YGOResources
+   prints are `{code, date}` only (live revision 33276). Yugipedia galleries are the check, and they are not a
+   stamp photo. Worldwide English is Unlimited-only, NA is 1st and Unlimited, for LOB, MRD, Spell Ruler, PSV,
+   LON, LOD, DCR and IOC. `data/edition_rules.json` is still keyed by product name, so those arrays were not
+   split: a split would mint a 1st scenario for an `LOB-EN` printing. Magic Ruler redirects to Spell Ruler;
+   the 1st-edition NA gallery is titled Magic Ruler. A verified 1st on `LOB-EN001` stays CANDIDATES.
+   `code_key` still collapses `LOB-EN001` onto `LOB-001` so a date can be found. `is_original` True means that
+   key holds the earliest listed date, not that the card is a 1st Edition.
+2. Asian-English. YGOResources does have AE code and date. On the vintage samples those codes collide with
+   English: `LOB-001`, `SDK-001`, `LOB-005`, `SDY-006`, `MFC-000`. Quarantine stays. Do not merge them into
+   the EN namespace.
+3. Japanese prints on YGOResources are not the catalog. Konami ids 4007, 4041 and 4766 each returned one
+   2026 anniversary row; the pinned YAML has 58, 55 and 37. No normalizer until a ja payload is complete.
+   yaml-yugi HEAD `d3b999759760` vs the pin: English rows on the six pinned cards did not change, and no
+   edition field appeared. Three new JA ultras did: `MVB1-JP010` Blue-Eyes, `MVB1-JP027` Dark Magician,
+   `MVB1-JP028` Dark Magician Girl, all the Dark Side of Dimensions 10th Anniversary Movie Box.
+4. Solds. Browse, when keyed, is asks and bids. Product Research has no developer endpoint. Nothing here
+   added a settled comp. TCGplayer Market Price, PriceCharting, and YGOPRODeck `card_prices` / `set_price`
+   are not sales (Blue-Eyes 0.14 and 253.34 are the same API).
+5. FX. A mid print, not wired into the store: USD/TWD 32.986624 and USD/JPY 159.74951 at 2026-11-20 00:02:32
+   UTC (open.er-api). Frankfurter JPY 159.97 on 2026-11-19, and no TWD. `fx.py` rejects a rate older than
+   one day for the timestamp being converted. Old comps still need a rate near their own sale date.
+6. Costs. `data/profile.json` is still absent. The assumed 0.1325 matches the published eBay.com CCG rate.
+   Missing from the model: the $0.40 per-order fee (13.19 TWD at the print above) and 13.25% of buyer-paid
+   shipping. Do not write a profile from those figures. They are not a measured Taipei payout.
+7. Still closed: PSA cert (403), Yahoo Auctions closed results (500), OCR (needs images and `swiftc`).

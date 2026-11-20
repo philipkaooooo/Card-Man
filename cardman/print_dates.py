@@ -22,7 +22,13 @@ def _default_get(url: str) -> tuple[dict, bytes]:
 
 
 def code_key(code: str) -> str:
-    """LOB-001 and LOB-EN001 are one print: early English codes had no language segment."""
+    """Lookup key only. LOB-EN001 and LOB-001 both become LOB-001 so a YAML code can hit a YGOResources date.
+
+    Not a finding that they are one physical print. Yugipedia galleries checked 2026-11-21: NA prefix LOB
+    is 2002-03-08 with 1st and Unlimited; worldwide prefix LOB-EN is 2004-12-01, Unlimited only.
+    is_original True means this key holds the earliest date that source listed, not that the card is a
+    1st Edition. The collapse is locked by tests/test_intel.py.
+    """
     head, _, tail = code.upper().partition("-")
     digits = "".join(ch for ch in tail if ch.isdigit())
     return f"{head}-{digits}"

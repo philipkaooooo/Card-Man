@@ -56,7 +56,7 @@ def probe(url: str, timeout: float = 20) -> tuple[bool, str]:
     req = urllib.request.Request(url, headers={"User-Agent": "cardman-probe/0.1"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            r.read(2048)
+            r.read(2048)  # cap only; a short 2xx body is still a pass
             return True, f"HTTP {r.status}"
     except urllib.error.HTTPError as e:
         return False, f"HTTP {e.code}"

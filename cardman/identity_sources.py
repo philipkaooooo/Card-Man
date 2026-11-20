@@ -8,9 +8,17 @@ source does not list.
   passcode. Secondary source: it lists set code, product and rarities per region, but not
   editions (1st / Unlimited / Limited), release dates or Asian-English prints.
   Reachable through the git proxy; tested 2026-11-04.
-* YGOPRODeck v7 and YGOResources: primary-ish HTTP APIs. Adapters are written against their
-  public docs but are NOT yet tested against a live response (host blocked by the network
-  policy on 2026-11-04). Raw responses are stored before any parsing.
+* YGOPRODeck v7 and YGOResources answered on an open network on 2026-11-21 (the 2026-11-04
+  failures were the tunnel, HTTP 403). Live shape, not the docs:
+  YGOPRODeck card_sets rows carry set_code, set_name, set_rarity, set_rarity_code, set_price.
+  set_price and card_prices are not sales: Blue-Eyes cardmarket/tcgplayer were 0.13/0.14 while
+  cardsetsinfo set_price for LOB-EN001 was 253.34. No edition field.
+  YGOResources /data/card/<konami_id> prints are {code, date} only. Cache revision 33276.
+  /data/meta/index/printcode is 404. Japanese prints for 4007, 4041 and 4766 came back as one
+  2026 anniversary row each (YAML at f0bbcfe1 has 58, 55 and 37). Do not normalize that ja list
+  into the catalog. Asian-English codes on those cards collide with English: LOB-001, SDK-001,
+  LOB-005, SDY-006, MFC-000. Raw responses are stored before any parsing. No YGOResources
+  normalizer: a writer against that payload would drop the vintage JP catalog.
 """
 from __future__ import annotations
 
@@ -144,8 +152,9 @@ def http_get(url: str, timeout: float = 30) -> tuple[int, dict, bytes]:
 class YGOPRODeckSource:
     """YGOPRODeck v7 (https://ygoprodeck.com/api-guide/). EN TCG sets only; no editions.
 
-    `card_prices` is ignored on purpose: it is not per-print sold evidence.
-    Status: live response shape untested (host blocked 2026-11-04).
+    `card_prices` and `set_price` are ignored on purpose: not per-print sold evidence.
+    Live 2026-11-21: HTTP 200. No edition field. card_sets keys are set_code, set_name,
+    set_rarity, set_rarity_code, set_price.
     """
     BASE = "https://db.ygoprodeck.com/api/v7"
     name = "ygoprodeck"
@@ -178,8 +187,10 @@ class YGOResourcesSource:
     """YGOResources (https://db.ygoresources.com/about/api).
 
     Cache invalidation is revision based: GET /manifest/{revision} lists what changed since a
-    revision. We store raw responses and only normalize once a live payload has been seen.
-    Status: untested (host blocked 2026-11-04); no normalizer yet on purpose.
+    revision. Card body is GET /data/card/{konami_id}, not /manifest/0 (that path is the site
+    file manifest). Live 2026-11-21, revision 33276: prints are code and date, no edition, no
+    rarity. Japanese coverage on vintage cards is not the catalog (one 2026 row). No normalizer
+    until a ja payload is actually complete.
     """
     BASE = "https://db.ygoresources.com"
     name = "ygoresources"
