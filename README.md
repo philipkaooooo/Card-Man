@@ -144,8 +144,12 @@ python -m cardman.ui --store data/store/evidence.sqlite                         
    edition field appeared. Three new JA ultras did: `MVB1-JP010` Blue-Eyes, `MVB1-JP027` Dark Magician,
    `MVB1-JP028` Dark Magician Girl, all the Dark Side of Dimensions 10th Anniversary Movie Box.
 4. Solds. Browse, when keyed, is asks and bids. Product Research has no developer endpoint. Nothing here
-   added a settled comp. TCGplayer Market Price, PriceCharting, and YGOPRODeck `card_prices` / `set_price`
-   are not sales (Blue-Eyes 0.14 and 253.34 are the same API).
+   added a settled comp. TCGplayer's public product page is readable without a partner key
+   (`cardman/tcgplayer.py`): a product is one card in one set, a SKU is condition × variant × language.
+   `marketPrice` is not a sale and, on LOB-001 product 21792, one number covers 1st Edition and Unlimited.
+   LOB-EN001 25th (486054) and Worldwide English (476160) are different products. Pokémon is line 3 and
+   Pokémon Japan is line 85; neither is fed to the Yu-Gi-Oh resolver. PriceCharting and YGOPRODeck
+   `card_prices` / `set_price` are not sales either.
 5. FX. A mid print, not wired into the store: USD/TWD 32.986624 and USD/JPY 159.74951 at 2026-11-20 00:02:32
    UTC (open.er-api). Frankfurter JPY 159.97 on 2026-11-19, and no TWD. `fx.py` rejects a rate older than
    one day for the timestamp being converted. Old comps still need a rate near their own sale date.

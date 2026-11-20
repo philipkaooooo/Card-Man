@@ -30,8 +30,11 @@ SOURCES = [
      "EBAY_CLIENT_ID", "needs app keys + OAuth; adapter cardman.ebay_browse (asking/bid only, never sold)"),
     ("ebay_product_research", "accepted_offer", "account_ui", None, None,
      "seller-account research UI, not a developer endpoint; import via user export/screenshots"),
-    ("tcgplayer", "market_aggregate", "partner_api", "https://api.tcgplayer.com/catalog/categories",
-     "TCGPLAYER_PUBLIC_KEY", "new keys not routinely granted; Market Price is not a sale"),
+    ("tcgplayer", "market_aggregate", "public_web",
+     "https://mp-search-api.tcgplayer.com/v2/product/21792/details", None,
+     "public storefront, no partner key. Product is card+set; SKU is condition x variant x language. "
+     "marketPrice mixes 1st Edition and Unlimited (LOB-001 product 21792). Not a sale. "
+     "Partner catalog api.tcgplayer.com is still 401 without a bearer. Pokemon is line 3, Pokemon Japan is line 85."),
     ("pricecharting", "market_aggregate", "paid_api", "https://www.pricecharting.com/api/products?q=blue-eyes",
      "PRICECHARTING_TOKEN", "current values only, no historical sales; 1 req/s"),
     ("psa_cert", "graded_certification", "public_web", "https://www.psacard.com/cert/1", None,
