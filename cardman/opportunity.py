@@ -7,7 +7,7 @@ shelved until its inputs change.
 from __future__ import annotations
 
 import math
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from decimal import Decimal
 
@@ -17,8 +17,9 @@ from .evidence import select_comps
 from .fx import StaleRateError
 from .intel import BLOCK, ListingAnalysis, lot_contents
 from .market_sources import RawListing
-from .models import IdentityStatus, MarketObservation
+from .models import EvidenceType, IdentityStatus, MarketObservation
 from .verify import assess, filter_comps
+from .read import Point, read_points, refused_reason
 
 MAX_SCENARIOS = 40
 OBSERVE, SPECTATE, QUALIFIED = "OBSERVE", "SPECTATE", "QUALIFIED"
@@ -32,6 +33,8 @@ class Valuation:
     comps: list[MarketObservation]
     estimate: pricing.PriceEstimate | None
     competing: int = 0
+    mark: float | None = None
+    refused: str | None = None
 
 
 class PriceBook:
@@ -49,22 +52,55 @@ class PriceBook:
         table = self.fx.table([(currency, self.home)], [at])
         return table.convert(amount, currency, self.home, at)
 
-    def value(self, printing_id: str, grade_company: str | None = None, grade: str | None = None) -> Valuation:
-        k = (printing_id, grade_company, grade)
+    def value(self, printing_id: str, grade_company: str | None = None, grade: str | None = None,
+              ignore_key: str | None = None) -> Valuation:
+        k = (printing_id, grade_company, grade, ignore_key)
         if k in self.cache:
             return self.cache[k]
         pool = self.store.observations_for(printing_id, as_of=self.now)
-        comps, _ = select_comps(pool, printing_id, grade_company=grade_company, grade=grade, as_of=self.now)
-        comps, _ = filter_comps(comps, pool, self.now)
+        history, _ = select_comps(pool, printing_id, grade_company=grade_company, grade=grade, as_of=self.now, limit=None)
+        history, _ = filter_comps(history, pool, self.now)
+        comps = history[:10]
         trust = assess(pool, self.now)
-        sales = []
-        for c in comps:
+        show = {c.id for c in comps}
+        sales, points = [], []
+        for c in history:
             try:
-                sales.append(pricing.Sale(c.event_time, float(self.to_home(c.original_amount, c.currency, c.event_time)),
-                                          trust[c.id].trust if c.id in trust else 1.0))
+                home_amt = self.to_home(c.original_amount, c.currency, c.event_time)
             except StaleRateError as x:
                 self.notes.append(f"no FX for {c.id}: {x}")
-        v = Valuation(printing_id, sales, comps, pricing.estimate(sales, self.now, bias=self.bias))
+                continue
+            points.append(Point(c.event_time, home_amt, c.source, "sold"))
+            if c.id in show:
+                sales.append(pricing.Sale(c.event_time, float(home_amt), trust[c.id].trust if c.id in trust else 1.0))
+
+        def own(o) -> bool:
+            if not ignore_key:
+                return False
+            return o.id.startswith(ignore_key + ":") or bool(o.listing_id) and ignore_key.endswith(":" + o.listing_id)
+
+        for o in pool:
+            if own(o):
+                continue
+            exact = (o.printing_candidates == (printing_id,) and not o.is_lot and o.quantity == 1
+                     and o.status == "VALID" and o.event_time <= self.now)
+            if not exact:
+                continue
+            if o.evidence_type not in (EvidenceType.ACTIVE_ASKING, EvidenceType.AGGREGATE_ESTIMATE):
+                continue
+            try:
+                amt = self.to_home(o.original_amount, o.currency, o.event_time)
+            except StaleRateError as x:
+                self.notes.append(f"no FX for {o.id}: {x}")
+                continue
+            kind = "ask" if o.evidence_type == EvidenceType.ACTIVE_ASKING else "index"
+            points.append(Point(o.event_time, amt, o.source, kind))
+        rd = read_points(points, self.now)
+        est = pricing.estimate(sales, self.now, bias=self.bias)
+        if est is not None and rd.mark is not None:
+            est = replace(est, low=float(rd.mark))
+        v = Valuation(printing_id, sales, comps, est, competing=rd.listings,
+                      mark=float(rd.mark) if rd.mark is not None else None, refused=refused_reason(rd))
         self.cache[k] = v
         return v
 
@@ -138,7 +174,7 @@ def _label(p) -> str:
         bits.append(p.edition)
     if p.product_name:
         bits.append(p.product_name)
-    return " · ".join(bits)
+    return " \u00b7 ".join(bits)
 
 
 def evaluate_listing(raw: RawListing, an: ListingAnalysis, book: PriceBook, catalog, ledger=None, now: datetime | None = None) -> Opportunity:
@@ -192,9 +228,22 @@ def evaluate_listing(raw: RawListing, an: ListingAnalysis, book: PriceBook, cata
     scenarios: list[Scenario] = []
     for pid in ranked:
         p = by_id[pid]
-        v = book.value(pid, raw.grade_company, raw.grade)
+        v = book.value(pid, raw.grade_company, raw.grade, ignore_key=raw.key)
         sc = Scenario(pid, _label(p), weights.get(pid, 1 / max(1, len(by_id))), "none", n_sales=len(v.sales))
-        if v.estimate:
+        if v.refused:
+            sc.basis = "refused"
+        elif v.mark is not None and v.estimate:
+            exit_px = Decimal(str(round(v.mark, 2)))
+            rv = pricing.risk_view(v.sales, v.estimate, ask_home, acq, ex, target_return=tgt, capital_cost_monthly=cap,
+                                   competing_listings=v.competing, confidence=float(P.get("confidence", 0.8)),
+                                   exit_gross=exit_px)
+            sc.basis = "sales"
+            sc.resale_low = float(exit_px)
+            sc.resale_mid = float(exit_px)
+            sc.profit_low = float(ex.net(exit_px)) - all_in
+            sc.profit_mid = sc.profit_low
+            sc.max_buy, sc.p_loss, sc.risk_adjusted, sc.months_to_sell = (float(rv.max_buy) if rv.max_buy else None), rv.p_loss, rv.risk_adjusted_profit, rv.months_held
+        elif v.estimate:
             rv = pricing.risk_view(v.sales, v.estimate, ask_home, acq, ex, target_return=tgt, capital_cost_monthly=cap,
                                    competing_listings=v.competing, confidence=float(P.get("confidence", 0.8)))
             sc.basis, sc.resale_low, sc.resale_mid = "sales", v.estimate.low, v.estimate.mid
@@ -242,8 +291,12 @@ def evaluate_listing(raw: RawListing, an: ListingAnalysis, book: PriceBook, cata
         lot_rows = lot_contents(f"{raw.title}\n{raw.description}", catalog)
         total = 0.0
         for row in lot_rows:
-            vals = [book.value(c) for c in row["candidates"][:MAX_SCENARIOS]]
-            est = [v.estimate.low for v in vals if v.estimate]
+            vals = [book.value(c, ignore_key=raw.key) for c in row["candidates"][:MAX_SCENARIOS]]
+            est = []
+            for v in vals:
+                if v.refused or not v.estimate:
+                    continue
+                est.append(v.mark if v.mark is not None else v.estimate.low)
             row["value_low"] = min(est) if est else None
             row["priced"] = bool(est)
             total += row["value_low"] or 0.0
@@ -263,8 +316,10 @@ def evaluate_listing(raw: RawListing, an: ListingAnalysis, book: PriceBook, cata
         net_by = {}
         for grade_name in ("10", "9.5", "9", "8", "7"):
             gv = book.value(resolved.id, company, grade_name)
-            if gv.estimate:
-                net_by[grade_name] = float(ex.net(Decimal(str(round(gv.estimate.low, 2)))))
+            if gv.refused or not gv.estimate:
+                continue
+            gross = gv.mark if gv.mark is not None else gv.estimate.low
+            net_by[grade_name] = float(ex.net(Decimal(str(round(gross, 2)))))
         if net_by:
             res = grading.evaluate(raw_all_in=all_in, grading_cost=float(g.get("cost_home", 0)), net_by_grade=net_by,
                                    own_results=ledger.grade_counts(company=company), prior=g.get("prior"),
@@ -310,8 +365,10 @@ def evaluate_listing(raw: RawListing, an: ListingAnalysis, book: PriceBook, cata
         reasons.append("Further checks would cost more than they could change the outcome.")
     if not kinds and best is not None and best <= 0:
         reasons.append("Even the best priced scenario loses money at this ask.")
-    if not priced and not kinds:
+    if not priced and not kinds and not any(s.basis == "refused" for s in scenarios):
         reasons.append("No sales or reference for any printing it could be; nothing here says it is special.")
+    if any(s.basis == "refused" for s in scenarios) and not sold_backed:
+        reasons.append("No buy price: the sales disagree, the spread is not one price, or nothing sold in 45 days. The older window is not used.")
     return result(stage, status, ask_home=float(ask_home), all_in_home=all_in, scenarios=scenarios, expected_profit=expected, best_profit=best,
                   evpi=evpi, priority=priority, priced_share=share, research=actions if status == OPEN else [],
                   printing_id=resolved.id if resolved else None, lot=lot_rows, grading=gr)
