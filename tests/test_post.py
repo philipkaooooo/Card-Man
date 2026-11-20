@@ -110,3 +110,5 @@ def test_the_template_names_the_mirror_and_refuses_the_loose_caption(tmp_path, c
     assert post_main([str(path), "--store", str(tmp_path / "s.sqlite")]) == 0
     out = capsys.readouterr().out
     assert "MIRROR" in out and "DETACHED" in out and "none selected as a sale" in out
+    assert "The Legend of Blue Eyes White Dragon" in out and "LOB-001" in out
+    assert "as the seller stated" in out

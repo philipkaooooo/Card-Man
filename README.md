@@ -130,6 +130,11 @@ Paste a title and description as the seller wrote them (English or Japanese) wit
   of the mixed market, the high day, the older half, or just off. A damaged LOB-001 quoted at 119
   repeats the 119.14 market; the damaged exit is 19. None of these is a sale, and a caption that
   says sold is not a receipt. A number outside the photo prices nothing.
+  What the seller wrote is logged as the stated edition and condition, under the official set name.
+  It is not a check. `python -m cardman.labels LOB-001` and `python -m cardman.labels LOB-EN001`
+  are the name search: LOB-001 is The Legend of Blue Eyes White Dragon (product 21792, 1st Edition
+  or Unlimited). LOB-EN001 is two Unlimited cards, Worldwide English (476160) and the 25th Anniversary
+  (486054). The set name separates those two. The printed number does not. Neither is 21792.
 - English edition rules (`data/edition_rules.json`, hand-written, to be checked against a source) split edition-less
   English prints into edition scenarios priced from confirmed-edition sales.
 - Costs come from `data/profile.json`; until it exists the engine uses `examples/cost_profiles_ASSUMED.json`.
@@ -138,7 +143,7 @@ Paste a title and description as the seller wrote them (English or Japanese) wit
 
 ### Run
 ```
-pip install pytest && python -m pytest -q                      # 244 pass
+pip install pytest && python -m pytest -q                      # 248 pass
 python -m cardman.sources                                       # re-probe every source
 python -m cardman.identity_cache sync                           # clone/update YAML Yugi, sync cache
 python -m cardman.slice examples/identity_only_LB-01.json examples/manual_import_TEMPLATE.csv
@@ -149,6 +154,8 @@ python -m cardman.tcgplayer --product 21792                                 # ev
 python -m cardman.tcgplayer pokemon charizard --scan --size 16              # sales-sorted; cheap page, then history only if a floor could clear fees
 python -m cardman.tcgplayer yugioh "LOB-001" --html lob.html                  # same-SKU asks, the trend, and a chart of the bucket lows
 python -m cardman.post examples/post_region_TEMPLATE.jsonl                   # a quote is a claim; the template is synthetic
+python -m cardman.labels LOB-001                                            # official name; not LOB-EN001
+python -m cardman.labels LOB-EN001                                          # two sets share this number
 # the Scan page needs the identity cache: python -m cardman.identity_cache sync
 ```
 

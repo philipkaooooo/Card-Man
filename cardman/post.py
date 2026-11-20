@@ -21,6 +21,7 @@ from pathlib import Path
 
 from .evidence import select_comps
 from .identity import parse_set_code
+from .labels import first_stamp, show, wrong_product
 from .models import EvidenceType, MarketObservation
 from .tcgplayer import MIN_SALES
 
@@ -196,15 +197,16 @@ def read_region(region: PostRegion, book: Book | None = None) -> QuoteRead:
     if code and variant == "1st Edition":
         prefix, _, suffix = code.partition("-")
         if prefix in _WW_EN_PREFIX and suffix.startswith("EN"):
-            return QuoteRead("CONFLICT", "", None, _why(
-                f"{code} is a worldwide English code. That run is Unlimited, so a 1st stamp contradicts it.",
-                region), evidence)
+            return QuoteRead("CONFLICT", "", None, _why(first_stamp(code), region), evidence)
     if code and region.product_id is not None and region.product_id in _NOT_THIS_PRODUCT.get(code, ()):
-        return QuoteRead("CONFLICT", "", None, _why(
-            f"{code} is not product {region.product_id}.", region), evidence)
+        return QuoteRead("CONFLICT", "", None, _why(wrong_product(code, region.product_id), region), evidence)
     if code in _AE_COLLISION and region.product_id is None:
+        extra = ""
+        if code == "LOB-001":
+            extra = (" English TCG LOB-001 is The Legend of Blue Eyes White Dragon, product 21792. "
+                     "The Asian-English card is not that product.")
         return QuoteRead("QUARANTINED", "", None, _why(
-            f"{code} is also an Asian-English code. No product id, so it is not joined to English.",
+            f"{code} is also an Asian-English code. No product id, so it is not joined to English.{extra}",
             region), evidence)
 
     missing = [name for name, value in (("variant", variant), ("condition", condition), ("language", language)) if not value]
@@ -320,6 +322,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--store", help="write the claims; they stay out of the sales book")
     args = ap.parse_args(argv)
     now = datetime.now(timezone.utc)
+    print("Edition and condition are logged as the seller stated them. That is not a check. A quote is not a sale.")
     bad = 0
     observations = []
     for n, line in enumerate(Path(args.rows).read_text().splitlines(), 1):
@@ -332,7 +335,8 @@ def main(argv: list[str] | None = None) -> int:
             bad += 1
             print(f"BAD  line {n}  {type(exc).__name__}: {exc}")
             continue
-        print(f"{(result.verdict or result.status):12} {result.card_key or '-'}  {result.why}")
+        print(f"{(result.verdict or result.status):12} {show(result.card_key)}")
+        print(f"             {result.why}")
         obs = to_observation(region, result, capture_time=now)
         if obs is not None:
             observations.append(obs)
