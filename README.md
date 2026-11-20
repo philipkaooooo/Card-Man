@@ -135,6 +135,8 @@ Paste a title and description as the seller wrote them (English or Japanese) wit
   are the name search: LOB-001 is The Legend of Blue Eyes White Dragon (product 21792, 1st Edition
   or Unlimited). LOB-EN001 is two Unlimited cards, Worldwide English (476160) and the 25th Anniversary
   (486054). The set name separates those two. The printed number does not. Neither is 21792.
+  A scan and a pull print that same line: card, set, printed number, then the edition and
+  condition the seller listed. Those last two are not a check.
 - English edition rules (`data/edition_rules.json`, hand-written, to be checked against a source) split edition-less
   English prints into edition scenarios priced from confirmed-edition sales.
 - Costs come from `data/profile.json`; until it exists the engine uses `examples/cost_profiles_ASSUMED.json`.
@@ -143,7 +145,7 @@ Paste a title and description as the seller wrote them (English or Japanese) wit
 
 ### Run
 ```
-pip install pytest && python -m pytest -q                      # 248 pass
+pip install pytest && python -m pytest -q                      # 250 pass
 python -m cardman.sources                                       # re-probe every source
 python -m cardman.identity_cache sync                           # clone/update YAML Yugi, sync cache
 python -m cardman.slice examples/identity_only_LB-01.json examples/manual_import_TEMPLATE.csv

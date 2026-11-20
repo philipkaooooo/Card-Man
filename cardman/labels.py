@@ -56,18 +56,26 @@ def by_number(code: str) -> tuple[ProductName, ...]:
     return _BY_NUMBER.get(code.upper(), ())
 
 
-def _variants(p: ProductName) -> str:
-    if p.variants == ("Unlimited",):
-        return "Unlimited only"
-    return " or ".join(p.variants)
+def stated(card: str | None, set_name: str | None, number: str | None,
+           variant: str = "", condition: str = "", language: str = "") -> str:
+    """One order everywhere: card, set, printed number, then the stated variant, condition and language.
+
+    The variant and condition are what the seller listed. They are not a check.
+    A shared number with no set name is not resolved to a product.
+    """
+    parts = [p for p in (card, set_name, number, variant, condition, language) if p]
+    line = " · ".join(parts)
+    if number and not set_name and len(by_number(number)) > 1:
+        line = (line + " · " if line else "") + "this number is on more than one set; the set name is required"
+    return line
 
 
 def sku_line(product_id: int | None, variant: str, condition: str, language: str) -> str:
-    """Official card, official set, printed number, then the stated variant, condition and language."""
+    """Official card and set when this product is one we have named. Otherwise the id, unresolved."""
     p = by_id(product_id) if product_id is not None else None
     if p is None:
-        return f"product {product_id} · {variant} · {condition} · {language}"
-    return f"{p.card} · {p.set_name} · {p.number} · {variant} · {condition} · {language}"
+        return stated(f"product {product_id}", "", "", variant, condition, language)
+    return stated(p.card, p.set_name, p.number, variant, condition, language)
 
 
 def show(key: str | None) -> str:
@@ -144,6 +152,31 @@ def explain(query: str) -> str:
     return "\n".join(lines)
 
 
+def _variants(p: ProductName) -> str:
+    if p.variants == ("Unlimited",):
+        return "Unlimited only"
+    return " or ".join(p.variants)
+
+
+def explain_details(doc: dict) -> str:
+    """A product payload's own name. A known shared number is listed again so it cannot look unique."""
+    if not isinstance(doc, dict) or doc.get("productId") is None:
+        return "No product in that response."
+    pid = int(doc["productId"])
+    if by_id(pid):
+        return explain(str(pid))
+    attrs = doc.get("customAttributes") or {}
+    number = str(attrs["number"]) if attrs.get("number") else ""
+    variants = sorted({str(s.get("variant")) for s in doc.get("skus") or [] if isinstance(s, dict) and s.get("variant")})
+    languages = sorted({str(s.get("language")) for s in doc.get("skus") or [] if isinstance(s, dict) and s.get("language")})
+    head = stated(str(doc.get("productName") or ""), str(doc.get("setName") or ""), number)
+    tail = " · ".join(p for p in (f"product {pid}", " or ".join(variants), ", ".join(languages)) if p)
+    lines = [f"{head} · {tail}" if head else tail]
+    if number and len(by_number(number)) > 1:
+        lines.append(explain(number))
+    return "\n".join(lines)
+
+
 def _product_lines(p: ProductName) -> list[str]:
     return [f"{p.card} · {p.set_name} · {p.number} · product {p.product_id} · {_variants(p)} · {p.language}"]
 
@@ -155,6 +188,13 @@ def main(argv: list[str] | None = None) -> int:
     for i, query in enumerate(args.query):
         if i:
             print()
+        if query.strip().isdigit() and by_id(int(query.strip())) is None:
+            try:
+                from .tcgplayer import fetch_details
+                print(explain_details(fetch_details(int(query.strip()))))
+            except Exception as exc:
+                print(f"Product {query.strip()} has no official name on file. Lookup failed: {type(exc).__name__}.")
+            continue
         print(explain(query))
     return 0
 

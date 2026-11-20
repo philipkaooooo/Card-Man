@@ -43,6 +43,8 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_EVEN
 from pathlib import Path
 
+from .labels import stated
+
 SEARCH_URL = "https://mp-search-api.tcgplayer.com/v1/search/request"
 DETAILS_URL = "https://mp-search-api.tcgplayer.com/v2/product/{product_id}/details"
 LISTINGS_URL = "https://mp-search-api.tcgplayer.com/v1/product/{product_id}/listings?mpfev=5762"
@@ -866,6 +868,7 @@ class Hit:
     read: SaleRead
     decision: str = ""
     call: Call | None = None
+    set_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -890,7 +893,7 @@ def _hits(reviews: list[Review]) -> list[Hit]:
                 continue
             call = calls[i] if i < len(calls) else None
             out.append(Hit(r.product_id, r.game, r.name, r.number, row,
-                           call.label if call is not None else row.label, call))
+                           call.label if call is not None else row.label, call, r.set_name or ""))
     return out
 
 
@@ -977,8 +980,8 @@ def _line(r: Review, row: SaleRead, call: Call | None = None) -> str:
         money = f"  exit {row.exit_low} on {row.exit_date}  after fees {row.after_fees}"
     trend = f"  {row.direction} {row.prior_low}→{row.recent_low}" if row.direction else ""
     shown = call.label if call is not None else row.label
-    head = (f"{shown:5} {r.game:14} {r.number or '-':12} {row.printing} {row.condition}"
-            f"  buy {row.buy}{money}{trend}  asks {sample}  {r.name}")
+    name = stated(r.name, r.set_name, r.number, row.printing, row.condition, row.language)
+    head = f"{shown:5} {name}  buy {row.buy}{money}{trend}  asks {sample}"
     if not row.series:
         return head
     path = ", ".join(f"{d[5:]} {low}×{n}" for d, low, n in row.series)
@@ -1012,7 +1015,7 @@ def page_html(rows: list[Review]) -> str:
         for row in r.reads:
             if not row.series:
                 continue
-            title = f"{r.name} {r.number or ''} {row.printing} {row.condition}".strip()
+            title = stated(r.name, r.set_name, r.number, row.printing, row.condition, row.language)
             parts.append(f"<h2>{html.escape(title)}</h2>")
             parts.append(f"<p>ask {row.buy} · exit {row.exit_low} · {html.escape(row.direction)} "
                          f"{row.prior_low} → {row.recent_low}</p>")
@@ -1052,7 +1055,8 @@ def pull(product_id: int, span: str, store_path: str) -> int:
     written, refused = Store(store_path).save_public_listings(
         [c.row() for c in calls if c.typed], datetime.now(timezone.utc))
     counts = {name: sum(c.label == name for c in calls) for name in DECISIONS}
-    print(f"{product.product_id} {product.name} {product.number or ''} [{product.game}]".rstrip())
+    print(stated(product.name, product.set_name, product.number))
+    print("Edition and condition are what the seller listed. Not a check.")
     print(f"site count {total if total is not None else 'unknown'}; captured {len(calls)}; stored {written}")
     if total is not None and len(calls) < total:
         print(f"{total - len(calls)} asks were not in the pull. They are not labeled.")
@@ -1063,13 +1067,15 @@ def pull(product_id: int, span: str, store_path: str) -> int:
         if c.label not in ("2x", "buy"):
             continue
         all_in = c.price + c.shipping if c.shipping is not None else None
-        print(f"{c.label:4} {c.card_key} all-in {all_in} exit {c.exit_low} x{c.multiple} n={c.sales} listing {c.listing_id}")
+        print(f"{c.label:4} {stated(product.name, product.set_name, product.number, c.printing, c.condition, c.language)}")
+        print(f"     all-in {all_in} exit {c.exit_low} x{c.multiple} n={c.sales} listing {c.listing_id}")
         print(f"     {c.why}")
     watched = [c for c in calls if c.label == "watch"]
     if watched:
         print(f"watch {len(watched)}")
         for c in watched[:8]:
-            print(f"     {c.printing} {c.condition} {c.language} {c.price}  {c.why}")
+            print(f"     {c.price}  {stated(product.name, product.set_name, product.number, c.printing, c.condition, c.language)}")
+            print(f"     {c.why}")
     for line in refused:
         print(f"refused {line}")
     return 0
@@ -1097,6 +1103,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"checked {result.checked}  deepened {result.deepened}  asks {result.asks}  "
               f"fetched {result.fetched}  skipped {result.skipped}  cache {result.cache_hits}  "
               f"{result.seconds:.2f}s")
+        print("Edition and condition are what the seller listed. Not a check. 2x and buy are not a return.")
         if result.deepened:
             print(f"cheap page pulled for {result.deepened}; asks beyond that page were not judged")
         if not result.looks:
@@ -1108,13 +1115,13 @@ def main(argv: list[str] | None = None) -> int:
             if last and h.read.buy is not None and last[1] <= h.read.buy:
                 stale = "  newest low is not above the all-in"
             shown = h.decision if h.decision in ("2x", "buy") else "LOOK"
-            print(f"{shown:5} {h.game:14} {h.number or '-':12} {h.read.printing} {h.read.condition}"
-                  f"  buy {h.read.buy}  exit {h.read.exit_low}  after fees {h.read.after_fees}"
-                  f"  sales {h.read.sales}{fresh}{stale}  not a return  {h.name}")
+            print(f"{shown:5} {stated(h.name, h.set_name, h.number, h.read.printing, h.read.condition, h.read.language)}")
+            print(f"       buy {h.read.buy}  exit {h.read.exit_low}  after fees {h.read.after_fees}"
+                  f"  sales {h.read.sales}{fresh}{stale}  not a return")
         for h in result.closest:
             move = f"  {h.read.direction} {h.read.prior_low}→{h.read.recent_low}" if h.read.direction else ""
-            print(f"close   {h.game:14} {h.number or '-':12} {h.read.printing} {h.read.condition}"
-                  f"  buy {h.read.buy}  exit {h.read.exit_low}  after fees {h.read.after_fees}{move}  {h.name}")
+            print(f"close   {stated(h.name, h.set_name, h.number, h.read.printing, h.read.condition, h.read.language)}")
+            print(f"        buy {h.read.buy}  exit {h.read.exit_low}  after fees {h.read.after_fees}{move}")
         actionable = [h.call for h in result.looks
                       if h.call is not None and h.call.typed and h.call.label in ("2x", "buy")]
         if actionable:
