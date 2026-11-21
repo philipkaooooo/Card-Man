@@ -254,7 +254,7 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
             except (ValueError, TypeError):
                 pass
         code = "none"
-        if M is not None:
+        if M is not None and payload:
             try:
                 code = _CLS_OF.get(verdict(d, status or "OPEN", M).code, "none")
             except Exception:
