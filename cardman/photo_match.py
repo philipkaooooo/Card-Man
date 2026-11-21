@@ -13,6 +13,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 import zlib
 from pathlib import Path
 
@@ -430,14 +431,31 @@ def _passcodes(d: dict) -> list[str]:
     return found
 
 
+_BYTES_CACHE: dict[str, tuple[float, bytes | None]] = {}
+_BYTES_TTL = 300.0        # a photo that has not been captured yet can appear; a captured one never changes
+
+
+def _cached(path: Path) -> bytes | None:
+    key = str(path)
+    now = time.monotonic()
+    hit = _BYTES_CACHE.get(key)
+    if hit is not None and (hit[1] is not None or now - hit[0] < _BYTES_TTL):
+        return hit[1]
+    data = path.read_bytes() if path.exists() and path.stat().st_size > 32 else None
+    if len(_BYTES_CACHE) > 8192:
+        _BYTES_CACHE.clear()
+    _BYTES_CACHE[key] = (now, data)
+    return data
+
+
 def _listing_bytes(item_id: str, root: Path | None) -> bytes | None:
     from .listing_detail import CACHE, cache_key
     base = Path(root) if root is not None else CACHE
     for size in ("s", "m"):
         k = cache_key(item_id, 0, size)
-        path = base / k[:2] / f"{k}.img"
-        if path.exists() and path.stat().st_size > 32:
-            return path.read_bytes()
+        data = _cached(base / k[:2] / f"{k}.img")
+        if data is not None:
+            return data
     return None
 
 
@@ -450,6 +468,7 @@ def _catalog_bytes(passcode: str, root: Path | None) -> bytes | None:
     else:
         paths = [base / "artwork" / size / f"{passcode}.jpg" for size in ("small", "full")]
     for path in paths:
-        if path.exists() and path.stat().st_size > 32:
-            return path.read_bytes()
+        data = _cached(path)
+        if data is not None:
+            return data
     return None
