@@ -167,22 +167,43 @@ def _own_guides(idx, passcode: str) -> str:
 def _markets(idx, game: str) -> str:
     """The catalogs and the character markets, on the home, not behind a listing."""
     if game == "pkm":
-        from .character import slug
-        who = ["Charizard", "Pikachu", "Mew", "Mewtwo", "Umbreon", "Gengar", "Rayquaza", "Lugia",
-               "Blastoise", "Venusaur", "Darkrai", "Gardevoir"]
-        links = "".join(f'<a class="fchip" href="/pkm/character/{e(slug(n))}">{e(n)}</a>' for n in who)
-        n = len(idx.cat) if idx is not None and getattr(idx, "cat", None) is not None else 0
+        cat = idx.cat if idx is not None and getattr(idx, "cat", None) is not None else None
+        n = len(cat) if cat is not None else 0
         count = f"{n:,} Pokémon cards are on this site. " if n else ""
         return ('<section><h2>Character markets</h2>'
-                f'<p class="sub">{count}Open a character. Every card of it is listed with its own guide price. '
-                'One card is never the price of another.</p>'
-                f'<div class="fchips">{links}</div></section>')
+                f'<p class="sub">{count}Every character is priced by its own cards; one print is never the price of another. '
+                '<a href="/pkm/characters">All character markets →</a></p>'
+                f'<div class="cgrid">{_char_tiles(cat, 12)}</div></section>')
     who = ["Blue-Eyes White Dragon", "Dark Magician", "Red-Eyes Black Dragon", "Exodia the Forbidden One", "Ash Blossom"]
     links = "".join(f'<a class="fchip" href="/search?q={e(n.replace(" ", "+"))}">{e(n)}</a>' for n in who)
     return ('<section><h2>Card markets</h2>'
             '<p class="sub">Every printing has its own guide price. Open the card, then pick the version. '
             'A guide is not a sale.</p>'
             f'<div class="fchips">{links}</div></section>')
+
+
+def _char_tiles(cat, limit: int) -> str:
+    """Character tiles with the newest cached picture of each, strongest markets first."""
+    if cat is None:
+        return '<p class="empty">The Pokémon card list is still downloading; character markets fill in when it lands.</p>'
+    from .character import market_rows, slug
+    return "".join(f'<a class="ctile" href="/pkm/character/{e(slug(name))}">{img("pkm-" + rep, "small", name)}'
+                   f'<span class="ct-name">{e(name)}</span>'
+                   f'<span class="ct-meta">{cards} cards · {priced} with their own price</span></a>'
+                   for priced, cards, name, rep in market_rows(cat)[:limit])
+
+
+def view_characters(idx) -> str:
+    """The whole character market: every Pokémon whose cards carry their own prices, biggest first."""
+    cat = idx.cat if idx is not None and getattr(idx, "cat", None) is not None else None
+    if cat is None:
+        return '<h1>Character markets</h1><p class="empty">No Pokémon catalog loaded yet.</p>'
+    from .character import market_rows
+    rows = market_rows(cat)
+    return (f'<h1>Character markets</h1><p class="sub">{len(rows):,} characters carry their own prices across {len(cat):,} cards. '
+            'Open one: every print, its own guide, its own sales. Nothing here prices a different card.</p>'
+            f'<div class="cgrid">{_char_tiles(cat, 300)}</div>'
+            + (f'<p class="muted small">Showing the 300 strongest of {len(rows):,}. Search for any other by name.</p>' if len(rows) > 300 else ""))
 
 
 def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", assumed_costs: bool = True, EM=None, game: str = "ygo") -> str:

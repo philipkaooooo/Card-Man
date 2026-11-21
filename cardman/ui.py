@@ -1867,6 +1867,9 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                         raise KeyError(parts[1])
                     from .ui_home import view_character
                     return self._page("search", who, view_character(idx, who, token, now), qs, crumb=("Cards", "/pkm/search"))
+                if parts == ["characters"]:
+                    from .ui_home import view_characters
+                    return self._page("search", "Character markets", view_characters(idx), qs, crumb=("Cards", "/pkm/search"))
                 if parts == ["search"]:
                     from .ui_home import Money, view_search
                     q = qs.get("q", [""])[0][:120]
@@ -1914,7 +1917,7 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                 return self._switch_game(qs)
             if not parts and self.game == "ygo" and self._cookie("game") == "pkm" and "g" not in qs and not u.query:
                 return self._go("/pkm/")
-            if self.game == "pkm" and pcards() is None and parts[:1] in (["search"], ["card"], ["character"]):
+            if self.game == "pkm" and pcards() is None and parts[:1] in (["search"], ["card"], ["character"], ["characters"]):
                 from .catalog_boot import read_status
                 stt = read_status()
                 detail = stt.get("detail") or "The download starts with CardMan. This page fills in once the card list is in place."
