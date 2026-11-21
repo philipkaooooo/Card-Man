@@ -32,8 +32,11 @@ def _key(text: str) -> str:
 class _Book:
     def __init__(self, rows: list[dict]):
         self.by_key: dict[str, int] = {}
+        self.by_dex: dict[int, str] = {}
         for r in rows:
-            self.by_key[_key(r["name"].replace("-", " "))] = int(r["dex"])
+            key = _key(r["name"].replace("-", " "))
+            self.by_key[key] = int(r["dex"])
+            self.by_dex[self.by_key[key]] = _DISPLAY.get(r["name"], r["name"].replace("-", " ").title())
 
     def dex(self, species: str) -> int | None:
         words = _key(species).split()
@@ -55,14 +58,14 @@ def rows(cat) -> list[tuple]:
         return []
     from .character import slug, species_index
     who = book()
-    out = []
+    # One tile per dex number, not per spelling: "Charizard" and "Charizard & Braixen" are the same Pokémon.
+    merged: dict[int, set[str]] = {}
     for name, cids in species_index(cat).items():
         dex = who.dex(name)
-        if not dex:
-            continue
-        out.append((slug(name), name, dex, len(cids)))
-    out.sort(key=lambda r: (r[2], r[1]))
-    return out
+        if dex:
+            merged.setdefault(dex, set()).update(cids)
+    return [(slug(who.by_dex.get(dex, str(dex))), who.by_dex.get(dex, str(dex)), dex, len(cids))
+            for dex, cids in sorted(merged.items())]
 
 
 def icon(dex: int) -> tuple[bytes, str]:

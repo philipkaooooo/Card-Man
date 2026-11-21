@@ -48,6 +48,17 @@ def test_search_by_name_set_number_and_abbreviation(cat):
     assert first("sv3pt5-199") == ["sv3pt5-199"]
 
 
+def test_a_suffix_word_is_never_a_set_code(cat):
+    # "GX"/"EX"/"V" are card suffixes first; as codes they used to replace the name and list a whole set.
+    assert {h["card_id"] for h in cat.search("Umbreon BS")} == {"swsh7-215", "swsh7-95"}
+    assert {h["set_id"] for h in cat.search("Charizard ex GX")} == {"base1", "sma", "sv3pt5", "sv4pt5"}
+
+
+def test_a_set_code_still_works_when_no_card_name_uses_it(cat):
+    hits = cat.search("MEW Charizard")
+    assert hits and {h["set_id"] for h in hits} == {"sv3pt5"}
+
+
 def top(an):
     return max(an.weights, key=an.weights.get) if an.weights else None
 

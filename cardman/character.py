@@ -8,16 +8,23 @@ from __future__ import annotations
 
 import re
 
-_LEAD = re.compile(r"^(mega|radiant|shining|light|dark|m)$", re.I)
-_TAIL = re.compile(r"^(ex|gx|v|vmax|vstar|v-union|break|prime|legend|star|lv\.x)$", re.I)
+# Form labels, card suffixes and owner labels: they name a version of the Pokémon, never another Pokémon.
+_LEAD = re.compile(r"^(mega|m|radiant|shining|light|dark|detective|special|delivery|team|alolan|galarian|hisuian|paldean)$", re.I)
+_TAIL = re.compile(r"^(ex|gx|v|vmax|vstar|v-?union|break|prime|legend|star|lv\.?x|g|x|y|δ|◇|✪)$", re.I)
+_TRAIL_NUM = re.compile(r"\s*[-–]\s*\d+$")
 
 
 def species_of(name: str) -> list[str]:
-    """The Pokémon in a card name. A tag-team card is both. A form (ex, VSTAR, Mega) is not a different character."""
-    text = name.replace("-EX", " EX").replace("-GX", " GX").replace("δ", " ")
+    """The Pokémon in a card name. A tag-team card is both. A form (ex, VSTAR, Mega X, Ash's) is not a different
+    character: every Charizard card files under Charizard."""
+    text = _TRAIL_NUM.sub("", name or "")
+    text = (text.replace("-EX", " EX").replace("-GX", " GX").replace("-V", " V").replace("-VMAX", " VMAX")
+                .replace("-VSTAR", " VSTAR").replace("δ", " ").replace("★", " ").replace("◇", " ").replace("✪", " "))
     parts = [p for p in text.split() if p]
     while parts and _LEAD.match(parts[0]):
         parts.pop(0)
+    while len(parts) > 1 and parts[0].endswith(("'s", "’s")):
+        parts.pop(0)                      # Ash's Pikachu, Blaine's Charizard: the owner is not the character
     while parts and _TAIL.match(parts[-1]):
         parts.pop()
     text = " ".join(parts).strip() or name.strip()
@@ -40,12 +47,39 @@ def species_index(cat) -> dict[str, list[str]]:
         return hit[1]
     idx: dict[str, list[str]] = {}
     for cid, r in cat._cards.items():
+        kind = (r[5] or "").lower() if len(r) > 5 else ""
+        if kind and not kind.startswith("pok"):     # a Trainer card named after a Pokémon is not that Pokémon's card
+            continue
         for s in species_of(r[1]):
             idx.setdefault(s, []).append(cid)
     for v in idx.values():
         v.sort(key=lambda c: (cat._cards[c][9] or "", c), reverse=True)
+        _dedupe(cat, v)
     _INDEX[id(cat)] = (cat, idx)   # keep cat referenced so its id cannot be reused by another object
     return idx
+
+
+def _key(cat, cid: str) -> tuple[str, str, str]:
+    """One physical card. Two sources list it under different ids; name, set and number are what the card is."""
+    r = cat._cards[cid]
+    s = (cat.set(r[3]) or {}).get("name") if getattr(cat, "set", None) else None
+    return (re.sub(r"[^a-z0-9]+", "", (r[1] or "").lower()), (s or r[3] or "").lower(), (r[4] or "").lstrip("0").lower())
+
+
+def _dedupe(cat, ids: list[str]) -> None:
+    """In place, newest first: one entry per physical card, the one with the most versions kept."""
+    best: dict[tuple, str] = {}
+    for cid in ids:
+        k = _key(cat, cid)
+        prev = best.get(k)
+        if prev is None or _rank(cat, cid) > _rank(cat, prev):
+            best[k] = cid
+    keep = set(best.values())
+    ids[:] = [cid for cid in ids if cid in keep]
+
+
+def _rank(cat, cid: str) -> tuple[int, int]:
+    return (len(cat.versions(cid)) if getattr(cat, "versions", None) else 0, 0 if cid.startswith("tcg-") else 1)
 
 
 def cards_of(cat, species: str) -> list[str]:

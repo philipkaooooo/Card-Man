@@ -458,10 +458,39 @@ class PkmCatalog:
             if sname and re.search(rf"(?<![a-z0-9]){re.escape(sname)}(?![a-z0-9])", qn):
                 set_hit = sid
                 break
+        codes = [w for w in q.upper().split() if len(w) >= 2 and w in self.set_codes and w.lower() not in _SUFFIX_WORDS]
         if not set_hit:
-            for w in q.upper().split():
-                if w in self.set_codes:
-                    set_hit = self.set_codes[w]
+            # "Mew" is 151's code and a Pokémon's name: in a name query the name wins. A two-letter suffix (EX, GX)
+            # is never a code; treating it as one emptied the name words and listed a whole unrelated set.
+            vocab = self._vocab()
+            set_hit = next((self.set_codes[w] for w in codes if w.lower() not in vocab), None)
+
+        def name_score(ws: list[str], sfx: list[str]) -> dict[str, float]:
+            out: dict[str, float] = {}
+            if not ws and not sfx:
+                return out
+            phrase = " ".join(ws + sfx)                     # "Mew ex" names the card; "Mew" alone does not
+            base = " ".join(ws)
+            for cid, r in self._cards.items():
+                n = r[2]
+                if phrase and n == phrase:
+                    out[cid] = 60
+                elif phrase and n.startswith(phrase):
+                    out[cid] = 50
+                elif base and n == base:
+                    out[cid] = 45
+                elif ws and all(re.search(rf"(?<![a-z0-9]){re.escape(w)}", n) for w in ws):
+                    out[cid] = 30
+            return out
+
+        def words_for(sh: str | None) -> list[str]:
+            ws = [w for w in words if not w.isdigit() and not re.fullmatch(r"\d+[a-z]?", w) and w not in _STOP
+                  and w not in _SUFFIX_WORDS]
+            if sh:
+                sw = set(norm(self._sets[sh]["name"]).split())
+                ws = [w for w in ws if w not in sw and w.upper() != (self._code_of(sh) or "")]
+            return ws
+
         scored: dict[str, float] = {}
         if m:
             left, right = m.group(1), m.group(2)
@@ -472,21 +501,15 @@ class PkmCatalog:
                     not right.isdigit() and right[:2].lower() == left[:2].lower())
                 if same:
                     scored[cid] = max(scored.get(cid, 0), 80)
-        name_words = [w for w in words if not w.isdigit() and not re.fullmatch(r"\d+[a-z]?", w) and w not in _STOP]
-        if set_hit:
-            sw = set(norm(self._sets[set_hit]["name"]).split())
-            name_words = [w for w in name_words if w not in sw and w.upper() not in self.set_codes]
-        if name_words:
-            phrase = " ".join(name_words)
-            for cid, r in self._cards.items():
-                n = r[2]
-                if n == phrase:
-                    scored[cid] = scored.get(cid, 0) + 60
-                elif n.startswith(phrase):
-                    scored[cid] = scored.get(cid, 0) + 45
-                elif all(re.search(rf"(?<![a-z0-9]){re.escape(w)}", n) for w in name_words):
-                    scored[cid] = scored.get(cid, 0) + 30
-        elif set_hit and not m:
+        suffix = [w for w in words if w in _SUFFIX_WORDS]
+        name_words = words_for(set_hit)
+        scored.update({cid: s + scored.get(cid, 0) for cid, s in name_score(name_words, suffix).items()})
+        if not scored and not set_hit and codes:
+            # Nothing matched as a name: the code was meant as a set after all ("MEW 199").
+            set_hit = self.set_codes[codes[0]]
+            name_words = words_for(set_hit)
+            scored.update(name_score(name_words, suffix))
+        if not name_words and set_hit and not m:
             for cid, r in self._cards.items():
                 if r[3] == set_hit:
                     scored[cid] = 20
@@ -495,9 +518,32 @@ class PkmCatalog:
             scored = in_set or scored                    # the set was named: only its cards, unless none match
         if m and name_words:
             scored = {cid: s for cid, s in scored.items() if s >= 80 or _num(self._cards[cid][4]) == (m.group(1).lstrip("0").lower() or "0")} or scored
+        bare = {w.lstrip("0") or "0" for w in words if w.isdigit()}
+        if bare and scored:
+            # "charizard 199" pins the card number inside the name matches; it never invents matches of its own.
+            scored = {cid: s for cid, s in scored.items() if _num(self._cards[cid][4]) in bare} or scored
+        if suffix and scored:
+            # A suffix anywhere but last ("Charizard GX V") still marks the card that carries it.
+            scored = {cid: s + (10 if any(self._cards[cid][2].endswith(" " + w) for w in suffix) else 0)
+                      for cid, s in scored.items()}
         ranked = sorted((cid for cid, s in scored.items() if s > 0), key=lambda c: (-scored[c], self._cards[c][9] or "", c), reverse=False)
         ranked = sorted(ranked, key=lambda c: (-scored[c], -(int((self._cards[c][9] or "0000")[:4] or 0))))
         return [self._hit(cid, scored[cid]) for cid in ranked[:limit]]
+
+    def _vocab(self) -> set[str]:
+        """Every word used in a card name. A query word in here is a name, even when a set also uses it as a code."""
+        v = getattr(self, "_vocabset", None)
+        if v is None:
+            v = {w for r in self._cards.values() for w in (r[2] or "").split()}
+            self._vocabset = v
+        return v
+
+    def _code_of(self, sid: str) -> str | None:
+        v = getattr(self, "_codeby", None)
+        if v is None:
+            v = {s: c for c, s in self.set_codes.items()}
+            self._codeby = v
+        return v.get(sid)
 
     def _hit(self, cid: str, score: float) -> dict:
         r = self._cards[cid]
@@ -513,6 +559,7 @@ class PkmCatalog:
 
 _STOP = {"set", "pokemon", "card", "cards", "tcg", "holo", "rare", "english", "nm", "mint", "the", "of", "1st", "edition",
          "unlimited", "shadowless", "reverse", "promo", "psa", "bgs", "cgc", "lp", "mp", "hp"}
+_SUFFIX_WORDS = {"ex", "gx", "v", "vmax", "vstar", "break", "prime", "legend", "star"}
 
 
 def _num(n: str | None) -> str:

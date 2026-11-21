@@ -708,7 +708,7 @@ def view_character(idx, species: str, token: str, now: datetime) -> str:
     moves = []
     options = []
     priced = []
-    for cid in ids[:80]:
+    for cid in ids[:240]:
         row = cat._cards[cid]
         key = "pkm-" + cid
         s = cat.set(row[3]) or {}
@@ -749,8 +749,9 @@ def view_character(idx, species: str, token: str, now: datetime) -> str:
                 f'<label>Date<input type="date" name="date" value="{now.date().isoformat()}" required></label>'
                 '<label>How it sold<select name="kind"><option value="transaction">Sold</option><option value="accepted_offer">Best offer accepted</option></select></label>'
                 '<button>Add sale</button></form>')
+    more = f' Showing the {len(tiles)} newest; the rest are one search away.' if len(ids) > len(tiles) else ""
     return (f'<div class="charpage"><div><h1>{e(species)}</h1>'
-            f'<p class="sub">{len(ids)} card{"s" if len(ids) != 1 else ""}. Each one has its own price. Nothing on this page is a price for a different card.</p>'
+            f'<p class="sub">{len(ids)} card{"s" if len(ids) != 1 else ""}. Each one has its own price. Nothing on this page is a price for a different card.{more}</p>'
             f'<div class="cgrid">{"".join(tiles) or "<p class=empty>No cards of this character.</p>"}</div>'
             f'<section><h2>How these cards move</h2>{trend}{spread}</section></div>'
             f'<aside class="char-side"><h2>Add a sale</h2><p class="why small">Pick the exact card and version. The sale counts for that version only.</p>{form}</aside></div>')

@@ -13,7 +13,6 @@ import struct
 import subprocess
 import sys
 import tempfile
-import time
 import zlib
 from pathlib import Path
 
@@ -431,20 +430,23 @@ def _passcodes(d: dict) -> list[str]:
     return found
 
 
-_BYTES_CACHE: dict[str, tuple[float, bytes | None]] = {}
-_BYTES_TTL = 300.0        # a photo that has not been captured yet can appear; a captured one never changes
+_BYTES_CACHE: dict[str, tuple[int, int, bytes | None]] = {}
 
 
 def _cached(path: Path) -> bytes | None:
+    """Bytes per file identity, so a re-captured photo at the same path is read again and a warm one is not re-read."""
+    try:
+        st = path.stat()
+    except OSError:
+        return None
     key = str(path)
-    now = time.monotonic()
     hit = _BYTES_CACHE.get(key)
-    if hit is not None and (hit[1] is not None or now - hit[0] < _BYTES_TTL):
-        return hit[1]
-    data = path.read_bytes() if path.exists() and path.stat().st_size > 32 else None
+    if hit is not None and hit[0] == st.st_mtime_ns and hit[1] == st.st_size:
+        return hit[2]
+    data = path.read_bytes() if st.st_size > 32 else None
     if len(_BYTES_CACHE) > 8192:
         _BYTES_CACHE.clear()
-    _BYTES_CACHE[key] = (now, data)
+    _BYTES_CACHE[key] = (st.st_mtime_ns, st.st_size, data)
     return data
 
 
