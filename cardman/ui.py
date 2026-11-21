@@ -1911,17 +1911,6 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                         return self._page("search", c["name_en"], view_card(
                             st, idx, key, now, self._cur(), book=_book(st, now), catalog=idx.cat, home=_engine_home(st), token=token,
                             filters={k: qs.get(k, [""])[0][:300] for k in ("platform", "graded", "type", "v")}), qs, crumb=("Cards", "/pkm/search"))
-                if len(parts) == 3 and parts[0] == "character" and parts[2] == "history.json" \
-                        and _re.fullmatch(r"[a-z0-9-]{1,48}", parts[1]):
-                    from .character import cards_of, find_species
-                    from .ui_home import character_history
-                    who = find_species(idx.cat, parts[1]) if idx else None
-                    if not who:
-                        raise KeyError(parts[1])
-                    variants = [v for cid in cards_of(idx.cat, who) for v in idx.cat.versions(cid)]
-                    out = character_history(st, parts[1], variants, now, self._cur(), _engine_home(st), _book(st, now),
-                                            idx.cat.guide_history)
-                    return self._send(200, json.dumps(out).encode(), "application/json")
                 if len(parts) == 2 and parts[0] == "character" and _re.fullmatch(r"[a-z0-9-]{1,48}", parts[1]):
                     from .character import find_species
                     who = find_species(idx.cat, parts[1]) if idx else None
