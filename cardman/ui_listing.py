@@ -440,8 +440,14 @@ def view_list(st, cards, now, M, *, v_filter: str, t_filter: str, home_cur: str,
             for key, status, d, v in page_items]
     hidden = "" if v_filter in (PASS, "every") else f'<p class="muted small">{counts[PASS]:,} skipped listings are hidden. <a href="{e(href(v=PASS))}">Show them</a>.</p>'
     more = f'<p class="muted small">Showing the first 150 of {len(shown):,}. Pick a lane or a site to see the rest.</p>' if len(shown) > 150 else ""
-    return ('<h1>Listings</h1><p class="sub">Every listing with our take. We only say Buy when real sales back the price.</p>'
-            + bar + hidden
+    other_note = ""
+    if not pool:
+        other = "ygo" if game == "pkm" else "pkm"
+        n_other = len(decisions(st, M, other))
+        if n_other:
+            other_note = f'<p class="empty">{n_other:,} listings are filed under the other game. Switch the game in the top bar.</p>'
+    return ('<h1>Listings</h1><p class="sub">Live listings that have been checked. We only say Buy when real sales back the price.</p>'
+            + bar + hidden + other_note
             + (f'<div class="deals">{"".join(rows)}</div>' if rows else '<p class="empty">Nothing matches these filters. Try “All cards” or “All sites”.</p>')
             + more)
 

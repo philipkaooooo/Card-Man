@@ -225,6 +225,21 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", a
                       'CardMan checks eBay every 15 minutes while it is open; you can also <a href="/import">add sales</a>.</p>'))
         out.append('<div class="home-h"><h2>2x Checks</h2><a href="/opportunities?v=CHECK">All 2x Checks →</a></div>'
                    + (f'<div class="deals">{cards_of(check)}</div>' if check else '<p class="empty">Nothing to double-check right now.</p>'))
+        live_keys = None
+        if "listing" in have:
+            live_keys = {r[0] for r in st.db.execute("SELECT key FROM listing WHERE ended_at IS NULL")}
+        live = [i for i in items if i[1] != "REJECTED" and (live_keys is None or i[0] in live_keys)]
+        live.sort(key=lambda i: (i[3].code == "PASS", -(i[2].get("priority") or 0)))
+        shown = live[:8]
+        ph2 = photo_counts(st, [item_id_of(k, d) for k, _s, d, _v in shown])
+        seen2 = first_seen(st, [k for k, *_ in shown])
+        out.append('<div class="home-h"><h2>Live listings</h2><a href="/opportunities">All listings →</a></div>'
+                   + (f'<div class="deals">{"".join(deal_card(k, d, v, idx, EM, now, ph2, seen2.get(k)) for k, _s, d, v in shown)}</div>'
+                      f'<p class="muted small">{len(live):,} still up. The rest are on Listings, in the top bar.</p>' if shown else
+                      '<p class="empty">No live listing for this game. Listings, in the top bar, is the full page.</p>'))
+    else:
+        out.append('<div class="home-h"><h2>Live listings</h2><a href="/opportunities">Listings →</a></div>'
+                   '<p class="empty">None in this folder yet. Listings is the top-bar page. It fills when a check runs, or when you <a href="/import">add sales</a>.</p>')
     return "".join(out)
 
 

@@ -56,10 +56,12 @@ def view_one(row: tuple, cards: list[dict], trend: dict, token: str, now) -> str
                 move = f' · {_money(pts[0][1])} → {_money(pts[-1][1])}'
             vers.append(f'<li>{e(edition)} · {reading}{move}</li>')
         logged = "<ul class=\"vlog\">" + "".join(vers) + "</ul>" if vers else "<p class=\"muted\">No price of its own logged yet.</p>"
+        from .ui_home import img
         body.append(f'<a class="clog" href="{e(card_href("pkm-" + c["id"]))}">'
-                    f'<span class="ct-name">{e(c["name"])}</span>'
+                    f'{img("pkm-" + c["id"], "small", c["name"])}'
+                    f'<span class="clog-body"><span class="ct-name">{e(c["name"])}</span>'
                     f'<span class="ct-meta">{e(c["set"] or "")} · {e(c["number"] or "")} · {e(c["rarity"] or "")}</span>'
-                    f'{logged}</a>')
+                    f'{logged}</span></a>')
     return (f'<div class="charhead"><img src="/pkm/icon/{dex}.png" alt="" width="120" height="120">'
             f'<div><h1>{e(name)}</h1>'
             f'<p class="sub">{n} card{"s" if n != 1 else ""}. The icon is this Pokémon. Every price below belongs to the card named on that row.</p></div></div>'
@@ -78,7 +80,9 @@ background:var(--surface);border:1px solid var(--line);border-radius:16px;paddin
 .zchar:hover{border-color:var(--axis)}
 .charhead{display:flex;gap:16px;align-items:center;margin:0 0 8px}.charhead img{width:120px;height:120px;object-fit:contain}
 .clist{display:grid;gap:8px}
-.clog{display:block;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px;text-decoration:none;color:var(--fg)}
+.clog{display:flex;gap:12px;align-items:flex-start;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px;text-decoration:none;color:var(--fg)}
+.clog .card{width:56px;height:78px;object-fit:contain;flex:none;background:var(--soft);border-radius:6px}
+.clog-body{min-width:0}
 .clog:hover{border-color:var(--axis)}
 .vlog{list-style:none;padding:0;margin:6px 0 0;display:grid;gap:2px}.vlog li{font-size:12px;color:var(--fg2)}
 """
