@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 import re
 
-THIS_CARD = 0.95
 INDEX_VERSION = "photo-match-2"
 _PC = re.compile(r"@([^@|]+)")   # passcode (Yu-Gi-Oh!) or pkm-<card id> (Pokémon); see games.py
 _SCHEMA = """
