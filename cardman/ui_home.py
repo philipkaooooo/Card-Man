@@ -77,6 +77,27 @@ def _search_box(q: str = "", big: bool = False, game: str = "ygo") -> str:
             f'<button aria-label="Search">Search</button><div class="sugg" role="listbox" hidden></div></form>')
 
 
+def _ago(iso: str | None, now: datetime) -> str:
+    if not iso:
+        return ""
+    try:
+        t = datetime.fromisoformat(iso)
+        if (t.tzinfo is None) != (now.tzinfo is None):
+            t = t.replace(tzinfo=now.tzinfo)
+        s = int((now - t).total_seconds())
+    except (ValueError, TypeError):
+        return ""
+    if s < 0:
+        return "just now"
+    if s < 90:
+        return "just now"
+    if s < 3600:
+        return f"{s // 60}m ago"
+    if s < 86400:
+        return f"{s // 3600}h ago"
+    return f"{s // 86400}d ago"
+
+
 def header_search(q: str = "", game: str = "ygo") -> str:
     return _search_box(q, game=game)
 
@@ -164,69 +185,51 @@ def _own_guides(idx, passcode: str) -> str:
     return f'<span class="ct-mkt">{ " · ".join(bits) }{more}<br>guide, not a sale</span>'
 
 
-def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", assumed_costs: bool = True, EM=None, game: str = "ygo") -> str:
-    """Search, then the decisions: the rail with live counts, the top Buys, then the 2x Checks. Nothing else."""
-    from .ui_listing import BUY, CHECK, WATCH, decisions, row_html
-    M = Money(st, home, cur, now)
-    vault = theme == "vault"
-    have = _tables(st)
-    out = [('<section class="hero slim">'
-            f'<h1>{"The Vault" if vault else "Find the exact card."}</h1>'
-            + _search_box(big=True, game=game) +
-            ('<p class="try">Try <a href="/search?q=Charizard+ex">Charizard ex</a> · <a href="/search?q=199%2F165">199/165</a> · '
-             '<a href="/search?q=Pikachu+Base">Pikachu Base</a></p></section>' if game == "pkm" else
-             '<p class="try">Try <a href="/search?q=Blue-Eyes+White+Dragon">Blue-Eyes White Dragon</a> · '
-             '<a href="/search?q=%E9%9D%92%E7%9C%BC%E3%81%AE%E7%99%BD%E9%BE%8D">青眼の白龍</a> · <a href="/search?q=LOB-EN001">LOB-EN001</a></p></section>'))]
-    if assumed_costs:
-        out.append('<p class="note slimnote">"Worth paying up to" prices use <b>starter</b> costs. <a href="/settings">Set your real fees and shipping</a>.</p>')
-    from .ui_market import movement_strip
-    out.append(movement_strip(st, game, M))
-    if game != "pkm":                     # characters live under Cards now; the ygo quick names stay here
-        who = ["Blue-Eyes White Dragon", "Dark Magician", "Red-Eyes Black Dragon", "Exodia the Forbidden One", "Ash Blossom"]
-        links = "".join(f'<a class="fchip" href="/search?q={e(n.replace(" ", "+"))}">{e(n)}</a>' for n in who)
-        out.append('<section><h2>Card markets</h2>'
-                   '<p class="sub">Every printing has its own guide price. Open the card, then pick the version. '
-                   'A guide is not a sale.</p>'
-                   f'<div class="fchips">{links}</div></section>')
+_HUNT = "And The Hunt Begins..."
 
-    if "opportunity" in have and EM is not None:
-        from .ui_decide import deal_card, first_seen, rail
-        from .ui_listing import PASS, item_id_of, photo_counts
-        items = decisions(st, EM, game)
-        high = lambda d: (d.get("ask_home") or 0) >= float(VAULT_MIN_HOME) or re.search(r"\b(PSA|BGS|CGC|ARS|SGC)\s*\d", d.get("title") or "", re.I)
-        if vault:
-            items = [i for i in items if high(i[2])]
-        counts = {c: sum(1 for i in items if i[3].code == c) for c in (BUY, CHECK, WATCH, PASS)}
-        # A check with no sale price used to sort first, so the home opened on the wrong cards.
-        rank = lambda i: (i[3].margin is None, -(i[3].margin or 0), -(i[2].get("priority") or 0))
-        buy = sorted((i for i in items if i[3].code == BUY), key=rank)[:6]
-        worth = [i for i in items if i[3].code == CHECK and "MISIDENTIFIED" not in (i[2].get("kinds") or [])
-                 and (i[3].top or {}).get("basis") == "sales"]
-        check = sorted(worth or (i for i in items if i[3].code == CHECK and "MISIDENTIFIED" not in (i[2].get("kinds") or [])), key=rank)[:6]
-        ph = photo_counts(st, [item_id_of(k, d) for k, _s, d, _v in buy + check])
-        seen = first_seen(st, [k for k, *_ in buy + check])
-        cards_of = lambda group: "".join(deal_card(k, d, v, idx, EM, now, ph, seen.get(k)) for k, _s, d, v in group)
-        out.append(rail(counts, None, lambda code, on: f"/opportunities?v={code}", compact=True))
-        out.append('<div class="home-h"><h2>Top Buys</h2><a href="/opportunities?v=BUY">All Buys →</a></div>'
-                   + (f'<div class="deals">{cards_of(buy)}</div>' if buy else
-                      '<p class="empty">No Buy right now: we only say Buy after enough real sales of that exact card. '
-                      'CardMan checks eBay every 15 minutes while it is open; you can also <a href="/import">add sales</a>.</p>'))
-        out.append('<div class="home-h"><h2>2x Checks</h2><a href="/opportunities?v=CHECK">All 2x Checks →</a></div>'
-                   + (f'<div class="deals">{cards_of(check)}</div>' if check else '<p class="empty">Nothing to double-check right now.</p>'))
-        from .ui_listing import open_listings
-        live = open_listings(st, EM, game)
-        shown = live[:8]
-        ph2 = photo_counts(st, [item_id_of(k, d) for k, _s, d, _v in shown])
-        seen2 = first_seen(st, [k for k, *_ in shown])
-        other = ""
-        if not live:
-            n_other = len(open_listings(st, EM, "ygo" if game == "pkm" else "pkm"))
-            if n_other:
-                other = f" {n_other:,} are under the other game. Switch it in the top bar."
-        out.append('<div class="home-h"><h2>Live eBay listings</h2><a href="/opportunities">All listings →</a></div>'
-                   + (f'<div class="deals">{"".join(deal_card(k, d, v, idx, EM, now, ph2, seen2.get(k)) for k, _s, d, v in shown)}</div>'
-                      f'<p class="muted small">{len(live):,} public eBay listings still up. The rest are on Listings.</p>' if shown else
-                      f'<p class="empty">No eBay listing still up for this game.{other}</p>'))
+
+def _source_label(source: str) -> str:
+    base = (source or "").split(":")[0]
+    return {"ebay_browse": "eBay", "inbox": "Imported", "facebook": "Facebook Marketplace"}.get(base, base.replace("_", " ").title())
+
+
+def _just_posted(st, now: datetime, game: str) -> str:
+    """The newest things actually posted, wherever they were posted: one tile per fresh listing."""
+    if "listing" not in _tables(st):
+        return ""
+    rows = st.db.execute(
+        "SELECT l.key, l.source, l.title, l.url, l.price, l.currency, l.first_seen, l.data_json, o.payload_json "
+        "FROM listing l LEFT JOIN opportunity o ON o.key=l.key "
+        "WHERE l.ended_at IS NULL AND l.kind IN ('ask','bid','auction') "
+        "ORDER BY l.first_seen DESC LIMIT 120").fetchall()
+    tiles = []
+    for key, source, title, url, price, currency, seen, dj, payload in rows:
+        try:
+            d = json.loads(payload) if payload else (json.loads(dj) if dj else {})
+        except ValueError:
+            d = {}
+        if (d.get("game") or "ygo") != game:
+            continue
+        price_txt = charts.fmt(Decimal(str(price)), currency) if price not in (None, "") else "—"
+        when = _ago(seen, now)
+        tiles.append(f'<a class="hun" href="{e(url)}" data-key="{e(key)}">{img(_listing_art(d), "large", title or "", cls="card hun-img")}'
+                     f'<span class="hun-b"><span class="hun-name">{e((title or "")[:90])}</span>'
+                     f'<span class="hun-price">{e(price_txt)}</span>'
+                     f'<span class="hun-meta">{e(_source_label(source))}{" · " + e(when) if when else ""}</span></span></a>')
+        if len(tiles) >= 12:
+            break
+    grid = (f'<div class="hungrid">{"".join(tiles)}</div>' if tiles else
+            '<p class="empty">Nothing posted yet. The collector runs every few minutes; you can also '
+            '<a href="/import">import saved pages</a> from any marketplace, Facebook Marketplace included.</p>')
+    return ('<section class="hunzone"><div class="home-h"><h2>Just posted</h2><a href="/opportunities">All listings →</a></div>'
+            + grid + "</section>")
+
+
+def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", assumed_costs: bool = True, EM=None, game: str = "ygo") -> str:
+    """The hunt: the title, the search, and the newest postings. Every decision view lives on its own page."""
+    letters = "".join(f'<span style="--i:{i}">{c if c != " " else "&nbsp;"}</span>' for i, c in enumerate(_HUNT))
+    out = [f'<section class="hero hunt"><h1 class="huntitle" aria-label="{e(_HUNT)}">{letters}</h1>' + _search_box(big=True, game=game) + "</section>"]
+    out.append(_just_posted(st, now, game))
     return "".join(out)
 
 
@@ -833,6 +836,21 @@ font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;font-we
 :root[data-theme="vault"] form.search button{background:var(--accent);border-color:var(--accent);color:#15130f}
 :root[data-theme="vault"] .tile-l,:root[data-theme="vault"] .ctile{border-color:#2f2a21;background:linear-gradient(180deg,#18150f,#13110d)}
 :root[data-theme="vault"] .tl-price{color:var(--accent)}
+.hunzone{max-width:1240px;margin:6px auto 44px;padding:0 14px}
+.hunzone .home-h{max-width:1212px;margin:26px auto 14px}
+section.hero.hunt{padding:64px 12px 10px}
+.huntitle{font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;font-style:italic;font-weight:700;
+font-size:clamp(30px,6vw,54px);letter-spacing:.01em;margin:0 0 26px;cursor:default}
+.huntitle span{display:inline-block;white-space:pre;transition:transform .35s cubic-bezier(.2,1.8,.4,1),color .35s;transition-delay:calc(var(--i)*30ms)}
+.huntitle:hover span{transform:translateY(-8px) rotate(-5deg);color:var(--accent)}
+.hungrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:18px}
+a.hun{display:flex;flex-direction:column;gap:8px;background:var(--surface);border:1px solid var(--line);border-radius:14px;
+padding:12px;text-decoration:none;color:inherit;transition:transform .15s,box-shadow .15s}
+a.hun:hover{transform:translateY(-3px);box-shadow:0 10px 24px rgba(0,0,0,.16)}
+a.hun img.card.hun-img,a.hun span.hun-img{width:100%;height:200px;object-fit:contain;background:var(--bg);border-radius:8px}
+.hun-name{font-size:14px;font-weight:600;color:var(--fg);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:2.7em}
+.hun-price{font-size:19px;font-weight:700;color:var(--accent)}
+.hun-meta{font-size:12px;color:var(--muted)}
 """
 
 HOME_JS = r"""

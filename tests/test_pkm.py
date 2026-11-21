@@ -230,8 +230,8 @@ def web(tmp_path, cat, monkeypatch):
 def test_switch_routes_and_pages_for_pokemon(web):
     s, url, h, body = web("/pkm/")
     assert s == 200 and 'class="on">Pokémon<' in body and 'href="/pkm/opportunities"' in body and "199/165" in body
-    # Home shows Buys and 2x Checks. A price-guide listing is a Check, never a Watch, and only Pokémon is counted here.
-    assert re.search(r'l-check[^"]*"[^>]*>.*?class="lane-n" data-n="1">1<', body) and "Blue-Eyes White Dragon LOB-EN001 buy" not in body
+    # Home is the hunt: title, search, newest postings. Only Pokémon postings are counted here.
+    assert "And The Hunt Begins..." in body and "Just posted" in body and "Blue-Eyes White Dragon LOB-EN001 buy" not in body
     s, url, h, body = web("/")
     assert 'class="on">Yu-Gi-Oh!<' in body and "Charizard ex 199/165 SIR 151" not in body                    # and only Yu-Gi-Oh! here
     s, url, h, body = web("/game?g=pkm&back=/opportunities", follow=False)
