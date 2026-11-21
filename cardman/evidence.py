@@ -49,10 +49,13 @@ def dedup(observations: list[MarketObservation]) -> tuple[list[MarketObservation
 def select_comps(observations: list[MarketObservation], printing_id: str, *,
                  grade_company: str | None = None, grade: str | None = None,
                  raw_condition: str | None = None, as_of: datetime,
-                 include_synthetic: bool = False) -> tuple[list[MarketObservation], list[tuple[str, str]]]:
-    """Up to 10 most recent verifiable sales for one exact printing / grade / condition.
+                 include_synthetic: bool = False, limit: int | None = MAX_COMPS
+                 ) -> tuple[list[MarketObservation], list[tuple[str, str]]]:
+    """Most recent verifiable sales for one exact printing / grade / condition.
 
     Never substitutes active listings, bids, aggregates or claims for sales.
+    `limit` defaults to 10. Pass None when the caller needs the whole history,
+    which the mark does: the prior month has to stay visible or a fall is invisible.
     """
     rejected: list[tuple[str, str]] = []
     pool, dups = dedup(observations)
@@ -81,7 +84,7 @@ def select_comps(observations: list[MarketObservation], printing_id: str, *,
         else:
             out.append(o)
     out.sort(key=lambda o: o.event_time, reverse=True)
-    return out[:MAX_COMPS], rejected
+    return (out if limit is None else out[:limit]), rejected
 
 
 class RawEvidenceStore:

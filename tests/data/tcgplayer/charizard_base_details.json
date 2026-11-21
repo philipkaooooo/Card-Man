@@ -1,0 +1,50 @@
+{
+ "productId": 42382.0,
+ "productLineId": 3.0,
+ "productLineName": "Pokemon",
+ "productName": "Charizard",
+ "setName": "Base Set",
+ "setCode": "BS",
+ "rarityName": "Holo Rare",
+ "sealed": false,
+ "marketPrice": 1001.05,
+ "lowestPrice": 189.0,
+ "medianPrice": null,
+ "customAttributes": {
+  "number": "004/102",
+  "releaseDate": "1999-01-09T00:00:00Z",
+  "rarityDbName": "Holo Rare"
+ },
+ "skus": [
+  {
+   "sku": 2999652,
+   "condition": "Near Mint",
+   "variant": "Holofoil",
+   "language": "English"
+  },
+  {
+   "sku": 2999653,
+   "condition": "Lightly Played",
+   "variant": "Holofoil",
+   "language": "English"
+  },
+  {
+   "sku": 2999654,
+   "condition": "Moderately Played",
+   "variant": "Holofoil",
+   "language": "English"
+  },
+  {
+   "sku": 2999655,
+   "condition": "Heavily Played",
+   "variant": "Holofoil",
+   "language": "English"
+  },
+  {
+   "sku": 2999656,
+   "condition": "Damaged",
+   "variant": "Holofoil",
+   "language": "English"
+  }
+ ]
+}

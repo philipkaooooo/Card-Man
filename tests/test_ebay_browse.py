@@ -1,5 +1,5 @@
 """eBay Browse adapter. Payloads below are SYNTHETIC, shaped after eBay's documented item_summary
-response, to exercise code paths only. No live eBay request has been made (no keys; host blocked)."""
+response, to exercise code paths only. This file does not call the network."""
 import io
 import json
 import urllib.error

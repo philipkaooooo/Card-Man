@@ -219,13 +219,39 @@ class Catalog:
         return exact, notes
 
 
-def edition_variants(p: Printing, catalog: Catalog) -> list[Printing]:
-    """An English printing whose source has no edition data, split into the editions its product is known to have.
+# Worldwide English of these sets (code suffix EN, as in LOB-EN001) has an Unlimited gallery only.
+# The NA code with no language segment (LOB-001) was printed 1st and Unlimited. Checked on Yugipedia
+# set galleries, 2026-11-21. Later sets are not in this set: their EN galleries include 1st.
+_WW_EN_UNLIMITED = {
+    "Legend of Blue Eyes White Dragon",
+    "Metal Raiders",
+    "Spell Ruler",
+    "Pharaoh's Servant",
+    "Labyrinth of Nightmare",
+    "Legacy of Darkness",
+    "Dark Crisis",
+    "Invasion of Chaos",
+}
 
-    The ids match what resolve() gives a confirmed card (`<id>|ed:<edition>`), so sales recorded against a confirmed
-    edition price the unconfirmed candidates too. Printings with known editions, or no rule, come back unchanged.
+
+def editions_for(p: Printing, catalog: Catalog) -> tuple[str, ...]:
+    """Editions this printing's own code was actually run in. Product-name rules are too coarse."""
+    allowed = tuple(catalog.edition_rules.get(p.product_name or "", ()))
+    if not allowed or p.region != Region.EN_TCG or p.edition is not None:
+        return allowed
+    suffix = (p.set_code or "").upper().partition("-")[2]
+    if p.product_name in _WW_EN_UNLIMITED and suffix.startswith("EN"):
+        return tuple(e for e in allowed if e != "1st")
+    return allowed
+
+
+def edition_variants(p: Printing, catalog: Catalog) -> list[Printing]:
+    """An English printing whose source has no edition data, split into the editions its own code was run in.
+
+    Worldwide EN of the early sets is Unlimited only (`editions_for`). The ids match what resolve() gives a
+    confirmed card (`<id>|ed:<edition>`). Printings with a known edition, or no rule, come back unchanged.
     """
-    allowed = catalog.edition_rules.get(p.product_name or "", ())
+    allowed = editions_for(p, catalog)
     if p.region != Region.EN_TCG or p.edition is not None or not allowed:
         return [p]
     return [replace(p, id=f"{p.id}|ed:{ed}", edition=ed,
@@ -336,14 +362,21 @@ def resolve(signals: ListingSignals, catalog: Catalog) -> IdentityResult:
             return IdentityResult(IdentityStatus.CANDIDATES, cands, ev,
                                   block + [f"catalog printing is {p.identity_status}: {'; '.join(p.variant_evidence)}"],
                                   ["identity source record with complete rarity/product data"])
-        allowed = catalog.edition_rules.get(p.product_name or "", ())
+        raw = tuple(catalog.edition_rules.get(p.product_name or "", ()))
+        allowed = editions_for(p, catalog)
         if (p.region == Region.EN_TCG and p.edition is None and signals.verified_edition
                 and signals.verified_edition in allowed):
-            # The stamp was verified on the card and this product is known to have that edition.
+            # The stamp was verified on the card and this code's run includes that edition.
             refined = replace(p, id=f"{p.id}|ed:{signals.verified_edition}", edition=signals.verified_edition,
                               variant_evidence=p.variant_evidence + ("edition from verified stamp photo + edition rule",))
-            return IdentityResult(IdentityStatus.RESOLVED, [refined], ev + ["edition rule allows this stamp on this product"],
+            return IdentityResult(IdentityStatus.RESOLVED, [refined], ev + ["edition rule allows this stamp on this code"],
                                   block, [])
+        if (p.region == Region.EN_TCG and p.edition is None and signals.verified_edition
+                and signals.verified_edition in raw and signals.verified_edition not in allowed):
+            return IdentityResult(
+                IdentityStatus.CONFLICT, [p], ev,
+                block + [f"verified {signals.verified_edition} stamp is not a printing of {p.set_code}; "
+                         "this code's run does not include that edition"], [])
         if p.region == Region.EN_TCG and p.edition is None:
             # English prints differ by 1st / Unlimited / Limited; the loaded source does not say which exist.
             return IdentityResult(IdentityStatus.CANDIDATES, cands, ev,

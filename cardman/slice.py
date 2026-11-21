@@ -20,6 +20,8 @@ from .economics import AcquisitionCosts, CeilingInputs, ExitCosts, buy_ceiling, 
 from .evidence import import_manual_csv, select_comps
 from .fx import FxRate, FxTable
 from .identity import ListingSignals, resolve
+from .models import EvidenceType
+from .read import Point, apply_read, read_points
 from .verify import filter_comps
 from .workflow import evaluate
 
@@ -62,21 +64,42 @@ def run(listing: dict, obs_csv: Path | None, now: datetime, allow_synthetic: boo
                 st.add_fx(r, now=now)
             except ImmutableViolation:
                 pass                  # a conflicting rate for the same source and time: keep the first
-    comps, rejected, prices = [], [], []
+    comps, rejected, prices, rd = [], [], [], None
     if ident.printing:
         pool = st.observations_for(ident.printing.id, as_of=now) if st is not None else observations
         report["comp_pool"] = {"source": "store" if st is not None else "csv", "observations": len(pool)}
-        comps, rejected = select_comps(pool, ident.printing.id, as_of=now, include_synthetic=allow_synthetic,
-                                       grade_company=listing.get("grade_company"), grade=listing.get("grade"))
-        comps, failed = filter_comps(comps, pool, now)
+        history, rejected = select_comps(pool, ident.printing.id, as_of=now, include_synthetic=allow_synthetic,
+                                         grade_company=listing.get("grade_company"), grade=listing.get("grade"),
+                                         limit=None)
+        history, failed = filter_comps(history, pool, now)
         rejected = rejected + failed
-        for c in comps:
-            prices.append(fx.convert(c.original_amount, c.currency, home, c.event_time))
+        home_of = []
+        for c in history:
+            home_of.append(fx.convert(c.original_amount, c.currency, home, c.event_time))
+        points = [Point(c.event_time, p, c.source, "sold") for c, p in zip(history, home_of)]
+        pid = ident.printing.id
+        for o in pool:
+            exact = (o.printing_candidates == (pid,) and not o.is_lot and o.quantity == 1
+                     and o.status == "VALID" and o.event_time <= now)
+            if not exact:
+                continue
+            if o.evidence_type == EvidenceType.ACTIVE_ASKING:
+                points.append(Point(o.event_time, fx.convert(o.original_amount, o.currency, home, o.event_time), o.source, "ask"))
+            elif o.evidence_type == EvidenceType.AGGREGATE_ESTIMATE:
+                points.append(Point(o.event_time, fx.convert(o.original_amount, o.currency, home, o.event_time), o.source, "index"))
+        rd = read_points(points, now)
+        comps, prices = history[:10], home_of[:10]
     report["comps"] = [{"id": c.id, "date": c.event_time.isoformat(), "source": c.source, "type": c.evidence_type.value,
                         "amount": str(c.original_amount), "currency": c.currency, "home": str(p), "url": c.source_url,
                         "synthetic": c.synthetic_fixture} for c, p in zip(comps, prices)]
     report["rejected_evidence"] = rejected
     sc = scenarios_from_comps(prices)
+    if rd is not None:
+        sc = apply_read(rd, sc)
+    if rd is not None:
+        report["market_read"] = {"mark": str(rd.mark) if rd.mark is not None else None,
+                                 "stress": str(rd.stress) if rd.stress is not None else None,
+                                 "flags": list(rd.flags), "listings": rd.listings, "why": list(rd.why)}
     report["exit_scenarios"] = {k: (str(v) if v is not None else None) for k, v in sc.__dict__.items()}
     ceiling, sens, inp = None, None, None
     if sc.conservative is not None:
@@ -104,7 +127,8 @@ def run(listing: dict, obs_csv: Path | None, now: datetime, allow_synthetic: boo
                         "expires_at": ev.expires_at.isoformat(), "human_action": "pending YES/WAIT/NO"}
     if st is not None:
         from .store import compute_valuation, valuation_inputs
-        vin = valuation_inputs(prices, inp)
+        refused = sc.abstain_reason if sc.method == "read" and sc.conservative is None else None
+        vin = valuation_inputs(prices, inp, rd.mark if rd and rd.mark is not None else None, refused)
         sid = st.save_snapshot(listing_ref=listing["listing_ref"], now=now, expires_at=ev.expires_at,
                                stage=ev.stage.value, printing_ids=[p.id for p in ident.candidates],
                                payload={"report": report, "valuation_inputs": vin,

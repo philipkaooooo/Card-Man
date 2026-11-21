@@ -16,10 +16,10 @@ from tests.real_catalog import real_catalog
 NOW = datetime(2026, 11, 1, tzinfo=timezone.utc)
 RC = real_catalog()
 CAT = Catalog(list(RC.families.values()), RC.printings, edition_rules={"Legend of Blue Eyes White Dragon": ["1st", "Unlimited"]})
-LOB = next(p for p in CAT.by_code["LOB-EN001"] if p.product_name == "Legend of Blue Eyes White Dragon")
+LOB = next(p for p in CAT.by_code["LOB-001"] if p.product_name == "Legend of Blue Eyes White Dragon")
 LOB_1ST = f"{LOB.id}|ed:1st"
-TITLE = "Blue-Eyes White Dragon LOB-EN001 1st Edition Ultra Rare"
-VERIFIED = {"printed_set_code": "LOB-EN001", "verified_edition": "1st", "verified_product": "Legend of Blue Eyes White Dragon"}
+TITLE = "Blue-Eyes White Dragon LOB-001 Ultra Rare"
+VERIFIED = {"printed_set_code": "LOB-001", "verified_edition": "1st", "verified_product": "Legend of Blue Eyes White Dragon"}
 
 
 def fx_get(url):
@@ -258,7 +258,7 @@ def test_opportunity_pages_render_the_engine_queue(tmp_path):
     h = view_opportunities(st, NOW + timedelta(minutes=2), "tok", "USD", "open")
     assert "ebay:BUY" in h and "Last check" in h and "Expected profit" in h
     d = view_opportunity(st, "ebay:BUY", NOW + timedelta(minutes=2), "tok", "USD")
-    assert "Every possibility" in d and "Confirm from the card itself" in d and "LOB-EN001" in d
+    assert "Every possibility" in d and "Confirm from the card itself" in d and "LOB-001" in d
     assert "$" in d                     # engine TWD amounts shown in USD at the stored rate
 
 

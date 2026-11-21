@@ -433,10 +433,13 @@ def deal_model(st: Store, sid: str, now: datetime, want: str = "USD") -> dict:
     comps = rep.get("comps", [])
     comp_rows = [{"date": datetime.fromisoformat(c["date"]), "home": Decimal(str(c["home"])), "type": c["type"],
                   "source": c["source"], "synthetic": bool(c.get("synthetic"))} for c in comps]
+    from .read import Point as ReadPoint, read_points
+    market = read_points([ReadPoint(c["date"], c["home"], c["source"], "sold") for c in comp_rows], created)
     ci = (snap.get("valuation_inputs") or {}).get("ceiling_inputs")
     ident = rep.get("identity", {})
     adv = advise(ci=ci, ask=ask_home, ceiling=ceiling, scen=scen, comps=comp_rows, valued_at=created, gates=gates,
-                 identity_status=ident.get("status"), money=lambda x, rnd="near": D(x, rnd), gate_todo=GATE_NEXT)
+                 identity_status=ident.get("status"), money=lambda x, rnd="near": D(x, rnd), gate_todo=GATE_NEXT,
+                 abstain=sc.get("abstain_reason"))
 
     # evidence points in the display currency
     points, unplotted, rejected = [], 0, []
@@ -481,7 +484,8 @@ def deal_model(st: Store, sid: str, now: datetime, want: str = "USD") -> dict:
             "adv": adv, "ci": ci, "points": points, "refs": refs, "unplotted": unplotted, "comps": comps,
             "rejected": rejected, "expired": expired, "valid": ok, "invalid_why": why, "bc": bc,
             "synthetic": any(c.get("synthetic") for c in comps),
-            "printing": (ident.get("candidates") or [None])[0] if ident.get("status") == "RESOLVED" else None}
+            "printing": (ident.get("candidates") or [None])[0] if ident.get("status") == "RESOLVED" else None,
+            "read": market}
 
 
 def gate_detail(g: dict, rep: dict, lst: dict, D: "Disp", ask_home, ceiling, created: datetime) -> str:
@@ -608,7 +612,7 @@ def view_deals(st: Store, now: datetime, want: str, show_synthetic: bool = False
                '<th>Room under pay-up-to</th><th class="n">Return at ask</th><th class="n">Profitable vs sales</th>'
                '<th>Confidence</th><th>Checks</th><th>Valued</th><th>Decision</th></tr>'
                + "".join(rows) + '</table></div>'
-               '<p class="muted" style="margin:8px 0 0">Return at ask assumes resale at the low end of recent sales. '
+               '<p class="muted" style="margin:8px 0 0">Return at ask uses the resale the pay-up-to price was built on. '
                '"Profitable vs sales": in how many of the recent sales you would have made money at the ask. '
                'Checks: exact printing, authenticity, enough sales, price, listing still live.</p></section>')
     return "".join(out)
@@ -655,6 +659,32 @@ def view_deal(st: Store, sid: str, now: datetime, token: str, want: str) -> str:
            f'{when(meta["expires_at"])} · '
            f'{"<span class=good>✓ math replays exactly</span>" if rp["matches"] else "<span class=bad>✕ replay mismatch</span>"}'
            '</p>']
+    rd = rep.get("market_read") or None
+    if rd and (rd.get("mark") or rd.get("why")):
+        bits = [f"Mark {D(rd['mark'])}" if rd.get("mark") else "No mark"]
+        if rd.get("stress"):
+            bits.append(f"stress print {D(rd['stress'])}")
+        if rd.get("listings"):
+            bits.append(f"{rd['listings']} exact listings")
+        if rd.get("flags"):
+            bits.append(", ".join(rd["flags"]))
+        if rd.get("mark") and m["ceiling"] is not None:
+            lead = "Pay-up-to uses this mark as the resale."
+        elif m["ceiling"] is None:
+            lead = "No mark, so there is no pay-up-to."
+        else:
+            lead = "No mark was stored. The pay-up-to on this page is the older sale window."
+        out.append('<section><h2>What the sales support</h2><p class="why">' + e(lead) + " "
+                   + e(" · ".join(bits)) + '</p><ul class="why">'
+                   + "".join(f"<li>{e(line)}</li>" for line in rd.get("why") or []) + "</ul></section>")
+    elif m.get("read") is not None and (m["read"].mark is not None or m["read"].why):
+        live = m["read"]
+        bits = [f"Mark {D(live.mark)}" if live.mark is not None else "No mark"]
+        if live.stress is not None:
+            bits.append(f"stress print {D(live.stress)}")
+        if live.flags:
+            bits.append(", ".join(live.flags))
+        out.append('<section><h2>What the sales support</h2><p class="why">' + e(" · ".join(bits)) + '</p></section>')
     if D.note:
         out.append(f'<div class="note">{e(D.note)}</div>')
     if m["expired"]:

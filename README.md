@@ -101,6 +101,42 @@ Paste a title and description as the seller wrote them (English or Japanese) wit
 - Market signals: price shifts, volume spikes, regional gaps that survive costs, sellers listing a lot at once.
 - Pricing (`pricing.py`): recency- and trust-weighted quantiles, a robust trend that can lower (never raise) the
   estimate for the expected time to sell, liquidity, chance of loss and a max buy at a set confidence.
+- Market read (`read.py`): this mark is the resale the pay-up-to price and the engine's max-buy use.
+  Eight or more sales in 14 days set it at their median, even if the month before was higher. Fewer fresh
+  sales, and falling, set it at the low of the last three. One or two fresh sales under 85% of the prior
+  month set it at the lowest of those. A live ask under that replaces it. The listing being bought is not
+  that ask. An index more than 12% above recent sales is discarded. A source with one sale cannot veto a
+  source with three or more. If the sources that do have a run disagree, the spread is not one price, or
+  nothing sold in 45 days, there is no pay-up-to: the last-10 window is not used instead. A small settled
+  sample with no such flag still uses its own low sale. The prior month stays in the history. A cross-posted
+  sale has to match within 0.1% and one day. Listing counts add only this printing.
+- The keyword scanner (`market_live.py`, `spread.py`) does not run. A search mixes printings and a scraped
+  tile is not a sale. `python -m cardman.tcgplayer --product 21792` pulls that product's asks. Each row
+  already names its printing, condition and language. The label is **2x**, **buy**, **watch** or **pass**.
+  2x means the cautious exit, after Level 1-4 fees, returns at least twice the all-in. buy clears the
+  all-in and is not a double. Blank shipping, a thin book, or no cleared sales stays watch. An ask above
+  the exit is pass. A row is stored only when those three fields are present, and a listing id never
+  moves to a different card. Asks the pull did not return are not invented.
+  `python -m cardman.tcgplayer pokemon charizard --scan` walks a sales-sorted page (48 unless `--size`
+  is set). The search hit is about three asks. When a floor could clear Level 1-4 fees at the page's
+  market, one cheapest page of 50 replaces that sample, and Near Mint is added when that page had none.
+  The sold book is fetched only for what still survives, in parallel, and reused for six hours. 2x and
+  buy from that page are stored. Asks past it are not judged. 2x and buy are not settled returns.
+- A dated post (`post.py`) is not a price source. One photo region can carry one number, and that
+  number is a seller claim. It is attached to a SKU only when the code, variant, condition and
+  language were read from that same region. A worldwide English code stamped 1st is a contradiction.
+  An unsuffixed code that also exists as Asian-English stays quarantined until a product id is given.
+  `LOB-EN001` is not product 21792. Scored against that SKU's own exit, the quote is the book, a copy
+  of the mixed market, the high day, the older half, or just off. A damaged LOB-001 quoted at 119
+  repeats the 119.14 market; the damaged exit is 19. None of these is a sale, and a caption that
+  says sold is not a receipt. A number outside the photo prices nothing.
+  What the seller wrote is logged as the stated edition and condition, under the official set name.
+  It is not a check. `python -m cardman.labels LOB-001` and `python -m cardman.labels LOB-EN001`
+  are the name search: LOB-001 is The Legend of Blue Eyes White Dragon (product 21792, 1st Edition
+  or Unlimited). LOB-EN001 is two Unlimited cards, Worldwide English (476160) and the 25th Anniversary
+  (486054). The set name separates those two. The printed number does not. Neither is 21792.
+  A scan and a pull print that same line: card, set, printed number, then the edition and
+  condition the seller listed. Those last two are not a check.
 - English edition rules (`data/edition_rules.json`, hand-written, to be checked against a source) split edition-less
   English prints into edition scenarios priced from confirmed-edition sales.
 - Costs come from `data/profile.json`; until it exists the engine uses `examples/cost_profiles_ASSUMED.json`.
@@ -109,21 +145,63 @@ Paste a title and description as the seller wrote them (English or Japanese) wit
 
 ### Run
 ```
-pip install pytest && python -m pytest -q                      # 179 pass
+pip install pytest && python -m pytest -q                      # 250 pass
 python -m cardman.sources                                       # re-probe every source
 python -m cardman.identity_cache sync                           # clone/update YAML Yugi, sync cache
 python -m cardman.slice examples/identity_only_LB-01.json examples/manual_import_TEMPLATE.csv
 python -m cardman.store --store data/store/evidence.sqlite import my_sales.csv   # accumulate comps
 python -m cardman.slice listing.json --store data/store/evidence.sqlite          # value from the store
 python -m cardman.ui --store data/store/evidence.sqlite                          # http://127.0.0.1:8765
+python -m cardman.tcgplayer --product 21792                                 # every ask for one card, labeled and stored
+python -m cardman.tcgplayer pokemon charizard --scan --size 16              # sales-sorted; cheap page, then history only if a floor could clear fees
+python -m cardman.tcgplayer yugioh "LOB-001" --html lob.html                  # same-SKU asks, the trend, and a chart of the bucket lows
+python -m cardman.post examples/post_region_TEMPLATE.jsonl                   # a quote is a claim; the template is synthetic
+python -m cardman.labels LOB-001                                            # official name; not LOB-EN001
+python -m cardman.labels LOB-EN001                                          # two sets share this number
 # the Scan page needs the identity cache: python -m cardman.identity_cache sync
 ```
 
 ### Remaining gaps
-1. Network policy: open the hosts above, then test YGOResources (edition-level data) and YGOPRODeck live.
-2. EN edition (1st / Unlimited / Limited) and release dates: not in YAML Yugi; EN prints abstain until a
-   source with editions is reachable. Asian-English prints: no source yet (codes are quarantined on sight).
-3. eBay app keys for Browse; account exports for Product Research; no sold-data source is reachable yet,
-   so there are no real market observations.
-4. FX rates are still per listing file; comps from older runs need a rate near their sale date in that file.
-5. Image/OCR, grading sensitivities, Taiwan/JP sources, portfolio outcomes: not started.
+1. Editions. YAML, YGOResources and YGOPRODeck still have no 1st / Unlimited / Limited field. YGOResources
+   prints are `{code, date}` only (live revision 33276). Yugipedia galleries are the check, and they are not a
+   stamp photo. Worldwide English is Unlimited-only, NA is 1st and Unlimited, for LOB, MRD, Spell Ruler, PSV,
+   LON, LOD, DCR and IOC. `editions_for` drops 1st from a code whose suffix starts with EN
+   (`LOB-EN001`). The NA code with no language segment (`LOB-001`) keeps both. A verified 1st
+   on `LOB-EN001` is a CONFLICT, not a price. Magic Ruler redirects to Spell Ruler; the
+   1st-edition NA gallery is titled Magic Ruler. `code_key` still collapses `LOB-EN001` onto
+   `LOB-001` so a date can be found. `is_original` True means that key holds the earliest
+   listed date, not that the card is a 1st Edition.
+2. Asian-English. YGOResources does have AE code and date. On the vintage samples those codes collide with
+   English: `LOB-001`, `SDK-001`, `LOB-005`, `SDY-006`, `MFC-000`. Quarantine stays. Do not merge them into
+   the EN namespace.
+3. Japanese prints on YGOResources are not the catalog. Konami ids 4007, 4041 and 4766 each returned one
+   2026 anniversary row; the pinned YAML has 58, 55 and 37. No normalizer until a ja payload is complete.
+   yaml-yugi HEAD `d3b999759760` vs the pin: English rows on the six pinned cards did not change, and no
+   edition field appeared. Three new JA ultras did: `MVB1-JP010` Blue-Eyes, `MVB1-JP027` Dark Magician,
+   `MVB1-JP028` Dark Magician Girl, all the Dark Side of Dimensions 10th Anniversary Movie Box.
+4. Solds. Browse, when keyed, is asks and bids. Product Research has no developer endpoint. Nothing here
+   added a settled comp. TCGplayer's public product page is readable without a partner key
+   (`cardman/tcgplayer.py`): a product is one card in one set, a SKU is condition × variant × language.
+   `marketPrice` is not a sale and, on LOB-001 product 21792, one number covers 1st Edition and Unlimited.
+   `screen` buys the cheapest ask of one SKU and exits at the next ask of that same SKU after a
+   Level 1-4 fee (10.75% capped at $75, plus 2.5% and $0.30). A gap that dies is NO. A gap that
+   survives is LOOK, and it is still not a return. The per-listing sales table is signed and a
+   naked `latestsales` path stays closed. The chart is not: `price/history/{id}/detailed` returns
+   cleared low and high per SKU when called the way the product page calls it. `judge` buys an ask
+   only against that same variant, condition and language. A low under 20% of its own bucket's
+   market price is thrown out. Fewer than three usable sales is THIN, not a buy. The exit is the
+   transaction-weighted median of the bucket lows, so one high day cannot set it. On the 2026-11-21
+   pull, Unlimited Damaged cleared ten times, five of them at 19, and the 26.60 day is not the exit:
+   the 19.87 ask is NO after fees. 1st Edition Near Mint cleared twice in a year, at 14.99 and 4000,
+   so it is not a book. Unlimited Near Mint's median low was 119.99 and the 161.99 ask is NO.
+   Market minus lowest on 21792 is a misread. The cheap ask is Damaged Unlimited.
+   LOB-EN001 25th (486054) and Worldwide English (476160) are different products. Pokémon is line 3 and
+   Pokémon Japan is line 85; neither is fed to the Yu-Gi-Oh resolver. PriceCharting and YGOPRODeck
+   `card_prices` / `set_price` are not sales either.
+5. FX. A mid print, not wired into the store: USD/TWD 32.986624 and USD/JPY 159.74951 at 2026-11-20 00:02:32
+   UTC (open.er-api). Frankfurter JPY 159.97 on 2026-11-19, and no TWD. `fx.py` rejects a rate older than
+   one day for the timestamp being converted. Old comps still need a rate near their own sale date.
+6. Costs. `data/profile.json` is still absent. The assumed file uses the published eBay.com CCG rate,
+   13.25%, plus the $0.40 per-order fee as 13.19 TWD at the print above. Scan's US-unit costs use $0.40
+   directly. 13.25% of buyer-paid shipping is still not in either model. These are not a measured Taipei payout.
+7. Still closed: PSA cert (403), Yahoo Auctions closed results (500), OCR (needs images and `swiftc`).

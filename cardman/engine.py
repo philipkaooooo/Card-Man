@@ -363,7 +363,7 @@ class Engine:
         p = an.identity.printing
         if not p or op.status == REJECTED or r.kind not in ("ask", "bid", "auction"):
             return None
-        val = book.value(p.id, r.grade_company, r.grade)
+        val = book.value(p.id, r.grade_company, r.grade, ignore_key=r.key)
         if len(val.sales) < int(self.profile.get("min_comps", 3)) or not val.estimate:
             return None
         scenario = next((s for s in op.scenarios if s.printing_id == p.id), None)

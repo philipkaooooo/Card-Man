@@ -27,11 +27,13 @@ def sales_at(*prices, step=10):
 
 def test_same_sale_on_two_sources_counts_once_and_keeps_the_stronger():
     a = sale(1, 1000, 10, source="auction_house", et=ET.INDEPENDENT_TRANSACTION)
-    b = sale(2, 1005, 9, source="aggregator", et=ET.MARKETPLACE_MARKED_SOLD)
+    b = sale(2, "1000.40", 9, source="aggregator", et=ET.MARKETPLACE_MARKED_SOLD)
     v = verify.assess([a, b], NOW)
     assert verify.CROSS_POST_DUP in v["o2"].flags and v["o2"].excluded and not v["o1"].excluded
     kept, rejected = verify.filter_comps([a, b], [a, b], NOW)
     assert [o.id for o in kept] == ["o1"] and "verification" in rejected[0][1]
+    distinct = sale(3, 1005, 9, source="other_book", et=ET.MARKETPLACE_MARKED_SOLD)
+    assert verify.CROSS_POST_DUP not in verify.assess([a, distinct], NOW)["o3"].flags
 
 
 def test_outlier_is_flagged_not_silently_deleted():
@@ -93,6 +95,16 @@ def test_learned_bias_scales_every_number():
     s = sales_at(1000, 1100, 1200, 900, 1050, 980, 1020)
     a, b = pricing.estimate(s, NOW), pricing.estimate(s, NOW, bias=0.9)
     assert b.mid == pytest.approx(a.mid * 0.9) and b.low == pytest.approx(a.low * 0.9)
+
+
+def test_a_mark_not_the_high_sample_sets_max_buy():
+    s = sales_at(1000, 1100, 1200, 900, 1050, 980, 1020, 1010, 1030, 990)
+    e = pricing.estimate(s, NOW)
+    kw = dict(target_return=D("0.2"), capital_cost_monthly=D("0.01"))
+    plain = pricing.risk_view(s, e, D(500), ACQ, EXIT, **kw)
+    marked = pricing.risk_view(s, e, D(500), ACQ, EXIT, exit_gross=D("700"), **kw)
+    assert marked.max_buy < plain.max_buy
+    assert marked.max_buy < 700
 
 
 def test_risk_view_prices_a_good_and_a_bad_ask_differently():

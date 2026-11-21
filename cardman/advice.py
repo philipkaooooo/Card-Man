@@ -74,7 +74,7 @@ def _floor(v: Decimal) -> Decimal:
 
 def advise(*, ci: dict | None, ask: Decimal | None, ceiling: Decimal | None, scen: dict,
            comps: list[dict], valued_at: datetime, gates: list[dict], identity_status: str | None,
-           money: Money, gate_todo: dict[str, str]) -> Advice:
+           money: Money, gate_todo: dict[str, str], abstain: str | None = None) -> Advice:
     """comps: [{"date": datetime, "home": Decimal, "type": str, "source": str, "synthetic": bool}]"""
     failed = [g for g in gates if not g["passed"]]
     adv = Advice(call="NONE", title="")
@@ -135,7 +135,7 @@ def advise(*, ci: dict | None, ask: Decimal | None, ceiling: Decimal | None, sce
             # step-by-step math for the "pay up to" number
             mult = 1 + req
             adv.steps = [
-                ("Conservative resale", "low end of the usable sales", money(cons)),
+                ("Conservative resale", "the resale the pay-up-to price uses", money(cons)),
                 ("minus selling costs", f"{p * 100:.2f}% + {money(f)} fixed", "− " + money(cons - net(cons))),
                 ("= net from the resale", "", money(net(cons))),
                 ("÷ target multiple", f"1 + {ci['target_return'] * 100:.0f}% target + "
@@ -186,8 +186,8 @@ def advise(*, ci: dict | None, ask: Decimal | None, ceiling: Decimal | None, sce
         adv.because.append("Different printings of the same card sell for very different prices, so no price can be "
                            "trusted until the printing is pinned down.")
     elif ceiling is None:
-        adv.call, adv.title = "HOLD", "Hold off: there are not enough sales to price it."
-        adv.because.append(f"A buy price needs at least 3 recent sales of this exact printing; there are {n}.")
+        adv.call, adv.title = "HOLD", "Hold off: no buy price."
+        adv.because.append(abstain or f"A buy price needs at least 3 recent sales of this exact printing; there are {n}.")
     elif ask is None:
         adv.call, adv.title = "NONE", f"Pay up to {money(ceiling, 'down')}."
         adv.because.append("No asking price is recorded for this listing.")
@@ -217,7 +217,7 @@ def advise(*, ci: dict | None, ask: Decimal | None, ceiling: Decimal | None, sce
         if adv.breakeven_resale is not None and adv.cushion_pct is not None and adv.call in ("BUY", "CHECK", "OFFER"):
             if adv.cushion_pct > 0:
                 adv.because.append(f"You only lose money if it resells under {money(adv.breakeven_resale, 'up')}, "
-                                   f"{adv.cushion_pct * 100:.0f}% below the cheapest recent sale.")
+                                   f"{adv.cushion_pct * 100:.0f}% below the resale this price uses.")
         if adv.per_sale:
             adv.because.append(f"Against each of the last {len(adv.per_sale)} sales: profit in {adv.wins}, "
                                f"target hit in {adv.hits}.")

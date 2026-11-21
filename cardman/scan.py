@@ -3,8 +3,8 @@
 This is the opportunity hunter in front of the deal page. It does not decide anything a human must
 decide; it ranks what to look at and names the one piece of evidence that would settle the most money.
 
-Valuation per candidate printing uses the store's clean sales (same rules as the deal page: exact
-printing, sold evidence only, no lots, grade and condition matched, nothing after the decision time).
+Valuation per candidate printing uses the store's clean sales (exact printing, no lots, grade and
+condition matched, nothing after the decision time). A live exact ask can cap the mark. An index cannot set it.
 """
 from __future__ import annotations
 
@@ -18,7 +18,8 @@ from .evidence import select_comps
 from .fx import FxTable, StaleRateError
 from .identity import Catalog, IdentityResult, resolve
 from .listing_text import ParsedListing, parse_listing
-from .models import IdentityStatus, Printing, Region
+from .models import IdentityStatus, Printing, Region, EvidenceType
+from .read import Point, apply_read, read_points
 
 SCAN_VERSION = "scan-0.1.0"
 MIN_SALES = 3
@@ -109,18 +110,35 @@ def plausible_printings(parsed: ParsedListing, ident: IdentityResult, catalog: C
 def _value(store, p: Printing, parsed: ParsedListing, fx: FxTable, home: str, now: datetime, costs: dict,
            ask_home: Decimal | None, include_synthetic: bool) -> CandidateValue:
     pool = store.observations_for(p.id, as_of=now)
-    comps, _ = select_comps(pool, p.id, as_of=now, include_synthetic=include_synthetic,
-                            grade_company=parsed.grade_company, grade=parsed.grade)
-    prices, skipped, src = [], 0, {}
-    for c in comps:
+    history, _ = select_comps(pool, p.id, as_of=now, include_synthetic=include_synthetic,
+                              grade_company=parsed.grade_company, grade=parsed.grade, limit=None)
+    comps = history[:10]
+    points, prices, skipped, src = [], [], 0, {}
+    show = {c.id for c in comps}
+    for c in history:
         try:
             v = fx.convert(c.original_amount, c.currency, home, c.event_time)
         except StaleRateError:
             skipped += 1
             continue
-        prices.append(v)
-        src.setdefault(c.source, []).append(v)
-    sc = scenarios_from_comps(prices, min_comps=MIN_SALES)
+        points.append(Point(c.event_time, v, c.source, "sold"))
+        if c.id in show:
+            prices.append(v)
+            src.setdefault(c.source, []).append(v)
+    for o in pool:
+        exact = (o.printing_candidates == (p.id,) and not o.is_lot and o.quantity == 1
+                 and o.status == "VALID" and o.event_time <= now)
+        if not exact or o.evidence_type not in (EvidenceType.ACTIVE_ASKING, EvidenceType.AGGREGATE_ESTIMATE):
+            continue
+        try:
+            amt = fx.convert(o.original_amount, o.currency, home, o.event_time)
+        except StaleRateError:
+            skipped += 1
+            continue
+        kind = "ask" if o.evidence_type == EvidenceType.ACTIVE_ASKING else "index"
+        points.append(Point(o.event_time, amt, o.source, kind))
+    rd = read_points(points, now)
+    sc = apply_read(rd, scenarios_from_comps(prices, min_comps=MIN_SALES))
     newest = comps[0].event_time if comps else None
     per_month = None
     if len(comps) >= 2:

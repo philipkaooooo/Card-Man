@@ -73,13 +73,12 @@ def assess(observations: list[MarketObservation], as_of: datetime) -> dict[str, 
     kept: list[MarketObservation] = []
     absorbed: set[tuple[str, str]] = set()
     for o in sales:
-        twin = next((k for k in kept if k.source != o.source and (k.id, o.source) not in absorbed and k.currency == o.currency
-                     and abs(k.original_amount - o.original_amount) <= k.original_amount * Decimal('0.01')
-                     and abs(k.event_time - o.event_time) <= timedelta(days=2)
+        twin = next((k for k in kept if k.source != o.source and k.currency == o.currency
+                     and abs(k.original_amount - o.original_amount) <= max(k.original_amount, o.original_amount) * Decimal("0.001")
+                     and abs(k.event_time - o.event_time) <= timedelta(days=1)
                      and (k.seller_ref == o.seller_ref or not k.seller_ref or not o.seller_ref)), None)
         if twin:
-            absorbed.add((twin.id, o.source))
-            flag(o, CROSS_POST_DUP, f"Same price within 2 days as {twin.id} on {twin.source}.")
+            flag(o, CROSS_POST_DUP, f"Same price within a day as {twin.id} on {twin.source}.")
         else:
             kept.append(o)
 

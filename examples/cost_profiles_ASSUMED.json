@@ -1,5 +1,5 @@
 {
- "_note": "ASSUMED starting costs in home currency, not your real numbers. Copy to data/profile.json and correct them: every max-buy price depends on these. Your recorded outcomes then show how far off they are.",
+ "_note": "ASSUMED starting costs in home currency, not measured payouts. Copy to data/profile.json and correct them: every max-buy price depends on these. Recorded outcomes then show the miss. platform_fee_pct 0.1325 matches the published eBay.com CCG final-value rate (13.25% to $7500, 2.35% above; checked 2026-11-21). platform_fee_fixed is the published per-order fee of $0.40, converted at USD/TWD 32.986624 (2026-11-20T00:02:32Z) to 13.19 TWD. Orders of $10 or under are $0.30; this file uses $0.40. The percent still applies to buyer-paid shipping and tax, which this file cannot see. On the INTL route, a 2-month hold and target 0.20, the 13.19 TWD moves the ceiling about 10 TWD. 13.25% of $20 charged shipping is about 87 TWD and is still missing. Do not copy this file to data/profile.json until the payout is measured.",
  "home_currency": "TWD",
  "target_return": "0.20",
  "capital_cost_monthly": "0.01",
@@ -11,7 +11,7 @@
   "TW":   {"payment_fx_spread_pct": "0", "inbound_shipping": "60", "import_duty_pct": "0"},
   "INTL": {"payment_fx_spread_pct": "0.015", "inbound_shipping": "600", "import_duty_pct": "0"}
  },
- "exit": {"platform_fee_pct": "0.1325", "outbound_shipping": "300", "returns_reserve_pct": "0.02", "payout_fx_spread_pct": "0.015"},
+ "exit": {"platform_fee_pct": "0.1325", "platform_fee_fixed": "13.19", "outbound_shipping": "300", "returns_reserve_pct": "0.02", "payout_fx_spread_pct": "0.015"},
  "grading": {"company": "PSA", "cost_home": "1500", "months_added": 3, "prior": null},
  "ebay_queries": ["yugioh 1st edition ultra rare", "yugioh LOB 1st edition", "yugioh japanese ultimate rare", "yugioh quarter century secret rare", "yugioh psa 10", "yugioh lot vintage"]
 }
