@@ -239,3 +239,51 @@ def test_any_listing_with_a_different_photo_loses_the_card_and_its_price(tmp_pat
     assert apply(raw, "yahoo_auctions_jp:x")["photo"] == "none"
 
 
+
+
+def _solid_png(rgb):
+    import struct
+    import zlib
+    raw = b"".join(b"\x00" + bytes(rgb) * 16 for _ in range(16))
+
+    def chunk(tag, data):
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+
+    ihdr = struct.pack(">IIBBBBB", 16, 16, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
+
+
+def _photo_pair(tmp_path, seller_rgb, catalog_arts, iid="1218199929469"):
+    from cardman.listing_detail import cache_key
+    listing = tmp_path / "listing"
+    k = cache_key(iid, 0, "s")
+    (listing / k[:2]).mkdir(parents=True)
+    (listing / k[:2] / f"{k}.img").write_bytes(_solid_png(seller_rgb))
+    images = tmp_path / "images"
+    (images / "artwork" / "small").mkdir(parents=True)
+    for pc, rgb in catalog_arts.items():
+        (images / "artwork" / "small" / f"{pc}.jpg").write_bytes(_solid_png(rgb))
+    return listing, images
+
+
+def test_an_ambiguous_or_uncomparable_photo_keeps_the_engine_price(tmp_path):
+    from cardman.photo_match import apply
+    raw = D(kinds=["RIGHT_PRINT_ONLY"], printing_id="p:x@89631139|p:x@99999999", expected_profit=100.0, best_profit=100.0,
+            scenarios=[sc(pid="p:x@89631139"), sc(pid="p:x@99999999")])
+    yellow, dim, purple = (250, 220, 40), (220, 190, 70), (30, 10, 40)
+    # compared, but neither clearly the card nor clearly not: the listing keeps its prices
+    root, imgs = _photo_pair(tmp_path / "a", dim, {"89631139": yellow})
+    out = apply(raw, "ebay_browse:EBAY_US:1218199929469", listing_root=root, image_root=imgs)
+    assert out["photo"] == "unsure" and out["printing_id"] and out["expected_profit"] == 100.0
+    # one candidate clearly agrees even though another does not: it is that card
+    root, imgs = _photo_pair(tmp_path / "b", yellow, {"89631139": purple, "99999999": yellow})
+    out = apply(raw, "ebay_browse:EBAY_US:1218199929469", listing_root=root, image_root=imgs)
+    assert out["photo"] == "match" and out["expected_profit"] == 100.0
+    # every picture we can compare says different card: unbound
+    root, imgs = _photo_pair(tmp_path / "c", purple, {"89631139": yellow})
+    out = apply(raw, "ebay_browse:EBAY_US:1218199929469", listing_root=root, image_root=imgs)
+    assert out["photo"] == "clash" and out["printing_id"] is None and out["expected_profit"] is None
+    # a photo with no official picture behind either candidate: abstain, prices stay
+    root, imgs = _photo_pair(tmp_path / "d", purple, {})
+    out = apply(raw, "ebay_browse:EBAY_US:1218199929469", listing_root=root, image_root=imgs)
+    assert out["photo"] == "none" and out["expected_profit"] == 100.0

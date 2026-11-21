@@ -130,10 +130,6 @@ def verdict(d: dict, status: str, M) -> Verdict:
         return Verdict(PASS, "Skip",
                        "The seller's photo is not the card the title names. That card's price does not apply to this listing.",
                        "Low", ["The photo and the catalog picture are different cards"], None, None)
-    if d.get("photo") == "unconfirmed":
-        return Verdict(CHECK, "2x Check",
-                       "The seller's photo has not been matched to one card, so no price is attached.",
-                       "Low", ["A photo is on the listing and it does not confirm the title"], None, None)
     sus = suspect(d)
     if sus:
         return Verdict(PASS, "Skip", sus, "Low", why, None, None)
@@ -289,7 +285,7 @@ def pair_art(key: str, d: dict, photos: dict | None, *, big: bool = False) -> st
 
 
 def _shot(official: str, real: str, photo: str | None, *, big: bool = False) -> str:
-    word = {"match": "Same card", "clash": "Different card", "unconfirmed": "Not sure"}.get(photo or "")
+    word = {"match": "Same card", "clash": "Different card", "unsure": "Not sure", "none": "No official picture yet"}.get(photo or "")
     note = f'<small>{e(word)}</small>' if word else ""
     size = " big" if big else ""
     return (f'<span class="shot{size}"><button type="button" class="shot-off" data-reveal '
@@ -506,7 +502,7 @@ def view_one(st, cards, key: str, now: datetime, token: str, M, profile: dict | 
         actions.append(f'<a class="btn" href="{e(url)}" target="_blank" rel="noreferrer noopener">Open the listing ↗</a>')
     if v.code == CHECK or not settled:
         actions.append('<a class="btn ghost" href="#confirm">Tell us which version it is</a>')
-    if c and d.get("photo") in (None, "none", "match"):   # a clash or an unconfirmed photo is not this card's page
+    if c and d.get("photo") != "clash":   # a photo that is clearly another picture is not this card's page
         pid = (top or claim).get("printing_id")
         href = card_href(pc) + (("?v=" + quote(pid, safe="")) if pid else "")
         actions.append(f'<a class="btn ghost" href="{e(href)}">See this card\'s prices</a>')

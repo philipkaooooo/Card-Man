@@ -345,32 +345,33 @@ def _jpeg(data: bytes) -> tuple[int, int, list[int]] | None:
 def apply(d: dict, key: str = "", db=None, *, listing_root: Path | None = None, image_root: Path | None = None) -> dict:
     """A listing is one catalog card only when its photo is that card's picture.
 
-    No seller photo, no official picture to compare against, or a photo that cannot be decoded:
-    the check abstains. The listing stays exactly as the engine stored it (photo "none").
-    A photo that is clearly a different picture: unbound (photo "clash"). The card's price is removed.
-    A photo that can be compared and does not clearly match: unbound (photo "unconfirmed").
-    An abstaining check never strips a price: not having the official picture is our gap, not the seller's lie.
+    Both pictures have to be on hand before anything is said, so the check scores every printing the listing
+    could be and speaks only about what it compared. A clear clash against all of them unbinds the listing
+    (photo "clash") and the card's price is removed. A photo that agrees with a candidate (photo "match"),
+    one that is ambiguous against every candidate ("unsure"), or one that could not be compared at all
+    ("none") leaves the listing exactly as the engine stored it: our uncertainty is not the seller's lie.
     """
     if "LOT" in (d.get("kinds") or []):
         return {**d, "photo": "none"}
     iid = _item_id(key, d)
     seller = _listing_bytes(iid, listing_root) if iid else None
-    has_photo = seller is not None or _listed_images(db, iid)
-    if not has_photo:
+    if seller is None:
         return {**d, "photo": "none"}
-    pcs = _passcodes(d)
-    if len(pcs) != 1:
-        return _unbind(d, "unconfirmed")
-    catalog = _catalog_bytes(pcs[0], image_root)
-    if seller and catalog:
-        verdict = _judged(seller, catalog, db)
-        if verdict == "match":
+    verdict = None
+    for pc in _passcodes(d):
+        catalog = _catalog_bytes(pc, image_root)
+        if not catalog:
+            continue
+        v = _judged(seller, catalog, db)
+        if v == "match":
             return {**d, "photo": "match"}
-        if verdict == "clash":
-            return _unbind(d, "clash")
-        if verdict == "unsure":
-            return _unbind(d, "unconfirmed")
-    return {**d, "photo": "none"}       # no official picture, or a picture that will not decode: the check abstains
+        if v == "unsure":
+            verdict = "unsure"
+        elif v == "clash" and verdict != "unsure":
+            verdict = "clash"
+    if verdict == "clash":
+        return _unbind(d, "clash")
+    return {**d, "photo": verdict or "none"}
 
 
 _VERDICT_CODE = {"match": 0, "clash": 1, "unsure": 2}
@@ -452,14 +453,3 @@ def _catalog_bytes(passcode: str, root: Path | None) -> bytes | None:
         if path.exists() and path.stat().st_size > 32:
             return path.read_bytes()
     return None
-
-
-def _listed_images(db, item_id: str | None) -> bool:
-    if db is None or not item_id:
-        return False
-    try:
-        from .listing_detail import get
-        return bool(get(db, item_id).get("images"))
-    except Exception:
-        return False
-

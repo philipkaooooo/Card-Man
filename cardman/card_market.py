@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 
-INDEX_VERSION = "photo-match-3"
+INDEX_VERSION = "photo-match-4"
 _PC = re.compile(r"@([^@|]+)")   # passcode (Yu-Gi-Oh!) or pkm-<card id> (Pokémon); see games.py
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS card_listing (passcode TEXT NOT NULL, key TEXT NOT NULL, card_prob REAL NOT NULL, printing_id TEXT,
@@ -47,7 +47,7 @@ def ensure_index(st) -> None:
         # A price guide is not what a card sells for: a guide-only listing is never filed under the card.
         # No photo yet: the listing stays, as the engine stored it. A lot stays counted; it is never one card's photo.
         kinds = d.get("kinds") or []
-        if d.get("photo") in ("clash", "unconfirmed") or ("REFERENCE_GAP" in kinds and "LOT" not in kinds):
+        if d.get("photo") == "clash" or ("REFERENCE_GAP" in kinds and "LOT" not in kinds):
             continue
         sc = d.get("scenarios") or []
         total = sum(s.get("weight") or 0 for s in sc)

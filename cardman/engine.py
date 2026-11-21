@@ -329,7 +329,7 @@ class Engine:
         op = evaluate_listing(r, an, book, self.catalog_for(r.game), self.ledger, now)
         from .photo_match import apply
         guarded = apply({**op.to_dict(), "listing_id": r.listing_id, "game": r.game}, key, self.db)
-        if guarded.get("photo") in ("clash", "unconfirmed"):
+        if guarded.get("photo") == "clash":
             op.printing_id = None
             op.expected_profit = None
             op.kinds = [k for k in op.kinds if k not in ("REFERENCE_GAP", "UNDERPRICED", "RIGHT_PRINT_ONLY")]
@@ -337,7 +337,7 @@ class Engine:
                 op.kinds.append("PHOTO_REJECTED")
         snapshot = prev[2] if prev else None
         escalated = (self._escalate(r, an, op, verified, authenticity, book, now, rep)
-                     if r.game == "ygo" and guarded.get("photo") not in ("clash", "unconfirmed") else None)
+                     if r.game == "ygo" and guarded.get("photo") != "clash" else None)
         if escalated:
             snapshot, op.stage, op.status = escalated
             rep.escalated += 1
@@ -347,7 +347,7 @@ class Engine:
                 "shipping": str(r.shipping) if r.shipping is not None else None, "price": str(r.price),
                 "currency": r.currency, "grade_company": r.grade_company, "grade": r.grade, "bids": r.bids,
                 "photo": guarded.get("photo")}
-        if guarded.get("photo") in ("clash", "unconfirmed"):
+        if guarded.get("photo") == "clash":
             body["scenarios"] = guarded["scenarios"]
             body["printing_id"] = None
             body["expected_profit"] = None
