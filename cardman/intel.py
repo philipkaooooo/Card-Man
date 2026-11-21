@@ -152,8 +152,11 @@ def analyze(title: str, catalog: Catalog, *, description: str = "", verified: di
     sig_title = title
     fam_ids, fuzzy = catalog.family_matches(title)
     # Named card vs the code's real owner: the classic misidentification, in either direction.
+    name_confirms = False
     if seller_code:
         owners = {p.family_id for p in catalog.by_code[seller_code]}
+        # An exact name match on the code's own card: two independent seller statements pointing at one printing.
+        name_confirms = bool(fam_ids and not fuzzy and (fam_ids & owners))
         # A seller who shortens a long name ("Blue-Eyes Ultimate Dragon" for "Blue-Eyes Ultimate Dragon, the God-Surpassing
         # Servant") named the code's own card: identify it as that card, not as a mistake.
         named = {normalize_name(catalog.families[f].names.get(lang) or "") for f in fam_ids if f in catalog.families for lang in ("en", "ja")}
@@ -188,6 +191,7 @@ def analyze(title: str, catalog: Catalog, *, description: str = "", verified: di
 
     photo_code = next((c for c in ocr_codes if c in catalog.by_code), None)
     sig = {"title": sig_title, "seller_set_code": photo_code or seller_code,
+           "code_confirmed_by_name": name_confirms,
            "seller_rarity": parsed.rarities[0] if parsed.rarities else None,
            "seller_edition": parsed.editions[0] if len(parsed.editions) == 1 else None,
            "slab_cert": parsed.cert, "is_multi_card": parsed.is_lot}
