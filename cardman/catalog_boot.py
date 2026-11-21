@@ -121,4 +121,10 @@ def ensure(log=print) -> list[str]:
         raise
     write_status("ready" if not missing() else "error",
                  "each version keeps its own guide price" if not missing() else "a catalog is still missing")
+    try:
+        if "pkm" not in missing() and "master" not in missing():
+            from .characters import ensure as index_characters
+            index_characters(log=log)
+    except Exception as x:
+        log(f"characters: {type(x).__name__}: {x}")
     return built

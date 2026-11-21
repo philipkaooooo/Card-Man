@@ -297,10 +297,11 @@ CURRENCIES = ("USD", "TWD")
 
 ON = ' class="on" aria-current="page"'
 # One header, five places. Every older page still exists and belongs to one of them.
-NAV = (("home", "Home", "/"), ("listings", "Listings", "/opportunities"), ("cards", "Cards", "/search"),
-       ("add", "Add sales", "/import"), ("settings", "Settings", "/settings"))
+NAV = (("characters", "Characters", "/pkm/characters"), ("home", "Home", "/"), ("listings", "Listings", "/opportunities"),
+       ("cards", "Cards", "/search"), ("add", "Add sales", "/import"), ("settings", "Settings", "/settings"))
 NAV_OF = {"home": "home", "opportunities": "listings", "search": "cards", "import": "add", "costs": "settings", "settings": "settings",
-          "deals": "settings", "scan": "settings", "evidence": "settings", "results": "settings", "engine": "settings"}
+          "deals": "settings", "scan": "settings", "evidence": "settings", "results": "settings", "engine": "settings",
+          "characters": "characters"}
 SHELL_CSS = """
 body{display:flex;flex-direction:column;min-height:100vh}
 header.top{position:sticky;top:0;z-index:30;background:color-mix(in srgb,var(--surface) 92%,transparent);backdrop-filter:blur(8px);
@@ -327,6 +328,7 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     from .ui_chart import CHART_CSS
     from .ui_icons import EFFECTS_CSS, ICON_CSS, SPRITE
     from .ui_decide import DECIDE_CSS
+    from .ui_characters import CHAR_CSS
     theme = theme if theme in THEMES else "market"
     where = NAV_OF.get(nav, "")
     links = "".join(f'<a href="{h}"{ON if k == where else ""}>{e(t)}</a>' for k, t, h in NAV)
@@ -343,7 +345,7 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     tz = datetime.now().astimezone().strftime("UTC%z")
     return (f'<!doctype html><html lang="en" data-theme="{"vault" if theme == "vault" else "auto"}"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)} · CardMan</title>'
-            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{CHART_CSS}{ICON_CSS}{EFFECTS_CSS}{SHELL_CSS}{DECIDE_CSS}</style></head><body>{SPRITE}'
+            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{CHART_CSS}{ICON_CSS}{EFFECTS_CSS}{SHELL_CSS}{DECIDE_CSS}{CHAR_CSS}</style></head><body>{SPRITE}'
             + scope_links(f'<header class="top"><a class="logo" href="/">CardMan</a><nav class="main" aria-label="Main">{links}</nav>{hsearch}'
                           f'{games}{curs}</header><main class="page">{crumb}{flash}{body}</main>', game) +
             f'<footer class="foot">Private to this Mac · times {e(tz)} · press <kbd>/</kbd> to search</footer>'
@@ -1867,6 +1869,16 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     url = idx.image_url("pkm-" + cid, "large" if size == "large" else "small") if idx else None
                     body, ctype = images.pkm(cid, url, "large" if size == "large" else "small")
                     return self._send(200, body, ctype)
+                if len(parts) == 2 and parts[0] == "icon" and parts[1].endswith(".png") and parts[1][:-4].isdigit():
+                    from .characters import icon
+                    body, ctype = icon(int(parts[1][:-4]))
+                    return self._send(200, body, ctype)
+                if parts == ["characters"]:
+                    from .characters import characters, ensure as index_characters
+                    if idx is not None:
+                        index_characters(idx.cat)
+                    from .ui_characters import view_zone
+                    return self._page("characters", "Characters", view_zone(characters()), qs)
                 if parts == ["api", "suggest"]:
                     return self._send(200, json.dumps(idx.suggest(qs.get("q", [""])[0][:80])).encode(), "application/json; charset=utf-8")
                 if len(parts) >= 2 and parts[0] == "card" and _re.fullmatch(r"[a-z0-9.]{2,16}-[A-Za-z0-9]{1,8}", parts[1]):
@@ -1891,12 +1903,16 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                             st, idx, key, now, self._cur(), book=_book(st, now), catalog=idx.cat, home=_engine_home(st), token=token,
                             filters={k: qs.get(k, [""])[0][:300] for k in ("platform", "graded", "type", "v")}), qs, crumb=("Cards", "/pkm/search"))
                 if len(parts) == 2 and parts[0] == "character" and _re.fullmatch(r"[a-z0-9-]{1,48}", parts[1]):
-                    from .character import find_species
-                    who = find_species(idx.cat, parts[1]) if idx else None
-                    if not who:
+                    from .characters import card_log, ensure as index_characters, get, trend
+                    if idx is not None:
+                        index_characters(idx.cat)
+                    row = get(parts[1])
+                    if not row:
                         raise KeyError(parts[1])
-                    from .ui_home import view_character
-                    return self._page("search", who, view_character(idx, who, token, now), qs, crumb=("Cards", "/pkm/search"))
+                    from .ui_characters import view_one
+                    cards = card_log(row[0])
+                    return self._page("characters", row[1], view_one(row, cards, trend(cards), token, now), qs,
+                                      crumb=("Characters", "/pkm/characters"))
                 if parts == ["search"]:
                     from .ui_home import Money, view_search
                     q = qs.get("q", [""])[0][:120]

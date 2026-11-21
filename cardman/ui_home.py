@@ -200,7 +200,6 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", a
              '<a href="/search?q=%E9%9D%92%E7%9C%BC%E3%81%AE%E7%99%BD%E9%BE%8D">青眼の白龍</a> · <a href="/search?q=LOB-EN001">LOB-EN001</a></p></section>'))]
     if assumed_costs:
         out.append('<p class="note slimnote">"Worth paying up to" prices use <b>starter</b> costs. <a href="/settings">Set your real fees and shipping</a>.</p>')
-    out.append(_markets(idx, game))
 
     if "opportunity" in have and EM is not None:
         from .ui_decide import deal_card, first_seen, rail
