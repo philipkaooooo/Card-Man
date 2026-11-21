@@ -222,6 +222,8 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", a
     if assumed_costs:
         out.append('<p class="note slimnote">"Worth paying up to" prices use <b>starter</b> costs. <a href="/settings">Set your real fees and shipping</a>.</p>')
     out.append(_markets(idx, game))
+    from .ui_market import movement_strip
+    out.append(movement_strip(st, game, M))
 
     if "opportunity" in have and EM is not None:
         from .ui_decide import deal_card, first_seen, rail

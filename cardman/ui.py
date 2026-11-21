@@ -37,6 +37,7 @@ STATUSES = ("CANCELLED", "REFUNDED", "RELISTED", "INVALID", "DUPLICATE", "VALID"
 MAX_UPLOAD = 5 * 1024 * 1024
 MAX_PAGES_UPLOAD = 80 * 1024 * 1024     # saved results pages are a few MB each, several at once
 MIN_COMPS = 3
+COVERAGE_ROWS = 300      # overview table cap: one row per printing is 39k rows and half a minute of HTML otherwise
 SYN = ' <span class="tag syn">synthetic</span>'
 
 GATES = ("identity", "authenticity", "comps", "ceiling", "fresh_availability")
@@ -296,11 +297,12 @@ CURRENCIES = ("USD", "TWD")
 
 
 ON = ' class="on" aria-current="page"'
-# One header, five places. Every older page still exists and belongs to one of them.
+# One header, seven places. Every older page still exists and belongs to one of them.
 NAV = (("characters", "Characters", "/pkm/characters"), ("home", "Home", "/"), ("listings", "Listings", "/opportunities"),
-       ("cards", "Cards", "/search"), ("add", "Add sales", "/import"), ("settings", "Settings", "/settings"))
-NAV_OF = {"home": "home", "opportunities": "listings", "search": "cards", "import": "add", "costs": "settings", "settings": "settings",
-          "characters": "characters",
+       ("market", "Market", "/market"), ("cards", "Cards", "/search"), ("add", "Add sales", "/import"),
+       ("settings", "Settings", "/settings"))
+NAV_OF = {"home": "home", "opportunities": "listings", "market": "market", "search": "cards", "import": "add",
+          "costs": "settings", "settings": "settings", "characters": "characters",
           "deals": "settings", "scan": "settings", "evidence": "settings", "results": "settings", "engine": "settings"}
 SHELL_CSS = """
 body{display:flex;flex-direction:column;min-height:100vh}
@@ -326,6 +328,7 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     from .ui_listing import LISTING_CSS
     from .ui_settings import SETTINGS_CSS
     from .ui_chart import CHART_CSS
+    from .ui_market import MARKET_CSS
     from .ui_icons import EFFECTS_CSS, ICON_CSS, SPRITE
     from .ui_decide import DECIDE_CSS
     from .zone import CHAR_CSS
@@ -345,7 +348,7 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     tz = datetime.now().astimezone().strftime("UTC%z")
     return (f'<!doctype html><html lang="en" data-theme="{"vault" if theme == "vault" else "auto"}"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)} · CardMan</title>'
-            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{CHART_CSS}{ICON_CSS}{EFFECTS_CSS}{SHELL_CSS}{DECIDE_CSS}{CHAR_CSS}</style></head><body>{SPRITE}'
+            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{CHART_CSS}{ICON_CSS}{EFFECTS_CSS}{SHELL_CSS}{DECIDE_CSS}{CHAR_CSS}{MARKET_CSS}</style></head><body>{SPRITE}'
             + scope_links(f'<header class="top"><a class="logo" href="/">CardMan</a><nav class="main" aria-label="Main">{links}</nav>{hsearch}'
                           f'{games}{curs}</header><main class="page">{crumb}{flash}{body}</main>', game) +
             f'<footer class="foot">Private to this Mac · times {e(tz)} · press <kbd>/</kbd> to search</footer>'
@@ -893,15 +896,14 @@ def reason_group(r: str) -> str:
 
 
 def view_evidence(st: Store, now: datetime, printing: str | None, include_synthetic: bool) -> str:
-    printings = st.printing_ids()
-    opts = '<option value="">All printings</option>' + "".join(
-        f'<option{" selected" if p == printing else ""}>{e(p)}</option>' for p in printings)
     out = ['<h1>Evidence</h1><p class="sub">Market records in the store and whether a valuation made now would use '
            'them.</p><form class="inline" method="get" action="/evidence">'
-           f'<label>Printing<select name="printing">{opts}</select></label>'
+           f'<label>Printing<input name="printing" value="{e(printing or "")}" size="52" '
+           f'placeholder="p:EN_TCG:LOB-EN001:ultra-rare@89631139"></label>'
            f'<label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" name="syn" value="1"'
            f'{" checked" if include_synthetic else ""}>count synthetic fixtures</label><button>Show</button></form>']
-    if not printings:
+    have = st.db.execute("SELECT COUNT(DISTINCT printing_id) FROM observation_printing").fetchone()[0]
+    if not have:
         out.append('<section><p class="muted">No observations stored. Use Import to add a manual CSV.</p></section>')
         return "".join(out)
 
@@ -913,12 +915,14 @@ def view_evidence(st: Store, now: datetime, printing: str | None, include_synthe
         return comps, v
 
     if not printing:
-        rows = []
         stats = []
-        for pid in printings:
-            obs = st.observation_list(pid, as_of=now)
-            comps, _ = verdicts(pid)
+        for pid, n in st.db.execute(
+                "SELECT p.printing_id, COUNT(DISTINCT o.id) FROM observation_printing p JOIN observation o ON o.id=p.obs_id "
+                "GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT ?", (COVERAGE_ROWS,)):
+            obs = st.observations_for(pid, as_of=now)
+            comps, _ = select_comps(obs, pid, as_of=now, include_synthetic=include_synthetic)
             stats.append((pid, obs, comps))
+        rows = []
         scale = max([MIN_COMPS * 2] + [len(c) for _, _, c in stats])
         for pid, obs, comps in sorted(stats, key=lambda s: -len(s[2])):
             cur = {c.currency for c in comps}
@@ -931,7 +935,8 @@ def view_evidence(st: Store, now: datetime, printing: str | None, include_synthe
                         f'<span>{len(comps)}</span></span></td><td class="n">{e(med)}</td>'
                         f'<td class="d">{day(last) if last else "—"}</td></tr>')
         out.append('<section><h2>Coverage by printing</h2><p class="why">How many usable sales each printing has. '
-                   f'A valuation needs {MIN_COMPS} (the black tick); fewer means no buy ceiling.</p>'
+                   f'A valuation needs {MIN_COMPS} (the black tick); fewer means no buy ceiling. '
+                   f'The {COVERAGE_ROWS} printings with the most records are shown; type any printing id above for the rest.</p>'
                    '<div class="wrap"><table><tr><th>Printing</th><th class="n">Records</th><th>Usable sales</th>'
                    '<th class="n">Median sale</th><th>Latest sale</th></tr>' + "".join(rows) + '</table></div></section>')
         return "".join(out)
@@ -1893,6 +1898,9 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     EM = EngineMoney(st, _engine_home(st), self._cur(), now) if _engine_ready(st) else None
                     return self._page("home", "Pokémon", view_home(st, idx, now, self._cur(), self._theme(), assumed_costs=assumed, EM=EM,
                                                                      game="pkm"), qs)
+                if parts == ["market"]:
+                    from .ui_market import view_market
+                    return self._page("market", "Market", view_market(st, now, self._cur(), _engine_home(st), qs, game="pkm"), qs)
                 if parts == ["opportunities"]:
                     from .ui_listing import view_list
                     if not _engine_ready(st):
@@ -2072,6 +2080,9 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     self._page("import", "Import", view_import_pages(st, token, qs.get("batch", [""])[0] or None,
                                                                      catalog() if catalog else None, csv_form,
                                                                      bookmark=bookmarklet(port, capture_key()), searches=[]), qs)
+                elif parts == ["market"]:
+                    from .ui_market import view_market
+                    self._page("market", "Market", view_market(st, now, self._cur(), _engine_home(st), qs, game="ygo"), qs)
                 elif parts == ["opportunities"]:
                     if not _engine_ready(st):
                         self._page("opportunities", "Listings", view_opportunities(st, now, token, self._cur(), "open"), qs)

@@ -80,6 +80,8 @@ class RawListing:
         if self.kind not in KINDS:
             raise ValueError(f"unknown listing kind {self.kind!r}")
         self.market = self.market or market_for(self.source, self.currency)
+        from . import conditions
+        self.condition = conditions.normalize(self.condition)   # eBay's "Used" is not a card condition
 
     @property
     def key(self) -> str:

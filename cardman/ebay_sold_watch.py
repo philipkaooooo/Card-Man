@@ -40,8 +40,59 @@ class WatchReport:
     upper_bounds_recorded: int = 0
     skipped_price_changed: int = 0
     gone: int = 0
+    pinned: int = 0
     errors: int = 0
     calls_today: int = 0
+
+
+def _thin_printings(db, need: int = 3) -> set[str]:
+    """Printings with fewer than `need` real sales: the ones another sold count changes a price on."""
+    return {pid for pid, n in db.execute(
+        "SELECT p.printing_id, COUNT(DISTINCT o.id) FROM observation_printing p JOIN observation o ON o.id=p.obs_id "
+        "WHERE o.synthetic=0 AND o.evidence_type IN ('MARKETPLACE_MARKED_SOLD','ACCEPTED_OFFER','INDEPENDENT_TRANSACTION') "
+        "GROUP BY 1 HAVING COUNT(DISTINCT o.id) < ?", (need,))}
+
+
+def _has(db, name: str) -> bool:
+    return db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None
+
+
+def resolved_printing(db, listing_key: str) -> str | None:
+    """The one printing the engine settled on for a tracked listing, if it did: card resolution first, then route."""
+    if _has(db, "card_listing"):
+        row = db.execute("SELECT printing_id FROM card_listing WHERE key=? AND printing_prob>=0.9 AND printing_id IS NOT NULL "
+                         "ORDER BY printing_prob DESC LIMIT 1", (listing_key,)).fetchone()
+        if row:
+            return row[0]
+    if _has(db, "opportunity"):
+        row = db.execute("SELECT printing_id FROM opportunity WHERE key=? AND printing_id IS NOT NULL", (listing_key,)).fetchone()
+        if row:
+            return row[0]
+    return None
+
+
+def pin_units(engine, now: datetime, *, limit: int = 600) -> int:
+    """Attach each unclaimed sold-count unit to the printing its own listing resolved to. A unit sold from a listing the
+    engine nailed down is that listing's printing; the unit's own title parse stays as recorded. Skipped when the listing
+    is unresolved, or when the resolution is not among the unit's candidates - a disagreement is not evidence."""
+    db = engine.db
+    if not (_has(db, "listing") and _has(db, "observation_identity")):
+        return 0
+    rows = db.execute(
+        "SELECT o.id, l.key FROM observation o JOIN listing l ON l.listing_id=o.listing_id AND l.source LIKE 'ebay_browse%' "
+        "WHERE o.source='ebay_browse:sold_count' AND o.synthetic=0 "
+        "AND NOT EXISTS (SELECT 1 FROM observation_identity i WHERE i.obs_id=o.id) GROUP BY o.id LIMIT ?", (limit,)).fetchall()
+    pinned = 0
+    for obs_id, key in rows:
+        pid = resolved_printing(db, key)
+        if not pid:
+            continue
+        cands = engine.store.original(obs_id).printing_candidates
+        if cands and pid not in cands:
+            continue
+        engine.store.confirm_identity(obs_id, pid, actor="engine:listing_resolution", now=now)
+        pinned += 1
+    return pinned
 
 
 def _snapshot(item: dict) -> tuple[int | None, Decimal | None, str | None, bool, str]:
@@ -59,6 +110,7 @@ def check(engine, now: datetime, *, browse: EbayBrowse | None = None, budget: in
     db.executescript(_SCHEMA)
     rep = WatchReport()
     day = now.date().isoformat()
+    rep.pinned = pin_units(engine, now)
     used = (db.execute("SELECT n FROM ebay_api_calls WHERE day=?", (day,)).fetchone() or (0,))[0]
     budget = max(0, min(budget, DAILY_CAP - used))
     if not budget:
@@ -72,10 +124,16 @@ def check(engine, now: datetime, *, browse: EbayBrowse | None = None, budget: in
     since = (now - timedelta(days=14)).isoformat()
     due = (now - RECHECK_AFTER).isoformat()
     # Rechecks first, fastest sellers first: only a second look at a listing can show a sale. New listings get the rest.
-    rows = db.execute(
-        "SELECT w.listing_key, w.item_id FROM ebay_sold_watch w JOIN listing l ON l.key=w.listing_key "
+    # A listing whose printing still lacks MIN_SALES comps jumps the queue: that is where another sale changes a price.
+    wanted = (budget * 2) // 3
+    thin = _thin_printings(db)
+    cands = db.execute(
+        "SELECT w.listing_key, w.item_id, o.printing_id FROM ebay_sold_watch w JOIN listing l ON l.key=w.listing_key "
+        "LEFT JOIN opportunity o ON o.key=w.listing_key "
         "WHERE w.status<>'GONE' AND w.sold_qty IS NOT NULL AND w.checked_at<=? AND l.ended_at IS NULL AND l.last_seen>=? "
-        "ORDER BY w.sold_qty DESC, w.checked_at LIMIT ?", (due, since, (budget * 2) // 3)).fetchall()
+        "ORDER BY w.sold_qty DESC, w.checked_at LIMIT ?", (due, since, wanted * 3)).fetchall()
+    first = [(k, i) for k, i, pid in cands if pid in thin]
+    rows = (first + [(k, i) for k, i, pid in cands if pid not in thin])[:wanted]
     rows += db.execute(
         "SELECT l.key, l.listing_id FROM listing l LEFT JOIN ebay_sold_watch w ON w.item_id=l.listing_id "
         "WHERE l.source LIKE 'ebay_browse%' AND l.ended_at IS NULL AND l.last_seen>=? AND w.item_id IS NULL "
@@ -136,6 +194,7 @@ def record_units(engine, key: str, item_id: str, before: int, after: int, price:
     """One write-once record per unit sold between the last check and this one, priced at the listing's price."""
     from .intel import analyze
     title = item.get("title") or ""
+    desc = item.get("shortDescription") or ""
     verified = engine.reviews(key)
     verified.pop("authenticity_ok", None)
     try:
@@ -146,9 +205,14 @@ def record_units(engine, key: str, item_id: str, before: int, after: int, price:
         if getattr(engine, "pkm", None) is None:
             return 0
         from .pkm_intel import analyze as pkm_analyze
-        cands = tuple(p.id for p in pkm_analyze(title, engine.pkm, verified=verified).identity.candidates[:200])
+        an = pkm_analyze(title, engine.pkm, description=desc, verified=verified)
     else:
-        cands = tuple(p.id for p in analyze(title, engine.catalog, verified=verified).identity.candidates[:200])
+        an = analyze(title, engine.catalog, description=desc, verified=verified)
+    cands = tuple(p.id for p in an.identity.candidates[:200])
+    from . import conditions
+    parsed = getattr(an, "parsed", None)
+    cond = conditions.normalize(getattr(parsed, "condition", None))
+    gc, gr = getattr(parsed, "grade_company", None), getattr(parsed, "grade", None)
     kind = EvidenceType.SELLER_CLAIM if best_offer else EvidenceType.MARKETPLACE_MARKED_SOLD
     note = ("sold between checks; listing also takes Best Offers, so the real price may be lower (upper bound only)" if best_offer
             else "sold between checks at the unchanged listing price, from eBay's sold count")
@@ -158,9 +222,13 @@ def record_units(engine, key: str, item_id: str, before: int, after: int, price:
             id=f"ebay_qty:{item_id}:{unit}", evidence_type=kind, source="ebay_browse:sold_count", original_amount=price, currency=cur,
             event_time=now, capture_time=now, source_url=item.get("itemWebUrl") or f"https://www.ebay.com/itm/{item_id}",
             printing_candidates=cands, listing_id=item_id, source_event_id=f"{item_id}:{unit}", raw_ref=ref,
+            grade_company=gc, grade=gr, observed_condition=cond,
             upstream_lineage=(f"ebay:{item_id}:{unit}",), status="VALID", status_reason=note)
         if engine.store.add_observation(o, now=now):
             added += 1
+            pid = resolved_printing(engine.db, key)
+            if pid and (not cands or pid in cands):
+                engine.store.confirm_identity(o.id, pid, actor="engine:listing_resolution", now=now)
             with engine.db:
                 engine.db.execute("CREATE TABLE IF NOT EXISTS import_row (batch TEXT NOT NULL, file TEXT, site TEXT, key TEXT NOT NULL, "
                                   "obs_id TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY (batch, obs_id))")

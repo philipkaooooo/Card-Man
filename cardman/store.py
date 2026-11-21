@@ -279,12 +279,35 @@ class Store:
         return self.db.execute("SELECT status, reason, actor, recorded_at FROM observation_status WHERE obs_id=?"
                                " ORDER BY rowid", (obs_id,)).fetchall()
 
+    def effective_many(self, ids: list[str], as_of: datetime | None = None) -> list[MarketObservation]:
+        """The same as calling `effective` on each id, with the status and identity lookups batched per 500 records."""
+        out: list[MarketObservation] = []
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            qm = ",".join("?" * len(chunk))
+            cutoff = " AND recorded_at<=?" if as_of is not None else ""
+            extra = (_ts(as_of),) if as_of is not None else ()
+            stat = {r[0]: (r[1], r[2]) for r in self.db.execute(
+                f"SELECT obs_id, status, reason FROM observation_status WHERE obs_id IN ({qm}){cutoff} ORDER BY rowid",
+                (*chunk, *extra))}
+            ident = {r[0]: r[1] for r in self.db.execute(
+                f"SELECT obs_id, printing_id FROM observation_identity WHERE obs_id IN ({qm}){cutoff} ORDER BY rowid",
+                (*chunk, *extra))}
+            for oid in chunk:
+                o = self.original(oid)
+                if oid in stat:
+                    o = MarketObservation(**{**o.__dict__, "status": stat[oid][0], "status_reason": stat[oid][1]})
+                if oid in ident:
+                    o = MarketObservation(**{**o.__dict__, "printing_candidates": (ident[oid],)})
+                out.append(o)
+        return out
+
     def observations_for(self, printing_id: str, *, as_of: datetime) -> list[MarketObservation]:
         """Observations captured by `as_of` that name this printing, with status as known then."""
         ids = [r[0] for r in self.db.execute(
             "SELECT o.id FROM observation o JOIN observation_printing p ON p.obs_id=o.id"
             " WHERE p.printing_id=? AND o.capture_time<=? ORDER BY o.event_time", (printing_id, _ts(as_of)))]
-        return [self.effective(i, as_of) for i in ids]
+        return self.effective_many(ids, as_of)
 
     # -- snapshots -----------------------------------------------------------------------------
     def save_snapshot(self, *, listing_ref: str, payload: dict, printing_ids: list[str],

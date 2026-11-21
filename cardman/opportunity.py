@@ -39,6 +39,9 @@ class Valuation:
     estimate: pricing.PriceEstimate | None
     competing: int = 0
     competing_ids: frozenset = frozenset()
+    condition: str | None = None       # the condition this valuation was restated to
+    same_condition: int = 0            # comps already in that condition, used unchanged
+    adjusted: int = 0                  # comps in another or unknown condition, restated
 
 
 class PriceBook:
@@ -56,24 +59,38 @@ class PriceBook:
         table = self.fx.table([(currency, self.home)], [at])
         return table.convert(amount, currency, self.home, at)
 
-    def value(self, printing_id: str, grade_company: str | None = None, grade: str | None = None) -> Valuation:
-        k = (printing_id, grade_company, grade)
+    def value(self, printing_id: str, grade_company: str | None = None, grade: str | None = None,
+              condition: str | None = None) -> Valuation:
+        """Sold-only value of one exact printing / grade. `condition` restates raw sales to the copy being priced:
+        same-condition sales are used unchanged when there are enough of them; otherwise the rest are adjusted by the
+        condition ladder and the valuation says so. Graded slabs ignore condition."""
+        from . import conditions
+        condition = conditions.normalize(condition) if not grade_company else None
+        k = (printing_id, grade_company, grade, condition)
         if k in self.cache:
             return self.cache[k]
         pool = self.store.observations_for(printing_id, as_of=self.now)
         comps, _ = select_comps(pool, printing_id, grade_company=grade_company, grade=grade, as_of=self.now)
         comps, _ = filter_comps(comps, pool, self.now)
+        same = [c for c in comps if condition and conditions.normalize(c.observed_condition) == condition]
+        if condition and len(same) >= pricing.MIN_SALES:
+            comps = same
         trust = assess(pool, self.now)
         sales = []
         for c in comps:
             try:
-                sales.append(pricing.Sale(c.event_time, float(self.to_home(c.original_amount, c.currency, c.event_time)),
-                                          trust[c.id].trust if c.id in trust else 1.0))
+                price = float(self.to_home(c.original_amount, c.currency, c.event_time))
             except StaleRateError as x:
                 self.notes.append(f"no FX for {c.id}: {x}")
+                continue
+            if condition:
+                price = conditions.adjust(price, conditions.normalize(c.observed_condition), condition)
+            sales.append(pricing.Sale(c.event_time, price, trust[c.id].trust if c.id in trust else 1.0))
         est = pricing.estimate(sales, self.now, bias=self.bias)
         ids = self._competing(pool, est) if est else frozenset()
-        v = Valuation(printing_id, sales, comps, est, len(ids), ids)
+        same_used = sum(1 for c in comps if condition and conditions.normalize(c.observed_condition) == condition)
+        v = Valuation(printing_id, sales, comps, est, len(ids), ids, condition, same_used,
+                      len(comps) - same_used if condition else 0)
         self.cache[k] = v
         return v
 
@@ -222,9 +239,11 @@ def evaluate_listing(raw: RawListing, an: ListingAnalysis, book: PriceBook, cata
     japanese = (getattr(an.parsed, "language", None) == "ja" or raw.market == "JP" or "japan" in low_all
                 or any("\u3040" <= ch <= "\u30ff" for ch in raw.title))
     scenarios: list[Scenario] = []
+    restated = 0
     for pid in ranked:
         p = by_id[pid]
-        v = book.value(pid, raw.grade_company, raw.grade)
+        v = book.value(pid, raw.grade_company, raw.grade, raw.condition)
+        restated += v.adjusted
         sc = Scenario(pid, _label(p), weights.get(pid, 1 / max(1, len(by_id))), "none", n_sales=len(v.sales))
         if v.estimate:
             rv = pricing.risk_view(v.sales, v.estimate, ask_home, acq, ex, target_return=tgt, capital_cost_monthly=cap,
@@ -261,6 +280,11 @@ def evaluate_listing(raw: RawListing, an: ListingAnalysis, book: PriceBook, cata
                 except StaleRateError:
                     pass
         scenarios.append(sc)
+
+    if restated:
+        from .conditions import label as condition_label
+        reasons.append(f"Some comparables were sold in another condition; their prices were restated to "
+                       f"{condition_label(raw.condition)} using the condition ladder.")
 
     # Money figures come from sold evidence only. A guide price is a lead (below), never an expected profit.
     priced = [s for s in scenarios if s.profit_mid is not None and s.basis == "sales"]
