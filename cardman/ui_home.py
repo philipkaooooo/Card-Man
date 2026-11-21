@@ -129,6 +129,62 @@ def _tile(key, title, price, currency, payload, M, *, ask_home=None, sub="", pho
             f'<span class="tl-sub">{sub}</span>{note}</span></a>')
 
 
+def _guide_fns(idx):
+    """A version's own guide price, and its own history. Never another version's."""
+    cat = getattr(idx, "cat", None)
+    guide = getattr(cat, "guide", None)
+    hist = getattr(cat, "guide_history", None)
+    if guide is not None and hist is not None:
+        return guide, hist
+    from .catalog_boot import version_market
+
+    def history(pid):
+        one = version_market(pid)
+        return [(one[1], one[0])] if one else []
+
+    return version_market, history
+
+
+def _own_guides(idx, passcode: str) -> str:
+    """Each version's guide, written out separately. No average, no cheapest-stands-for-the-card."""
+    guide, _ = _guide_fns(idx)
+    bits = []
+    for p in (idx.printings(passcode) or [])[:5]:
+        try:
+            g = guide(p.id)
+        except Exception:
+            g = None
+        if not g:
+            continue
+        name = p.edition or p.rarity or "Version"
+        bits.append(f"{e(name)} {e(charts.fmt(g[0], 'USD'))}")
+    if not bits:
+        return ""
+    more = ""
+    return f'<span class="ct-mkt">{ " · ".join(bits) }{more}<br>guide, not a sale</span>'
+
+
+def _markets(idx, game: str) -> str:
+    """The catalogs and the character markets, on the home, not behind a listing."""
+    if game == "pkm":
+        from .character import slug
+        who = ["Charizard", "Pikachu", "Mew", "Mewtwo", "Umbreon", "Gengar", "Rayquaza", "Lugia",
+               "Blastoise", "Venusaur", "Darkrai", "Gardevoir"]
+        links = "".join(f'<a class="fchip" href="/pkm/character/{e(slug(n))}">{e(n)}</a>' for n in who)
+        n = len(idx.cat) if idx is not None and getattr(idx, "cat", None) is not None else 0
+        count = f"{n:,} Pokémon cards are on this site. " if n else ""
+        return ('<section><h2>Character markets</h2>'
+                f'<p class="sub">{count}Open a character. Every card of it is listed with its own guide price. '
+                'One card is never the price of another.</p>'
+                f'<div class="fchips">{links}</div></section>')
+    who = ["Blue-Eyes White Dragon", "Dark Magician", "Red-Eyes Black Dragon", "Exodia the Forbidden One", "Ash Blossom"]
+    links = "".join(f'<a class="fchip" href="/search?q={e(n.replace(" ", "+"))}">{e(n)}</a>' for n in who)
+    return ('<section><h2>Card markets</h2>'
+            '<p class="sub">Every printing has its own guide price. Open the card, then pick the version. '
+            'A guide is not a sale.</p>'
+            f'<div class="fchips">{links}</div></section>')
+
+
 def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", assumed_costs: bool = True, EM=None, game: str = "ygo") -> str:
     """Search, then the decisions: the rail with live counts, the top Buys, then the 2x Checks. Nothing else."""
     from .ui_listing import BUY, CHECK, WATCH, decisions, row_html
@@ -144,6 +200,7 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", a
              '<a href="/search?q=%E9%9D%92%E7%9C%BC%E3%81%AE%E7%99%BD%E9%BE%8D">青眼の白龍</a> · <a href="/search?q=LOB-EN001">LOB-EN001</a></p></section>'))]
     if assumed_costs:
         out.append('<p class="note slimnote">"Worth paying up to" prices use <b>starter</b> costs. <a href="/settings">Set your real fees and shipping</a>.</p>')
+    out.append(_markets(idx, game))
 
     if "opportunity" in have and EM is not None:
         from .ui_decide import deal_card, first_seen, rail
@@ -213,6 +270,7 @@ def view_search(idx, q: str, st=None, M=None) -> str:
                          f'<span class="ct-name">{e(h.name)}</span>'
                          f'<span class="ct-meta">{e(c.get("set_name") or "")} · {e(c.get("number"))}/{e(c.get("printed_total"))}</span>'
                          f'<span class="ct-meta">{e(c.get("rarity") or "")}{" · " + e((c.get("release") or "")[:4]) if c.get("release") else ""}</span>'
+                         + _own_guides(idx, h.passcode)
                          + (f'<span class="ct-mkt">{mkt[h.passcode][0]} listing{"s" if mkt[h.passcode][0] != 1 else ""} · from {M(mkt[h.passcode][1])}</span>'
                             if h.passcode in mkt and M is not None else "")
                          + (f'<span class="ct-spark">{sparks[h.passcode]}</span>' if h.passcode in sparks else "") + '</a>')
@@ -223,6 +281,7 @@ def view_search(idx, q: str, st=None, M=None) -> str:
                      + f'<span class="ct-meta">{e(c.get("type_line") or c.get("card_type") or "")}{(" · " + e(stat)) if stat else ""}</span>'
                      f'<span class="ct-meta">{len(prints)} printing{"s" if len(prints) != 1 else ""}'
                      + (f' · {e(codes[0])}{" …" if len(codes) > 1 else ""}' if codes else "") + '</span>'
+                     + _own_guides(idx, h.passcode)
                      + (f'<span class="ct-mkt">{mkt[h.passcode][0]} listing{"s" if mkt[h.passcode][0] != 1 else ""} · from {M(mkt[h.passcode][1])}</span>'
                         if h.passcode in mkt and M is not None else "")
                      + (f'<span class="ct-spark">{sparks[h.passcode]}</span>' if h.passcode in sparks else "")
@@ -292,13 +351,13 @@ def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalo
     # Which version to show: the one asked for, else the most sold, else the most listed.
     by_id = {v.id: v for v in all_v}
     chosen = f.get("v") if f.get("v") in by_id else None
-    if chosen is None and all_v:
-        chosen = max(all_v, key=lambda v: (len(getattr(value.get(v.id), "sales", []) or []), seen.get(v.id, 0), len(listed.get(v.id, [])))).id
+    chosen = max(all_v, key=lambda v: (len(getattr(value.get(v.id), "sales", []) or []), seen.get(v.id, 0), len(listed.get(v.id, [])))).id if chosen is None and all_v else chosen
     v = by_id.get(chosen)
-    hist = history_for(st, passcode, all_v, now, cur, home, book, guide=getattr(getattr(idx, "cat", None), "guide_history", None))
+    guide, guide_hist = _guide_fns(idx)
+    hist = history_for(st, passcode, all_v, now, cur, home, book, guide=guide_hist)
 
     picker = _version_picker(passcode, all_v, chosen, seen, listed)
-    price = _price_line(v, value.get(chosen), listed.get(chosen, []), hist, M, guide=getattr(getattr(idx, 'cat', None), 'guide', None))
+    price = _price_line(v, value.get(chosen), listed.get(chosen, []), hist, M, guide=guide)
     ja = c.get("name_ja")
     limits = c.get("limits") or {}
     details = [("Card number", c["passcode"]), ("Konami ID", c.get("konami_id"))] + [

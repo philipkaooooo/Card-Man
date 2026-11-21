@@ -60,14 +60,30 @@ def version_market(pid: str) -> tuple[float, str] | None:
     from .catalog.registry import DB as MASTER
     if not pid or not MASTER.exists():
         return None
+    con = _market_con(MASTER)
+    if con is None:
+        return None
     try:
-        con = sqlite3.connect(f"file:{MASTER}?mode=ro", uri=True)
         row = con.execute("SELECT market, day FROM market_price WHERE pid=? AND source='tcgplayer' AND market IS NOT NULL "
                           "ORDER BY day DESC LIMIT 1", (pid,)).fetchone()
-        con.close()
     except Exception:
         return None
     return (float(row[0]), row[1]) if row else None
+
+
+def _market_con(path):
+    global _MCON
+    try:
+        _MCON
+    except NameError:
+        _MCON = None
+    if _MCON is not None:
+        return _MCON
+    try:
+        _MCON = sqlite3.connect(f"file:{path}?mode=ro", uri=True, check_same_thread=False)
+    except Exception:
+        _MCON = None
+    return _MCON
 
 
 def ensure(log=print) -> list[str]:
