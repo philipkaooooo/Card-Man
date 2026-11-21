@@ -627,7 +627,11 @@ def main(argv: list[str] | None = None) -> None:
                             "card_language": a.language, "authenticity_ok": {"yes": True, "no": False}.get(a.authentic or "")},
                     actor="cli", now=datetime.now(timezone.utc))
     while True:
-        print(json.dumps(asdict(eng.tick()), indent=1, ensure_ascii=False))
+        if a.cmd == "run":
+            with eng.db:
+                eng.db.execute("INSERT OR REPLACE INTO engine_meta VALUES ('loop_heartbeat', ?)", (datetime.now(timezone.utc).isoformat(),))
+                eng.db.execute("INSERT OR REPLACE INTO engine_meta VALUES ('loop_interval_min', ?)", (f"{a.interval / 60:g}",))
+        print(json.dumps(asdict(eng.tick()), indent=1, ensure_ascii=False), flush=True)
         if a.cmd != "run":
             return
         time.sleep(a.interval)

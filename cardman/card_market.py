@@ -31,17 +31,28 @@ def site_of(source: str) -> str:
 
 
 def ensure_index(st) -> None:
+    """Bring the card index up to date with the engine. An unchanged engine means no work; a pass that touched a
+    few listings re-files only those, because a full rebuild per pass is what made a search wait on the engine."""
     st.db.executescript(_SCHEMA)
     have = {r[0] for r in st.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     if "opportunity" not in have:
         return
     marker = INDEX_VERSION + "|" + "|".join(str(x) for x in st.db.execute("SELECT COUNT(*), MAX(updated_at) FROM opportunity").fetchone())
+    newest = st.db.execute("SELECT MAX(updated_at) FROM opportunity").fetchone()[0]
     row = st.db.execute("SELECT v FROM card_listing_meta WHERE k='marker'").fetchone()
     if row and row[0] == marker:
         return
+    version = st.db.execute("SELECT v FROM card_listing_meta WHERE k='version'").fetchone()
+    last = st.db.execute("SELECT v FROM card_listing_meta WHERE k='max_updated'").fetchone()
+    full = not (version and version[0] == INDEX_VERSION and last and last[0])
+    sql = "SELECT key, status, payload_json FROM opportunity" if full else \
+        "SELECT key, status, payload_json FROM opportunity WHERE updated_at > ?"
+    args = () if full else (last[0],)
     rows = []
     from .photo_match import apply
-    for key, status, pj in st.db.execute("SELECT key, status, payload_json FROM opportunity"):
+    touched = []
+    for key, status, pj in st.db.execute(sql, args):
+        touched.append(key)
         d = apply(json.loads(pj), key, st.db)
         # A photo that is clearly not the card, or not clearly it, unbinds the listing: no filing, no price.
         # A price guide is not what a card sells for: a guide-only listing is never filed under the card.
@@ -65,9 +76,15 @@ def ensure_index(st) -> None:
             rows.append((pc, key, w / total, best.get("printing_id"), (best.get("weight") or 0) / w if w else None, best.get("label"),
                          d.get("all_in_home"), status, lot))
     with st.db:
-        st.db.execute("DELETE FROM card_listing")
+        if full:
+            st.db.execute("DELETE FROM card_listing")
+        elif touched:
+            st.db.executemany("DELETE FROM card_listing WHERE key=?", [(k,) for k in touched])
+            st.db.execute("DELETE FROM card_listing WHERE key NOT IN (SELECT key FROM opportunity)")
         st.db.executemany("INSERT OR REPLACE INTO card_listing VALUES (?,?,?,?,?,?,?,?,?)", rows)
         st.db.execute("INSERT OR REPLACE INTO card_listing_meta VALUES ('marker', ?)", (marker,))
+        st.db.execute("INSERT OR REPLACE INTO card_listing_meta VALUES ('version', ?)", (INDEX_VERSION,))
+        st.db.execute("INSERT OR REPLACE INTO card_listing_meta VALUES ('max_updated', ?)", (newest,))
     try:
         from datetime import datetime, timezone
         from .engine import load_profile

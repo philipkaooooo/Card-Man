@@ -127,11 +127,22 @@ def view_settings(st, now: datetime, cur: str, theme: str, profile: dict | None,
     keys = bool(os.environ.get("EBAY_CLIENT_ID") and os.environ.get("EBAY_CLIENT_SECRET"))
     webhook = bool(os.environ.get("EBAY_DELETIONS_URL") and os.environ.get("EBAY_DELETIONS_SECRET"))
     every = engine_status.get("every_min") or 0
-    eng_state = ("checking now" if engine_status.get("running") else f"every {every:g} min while CardMan is open") if every else "only when you press check"
+    beat = _q(st, "SELECT v FROM engine_meta WHERE k='loop_heartbeat'")
+    loop_min = _q(st, "SELECT v FROM engine_meta WHERE k='loop_interval_min'")
+    beat_at = datetime.fromisoformat(str(beat[0])) if beat else None
+    looping = beat_at is not None and (now - beat_at).total_seconds() < 3600
+    eng_state = ("checking now" if engine_status.get("running") else f"every {every:g} min while CardMan is open") if every else (
+        f"every {float(loop_min[0]):g} min in its own process" if looping and loop_min else "only when you press check")
+    eng_detail = f'last check {e(_ago(last[0] if last else None, now))}'
+    if engine_status.get("next"):
+        eng_detail += f' · next in {max(0, (engine_status["next"] - now).total_seconds() / 60):.0f} min'
+    elif looping and loop_min:
+        nxt = beat_at.timestamp() + 60 * float(loop_min[0])
+        eng_detail += f' · next in {max(0, (nxt - now.timestamp()) / 60):.0f} min'
+    if engine_status.get("error"):
+        eng_detail += f' · <span class="bad">{e(engine_status["error"])}</span>'
     rows = [
-        _row("Engine", eng_state, f'last check {e(_ago(last[0] if last else None, now))}'
-             + (f' · next in {max(0, (engine_status["next"] - now).total_seconds() / 60):.0f} min' if engine_status.get("next") else "")
-             + (f' · <span class="bad">{e(engine_status["error"])}</span>' if engine_status.get("error") else ""), bool(last)),
+        _row("Engine", eng_state, eng_detail, bool(last)),
         _row("eBay listings", "on" if (routes.get("ebay") or {}).get("on") else "off",
              e((routes.get("ebay") or {}).get("detail") or ("keys found" if keys else "add your eBay keys to .env")), (routes.get("ebay") or {}).get("on")),
         _row("eBay sales (sold counts)", f"{watch[1] or 0:,} listings watched",
