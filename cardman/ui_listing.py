@@ -393,11 +393,16 @@ def open_listings(st, M, game: str | None = None) -> list[tuple]:
     if "listing" not in tables:
         return decisions(st, M, game)
     from .photo_match import apply
-    rows = st.db.execute(
-        "SELECT l.key, l.source, l.listing_id, l.title, l.url, l.kind, l.price, l.currency, l.data_json, "
-        "o.status, o.payload_json FROM listing l LEFT JOIN opportunity o ON o.key=l.key "
-        "WHERE l.ended_at IS NULL AND l.kind IN ('ask','bid','auction') AND l.source LIKE 'ebay%' "
-        "ORDER BY l.last_seen DESC").fetchall()
+    if "opportunity" in tables:
+        rows = st.db.execute(
+            "SELECT l.key, l.source, l.listing_id, l.title, l.url, l.kind, l.price, l.currency, l.data_json, "
+            "o.status, o.payload_json FROM listing l LEFT JOIN opportunity o ON o.key=l.key "
+            "WHERE l.ended_at IS NULL AND l.kind IN ('ask','bid','auction') AND l.source LIKE 'ebay%' "
+            "ORDER BY l.last_seen DESC").fetchall()
+    else:
+        rows = [(k, s, i, t, u, kind, p, c, d, None, None) for k, s, i, t, u, kind, p, c, d in st.db.execute(
+            "SELECT key, source, listing_id, title, url, kind, price, currency, data_json FROM listing "
+            "WHERE ended_at IS NULL AND kind IN ('ask','bid','auction') AND source LIKE 'ebay%' ORDER BY last_seen DESC")]
     out = []
     for key, source, listing_id, title, url, kind, price, currency, data_json, status, payload in rows:
         data = json.loads(data_json or "{}")
