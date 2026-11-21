@@ -345,9 +345,11 @@ def _jpeg(data: bytes) -> tuple[int, int, list[int]] | None:
 def apply(d: dict, key: str = "", db=None, *, listing_root: Path | None = None, image_root: Path | None = None) -> dict:
     """A listing is one catalog card only when its photo is that card's picture.
 
-    No seller photo: left as the engine stored it (photo "none").
+    No seller photo, no official picture to compare against, or a photo that cannot be decoded:
+    the check abstains. The listing stays exactly as the engine stored it (photo "none").
     A photo that is clearly a different picture: unbound (photo "clash"). The card's price is removed.
-    A photo that is not a clear match: unbound (photo "unconfirmed"). No name and no price are attached.
+    A photo that can be compared and does not clearly match: unbound (photo "unconfirmed").
+    An abstaining check never strips a price: not having the official picture is our gap, not the seller's lie.
     """
     if "LOT" in (d.get("kinds") or []):
         return {**d, "photo": "none"}
@@ -361,12 +363,40 @@ def apply(d: dict, key: str = "", db=None, *, listing_root: Path | None = None, 
         return _unbind(d, "unconfirmed")
     catalog = _catalog_bytes(pcs[0], image_root)
     if seller and catalog:
-        same = disagrees(seller, catalog)
-        if same is False:
+        verdict = _judged(seller, catalog, db)
+        if verdict == "match":
             return {**d, "photo": "match"}
-        if same is True:
+        if verdict == "clash":
             return _unbind(d, "clash")
-    return _unbind(d, "unconfirmed")
+        if verdict == "unsure":
+            return _unbind(d, "unconfirmed")
+    return {**d, "photo": "none"}       # no official picture, or a picture that will not decode: the check abstains
+
+
+_VERDICT_CODE = {"match": 0, "clash": 1, "unsure": 2}
+_CODE_VERDICT = {v: k for k, v in _VERDICT_CODE.items()}
+
+
+def _judged(seller: bytes, catalog: bytes, db) -> str | None:
+    """judge(), memoized per picture pair: the same two files never need scoring twice."""
+    import hashlib
+    a, b = hashlib.sha1(seller).hexdigest(), hashlib.sha1(catalog).hexdigest()
+    if db is not None:
+        try:
+            db.execute("CREATE TABLE IF NOT EXISTS photo_verdict (a TEXT, b TEXT, v INTEGER, PRIMARY KEY (a, b))")
+            row = db.execute("SELECT v FROM photo_verdict WHERE a=? AND b=?", (a, b)).fetchone()
+            if row is not None:
+                return _CODE_VERDICT.get(row[0])
+        except Exception:
+            pass
+    out = judge(seller, catalog)
+    if db is not None:
+        try:
+            with db:
+                db.execute("INSERT OR REPLACE INTO photo_verdict VALUES (?,?,?)", (a, b, _VERDICT_CODE[out] if out else -1))
+        except Exception:
+            pass
+    return out
 
 
 def _unbind(d: dict, photo: str) -> dict:
