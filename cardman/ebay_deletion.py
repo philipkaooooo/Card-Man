@@ -51,6 +51,11 @@ def _canonical_hash(data: dict) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
+_TOKEN = re.compile(rb"[A-Za-z0-9_.\-]{1,200}")
+_TOKEN_S = re.compile(r"[A-Za-z0-9_.\-]{1,200}")
+_ALLOWED = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-")
+
+
 def purge_database(path: str | Path, identifiers: list[str]) -> PurgeResult:
     res = PurgeResult()
     rx = _pattern(identifiers)
@@ -58,10 +63,20 @@ def purge_database(path: str | Path, identifiers: list[str]) -> PurgeResult:
     if rx is None or not path.exists():
         return res
     ids = set(identifiers)
+    # A token screen decides whether a value can hold a whole-word match at all; the placeholders are exactly the
+    # whole-word boundaries the pattern would accept, so the screen never passes a value the pattern would match.
+    tokenizable = all(set(i) <= _ALLOWED for i in identifiers if i)
+
+    def hits(v) -> bool:
+        return isinstance(v, str) and (not tokenizable or any(t in ids for t in _TOKEN_S.findall(v)))
+
+    def scrub(v):
+        return rx.sub(REDACTED, v) if hits(v) else v
+
     db = sqlite3.connect(str(path), timeout=30)
     db.execute("PRAGMA secure_delete=ON")
-    db.create_function("cm_has", 1, lambda v: 1 if isinstance(v, str) and rx.search(v) else 0, deterministic=True)
-    db.create_function("cm_scrub", 1, lambda v: rx.sub(REDACTED, v) if isinstance(v, str) else v, deterministic=True)
+    db.create_function("cm_has", 1, lambda v: 1 if hits(v) else 0, deterministic=True)
+    db.create_function("cm_scrub", 1, scrub, deterministic=True)
     tables = [r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
     with db:
         # Structured seller fields become empty, not a shared placeholder that would look like one busy seller.
