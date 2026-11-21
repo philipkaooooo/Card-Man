@@ -426,14 +426,21 @@ class PkmCatalog:
         cid = pid.split(":")[2]
         row = self.con.execute("SELECT usd, day FROM pkm_guide WHERE card_id=? AND version=? ORDER BY day DESC LIMIT 1",
                                (cid, p.edition)).fetchone()
-        return (row[0], row[1]) if row else None
+        if row:
+            return (row[0], row[1])
+        from .catalog_boot import version_market
+        return version_market(pid)
 
     def guide_history(self, pid: str) -> list[tuple[str, float]]:
         p = self.by_id.get(pid)
         if not p:
             return []
         cid = pid.split(":")[2]
-        return list(self.con.execute("SELECT day, usd FROM pkm_guide WHERE card_id=? AND version=? ORDER BY day", (cid, p.edition)))
+        rows = list(self.con.execute("SELECT day, usd FROM pkm_guide WHERE card_id=? AND version=? ORDER BY day", (cid, p.edition)))
+        if rows:
+            return rows
+        one = self.guide(pid)
+        return [(one[1], one[0])] if one else []
 
     def search(self, q: str, limit: int = 48) -> list[dict]:
         """Name, set name or abbreviation, '199/165', '199', or a card id like sv3pt5-199."""

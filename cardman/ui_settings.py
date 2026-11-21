@@ -75,7 +75,25 @@ def _pkm_row() -> str:
     except Exception:
         n, sets, built = 0, 0, ""
     return _row("Pokémon cards (English)", f"{n:,} cards in {sets} sets" if n else "not downloaded yet",
-                (f"updated {e(built[:10])} · guide prices from TCGplayer, leads only" if n else "run: python -m cardman.pkm_catalog"), bool(n) or None)
+                (f"updated {e(built[:10])} · guide prices from TCGplayer, leads only" if n else "CardMan downloads this when it starts"), bool(n) or None)
+
+
+def _market_row(st) -> str:
+    """Calibration is one number from your own completed sales. It scales a version's own estimate. It never prices one card from another."""
+    from .engine import load_profile
+    from .ledger import Ledger
+    try:
+        home = (load_profile() or {}).get("home_currency", "TWD")
+        cal = Ledger(st.path, home).calibration()
+    except Exception:
+        return _row("Market calibration", "not ready", "Needs the store.", None)
+    if not cal.n_sales:
+        detail = "No completed sale of yours yet, so nothing is adjusted. Each version is priced only from its own sales."
+    else:
+        detail = (f"{cal.n_sales} completed sale{'s' if cal.n_sales != 1 else ''} · "
+                  f"realized prices are {cal.resale_bias:.0%} of what was predicted · "
+                  "applied to that version only, and never upward")
+    return _row("Market calibration", "learning" if cal.n_sales else "unadjusted", detail, True if cal.n_sales else None)
 
 
 def view_settings(st, now: datetime, cur: str, theme: str, profile: dict | None, engine_status: dict, path: str = "/settings",
@@ -125,6 +143,7 @@ def view_settings(st, now: datetime, cur: str, theme: str, profile: dict | None,
         _row("Guide prices (YGOPRODeck)", "on" if (routes.get("ygoprodeck") or {}).get("on") else "off", "leads only; never used as a value", None),
         _pkm_row(),
         _catalog_row(),
+        _market_row(st),
         _row("Inbox folder", "on", e((routes.get("inbox") or {}).get("detail") or "~/card-man/data/inbox"), None),
     ]
     from .card_market import coverage, coverage_line

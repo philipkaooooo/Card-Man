@@ -1915,8 +1915,10 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
             if not parts and self.game == "ygo" and self._cookie("game") == "pkm" and "g" not in qs and not u.query:
                 return self._go("/pkm/")
             if self.game == "pkm" and pcards() is None and parts[:1] in (["search"], ["card"], ["character"]):
-                return self._send(200, page("Pokémon", '<h1>Pokémon</h1><p class="empty">The Pokémon card catalog is still being '
-                                            'downloaded. This page fills in once it is ready.</p>', nav="home", store=store_path,
+                from .catalog_boot import read_status
+                stt = read_status()
+                detail = stt.get("detail") or "The download starts with CardMan. This page fills in once the card list is in place."
+                return self._send(200, page("Pokémon", f'<h1>Pokémon</h1><p class="empty">{e(detail)}</p>', nav="home", store=store_path,
                                             game="pkm", cur=self._cur(), theme=self._theme()))
             st = Store(store_path)
             now = clock()
@@ -2364,6 +2366,14 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--engine-every", type=float, default=15, help="minutes between background engine passes; 0 turns them off")
     a = ap.parse_args(argv)
     Store(a.store).db.close()          # create the file and schema up front
+    def _boot():
+        try:
+            from .catalog_boot import ensure
+            ensure()
+        except Exception as x:
+            from .catalog_boot import write_status
+            write_status("error", f"{type(x).__name__}: {x}")
+    threading.Thread(target=_boot, daemon=True, name="catalog-boot").start()
     srv = CardManServer(("127.0.0.1", a.port), make_handler(a.store, secrets.token_urlsafe(24),
                                                                   catalog=catalog_loader(a.catalog)))
     print(f"CardMan UI on http://127.0.0.1:{a.port}  (store {a.store}; Ctrl+C to stop)")
