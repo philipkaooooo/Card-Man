@@ -186,8 +186,8 @@ def app2(tmp_path):
 def test_one_header_with_six_places_and_cards_holding_its_subpages(app2):
     h = app2.get("/deals?syn=1")
     nav = h[h.index('<nav class="main"'):h.index("</nav>")]
-    assert nav.count("<a ") == 8 and all(x in nav for x in (">Home<", ">Listings<", ">Market<", ">Cards<", ">Add sales<", ">Settings<",
-                                                         ">Card search<", ">Characters<"))
+    assert nav.count("<a ") == 8 and all(x in nav for x in (">Home<", ">Listings<", ">Market<", ">Cards+<", ">Add sales<", ">Settings<",
+                                                         ">Card Pile<", ">Characters<"))
     assert 'class="nwrap"' in nav and 'class="nsub"' in nav            # Cards opens on hover
     assert 'aria-current="page">Settings' in nav                      # Deals lives under Settings now
     assert h.index('class="logo"') < h.index("<nav") < h.index('class="curs"')
@@ -196,7 +196,7 @@ def test_one_header_with_six_places_and_cards_holding_its_subpages(app2):
     for path in ("/deals", "/scan", "/evidence", "/results", "/opportunities/engine", "/costs"):
         assert f'href="{path}"' in s
     for path in ("/scan", "/results", "/evidence", "/import", "/costs", "/opportunities", "/search", "/listings", "/cards",
-                 "/add-sales", "/sales", "/advanced", "/home", "/market"):
+                 "/add-sales", "/sales", "/advanced", "/home", "/market", "/pile"):
         assert "<!doctype" in app2.get(path)
 
 

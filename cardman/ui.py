@@ -117,7 +117,7 @@ CSS = """
 --sky:#7fc3e6;--sky-text:#1f76a5;--teal:#12a08f;--teal-deep:#0b6f64;--slate:#4b6175;--grey:#5f7080;
 --track:#e1e9f0;--shadow:0 1px 2px rgba(15,30,45,.05),0 8px 24px rgba(15,30,45,.06);
 --shadow-hi:0 2px 6px rgba(15,30,45,.07),0 16px 40px rgba(15,30,45,.12);
---canvas:linear-gradient(180deg,#ffffff 0,#f5f9fc 300px,#f1f5f9 100%);
+--canvas:linear-gradient(180deg,#90ee90 0,#c6f2c4 200px,#e9f8e6 520px,#fbfcfa 100%);
 --ease:cubic-bezier(.2,.8,.2,1);--r:14px}
 @media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){color-scheme:dark;--bg:#0d0d0d;
 --surface:#1a1a19;--fg:#f0efec;--fg2:#c3c2b7;--muted:#898781;--line:#2c2c2a;--axis:#383835;--soft:#232322;
@@ -125,7 +125,7 @@ CSS = """
 --sky:#8EC9E8;--sky-text:#8EC9E8;--teal:#4CC9C3;--teal-deep:#4CC9C3;--slate:#A9B8C8;--grey:#9AA6AE;--track:#23323B;
 --shadow:0 1px 2px rgba(0,0,0,.25),0 4px 16px rgba(0,0,0,.2);--shadow-hi:0 2px 4px rgba(0,0,0,.3),0 12px 32px rgba(0,0,0,.35);--canvas:none}}
 *{box-sizing:border-box}
-body{margin:0;color:var(--fg);background:var(--bg);background-image:var(--canvas);
+body{margin:0;color:var(--fg);background:var(--bg);background-image:var(--canvas);background-attachment:fixed;
 font:14px/1.5 system-ui,-apple-system,"Segoe UI",
 "Noto Sans TC","Noto Sans JP",sans-serif}
 header{background:var(--surface);border-bottom:1px solid var(--line);padding:10px 16px;display:flex;gap:14px;
@@ -263,6 +263,18 @@ tr.claimed td{background:var(--soft)}
 .score h3{margin:0 0 6px;font-size:14px}
 .score dl{display:grid;grid-template-columns:1fr auto;gap:3px 12px;margin:0}
 .score dt{color:var(--fg2)}.score dd{margin:0;text-align:right;font-weight:600;font-variant-numeric:tabular-nums}
+.pileadd{display:flex;gap:8px;margin:4px 0 16px;flex-wrap:wrap}
+.pileadd input{flex:1;min-width:260px;padding:9px 12px;border:1px solid var(--axis);border-radius:10px;
+background:var(--surface);color:var(--fg);font:inherit}
+.pileadd button{padding:9px 16px;border:0;border-radius:10px;background:var(--accent);color:#fff;font-weight:700;cursor:pointer}
+.pileadd button:hover{filter:brightness(1.06)}
+table.compact{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--line);border-radius:12px}
+table.compact th{text-align:left;font-size:12px;color:var(--muted);padding:8px;border-bottom:1px solid var(--line)}
+table.compact td{border-bottom:1px solid var(--line);vertical-align:middle}
+table.compact tr:last-child td{border-bottom:0}
+button.mini{padding:3px 9px;border:1px solid var(--line);border-radius:7px;background:var(--soft);color:var(--fg2);
+font-size:12px;cursor:pointer}button.mini:hover{border-color:var(--axis);color:var(--fg)}
+.chip.warn{background:var(--surface);border-color:var(--warn);color:var(--warn)}
 """
 
 JS = r"""
@@ -305,11 +317,11 @@ CURRENCIES = ("USD", "TWD")
 
 
 ON = ' class="on" aria-current="page"'
-# One header, six places. Cards opens on hover to the card list and the character index.
+# One header, six places. Cards+ opens on hover to Card Pile and the character index.
 NAV = (("home", "Home", "/"), ("listings", "Listings", "/opportunities"), ("market", "Market", "/market"),
-       ("cards", "Cards", "/search"), ("add", "Add sales", "/import"), ("settings", "Settings", "/settings"))
-SUBS = {"cards": (("search", "Card search", "/search"), ("characters", "Characters", "/pkm/characters"))}
-NAV_OF = {"home": "home", "opportunities": "listings", "market": "market", "search": "cards", "import": "add",
+       ("cards", "Cards+", "/search"), ("add", "Add sales", "/import"), ("settings", "Settings", "/settings"))
+SUBS = {"cards": (("pile", "Card Pile", "/pile"), ("characters", "Characters", "/pkm/characters"))}
+NAV_OF = {"home": "home", "opportunities": "listings", "market": "market", "search": "cards", "pile": "cards", "import": "add",
           "costs": "settings", "settings": "settings", "characters": "cards",
           "deals": "settings", "scan": "settings", "evidence": "settings", "results": "settings", "engine": "settings"}
 SHELL_CSS = """
@@ -1905,6 +1917,9 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                 if parts == ["characters"]:
                     from .zone import view_zone
                     return self._page("characters", "Characters", view_zone(idx.cat if idx else None), qs, crumb=("Cards", "/pkm/search"))
+                if parts == ["pile"]:
+                    from .pile import view as view_pile
+                    return self._page("pile", "Card Pile", view_pile(st, EngineMoney(st, _engine_home(st), self._cur(), now), now, token), qs)
                 if parts == ["search"]:
                     from .ui_home import Money, view_search
                     q = qs.get("q", [""])[0][:120]
@@ -2069,6 +2084,9 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                         assumed = True
                     EM = EngineMoney(st, _engine_home(st), self._cur(), now) if _engine_ready(st) else None
                     self._page("home", "Home", view_home(st, cards, now, self._cur(), self._theme(), assumed_costs=assumed, EM=EM), qs)
+                elif parts == ["pile"]:
+                    from .pile import view as view_pile
+                    self._page("pile", "Card Pile", view_pile(st, EngineMoney(st, _engine_home(st), self._cur(), now), now, token), qs)
                 elif parts == ["deals"]:
                     self._page("deals", "Deals", view_deals(st, now, self._cur(), qs.get("syn", [""])[0] == "1"), qs)
                 elif parts == ["search"]:
@@ -2202,7 +2220,18 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
             st = Store(store_path)
             now = clock()
             try:
-                if len(parts) == 3 and parts[0] == "deal" and parts[2] == "decide":
+                if parts == ["pile"]:
+                    from .pile import add as pile_add, resolve as pile_resolve
+                    key = pile_resolve(st, form.get("url", "")[:2048])
+                    if not key:
+                        self._redirect("/pile", err="Not in the store yet. Open the listing once under Listings, then add it here.")
+                    else:
+                        self._redirect("/pile", msg="Added to the pile." if pile_add(st, key, now) else "Already in the pile.")
+                elif parts == ["pile", "remove"]:
+                    from .pile import remove as pile_remove
+                    pile_remove(st, form.get("key", "")[:512])
+                    self._redirect("/pile", msg="Removed from the pile.")
+                elif len(parts) == 3 and parts[0] == "deal" and parts[2] == "decide":
                     sid = parts[1]
                     try:
                         st.record_decision(Decision(sid, Action(form.get("action", "")), form.get("rationale", "").strip(),
