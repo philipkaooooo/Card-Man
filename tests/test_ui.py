@@ -233,8 +233,13 @@ def test_opportunities_page_runs_the_engine(app2, tmp_path, monkeypatch):
 
 def test_costs_page_saves_your_numbers(app2, tmp_path, monkeypatch):
     import json as _json
+    import shutil
+    import cardman.engine as eng
     import cardman.ui as ui
     monkeypatch.setattr(ui, "PROFILE_PATH", tmp_path / "profile.json")
+    (tmp_path / "examples").mkdir()                       # the page must not depend on this machine's saved profile
+    shutil.copy(eng.ROOT / "examples" / "cost_profiles_ASSUMED.json", tmp_path / "examples")
+    monkeypatch.setattr(eng, "ROOT", tmp_path)
     h = app2.get("/costs")
     assert "assumed" in h and "Selling fee" in h and 'name="INTL.inbound_shipping"' in h
     form = {"home_currency": "USD", "target_return": "25", "capital_cost_monthly": "1", "research_value_per_hour": "20",

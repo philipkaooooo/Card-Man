@@ -197,13 +197,19 @@ def _just_posted(st, now: datetime, game: str) -> str:
     """The newest things actually posted, wherever they were posted: one tile per fresh listing."""
     if "listing" not in _tables(st):
         return ""
+    have = _tables(st)
+    sel = "l.key, l.source, l.title, l.url, l.price, l.currency, l.first_seen, l.data_json, "
+    sel += "o.payload_json" if "opportunity" in have else "NULL"
+    sel += ", l.listing_id, d.images_json" if "listing_detail" in have else ", NULL, NULL"
+    joins = ("LEFT JOIN opportunity o ON o.key=l.key " if "opportunity" in have else "")
+    joins += "LEFT JOIN listing_detail d ON d.item_id=l.listing_id" if "listing_detail" in have else ""
     rows = st.db.execute(
-        "SELECT l.key, l.source, l.title, l.url, l.price, l.currency, l.first_seen, l.data_json, o.payload_json "
-        "FROM listing l LEFT JOIN opportunity o ON o.key=l.key "
+        f"SELECT {sel} FROM listing l {joins} "
         "WHERE l.ended_at IS NULL AND l.kind IN ('ask','bid','auction') "
         "ORDER BY l.first_seen DESC LIMIT 120").fetchall()
     tiles = []
-    for key, source, title, url, price, currency, seen, dj, payload in rows:
+    from .ui_listing import lphoto
+    for key, source, title, url, price, currency, seen, dj, payload, iid, imgs in rows:
         try:
             d = json.loads(payload) if payload else (json.loads(dj) if dj else {})
         except ValueError:
@@ -212,7 +218,9 @@ def _just_posted(st, now: datetime, game: str) -> str:
             continue
         price_txt = charts.fmt(Decimal(str(price)), currency) if price not in (None, "") else "—"
         when = _ago(seen, now)
-        tiles.append(f'<a class="hun" href="{e(url)}" data-key="{e(key)}">{img(_listing_art(d), "large", title or "", cls="card hun-img")}'
+        own = len(json.loads(imgs or "[]")) if imgs else 0
+        art = lphoto(iid, 0, "m", title or "", cls="hun-img") if own else img(_listing_art(d), "large", title or "", cls="card hun-img")
+        tiles.append(f'<a class="hun" href="{e(url)}" data-key="{e(key)}">{art}'
                      f'<span class="hun-b"><span class="hun-name">{e((title or "")[:90])}</span>'
                      f'<span class="hun-price">{e(price_txt)}</span>'
                      f'<span class="hun-meta">{e(_source_label(source))}{" · " + e(when) if when else ""}</span></span></a>')
@@ -665,86 +673,123 @@ def record_sale(st, catalog, passcode: str, form: dict, now: datetime) -> str:
     return oid
 
 
-def view_character(idx, species: str, token: str, now: datetime) -> str:
-    """Every card of one character. The top is what the set of prices says; the cards keep their own numbers."""
+def character_history(st, name: str, variants: list, now: datetime, cur: str, home: str, book, guide) -> dict:
+    """One series for the whole character: every sale, ask and guide of every card it owns, on one timeline."""
+    from .history import Converter, cached_build, buckets, summarize
+    h = cached_build(st, "pkm-char:" + name, variants, now,
+                     Converter(st, home, cur, getattr(book, "fx", None)), guide_fn=guide)
+    sales = sorted((s for ser in h["series"] for s in ser["sales"]), key=lambda s: s["t"])
+    asks = sorted((a for ser in h["series"] for a in ser["asks"]), key=lambda a: (a["d"], a["low"]))
+    guides = sorted((g for ser in h["series"] for g in ser["guide"]), key=lambda g: g["d"])
+    pts = [(datetime.fromisoformat(s["t"]), s["p"]) for s in sales]
+    return {"currency": h["currency"], "now": h["now"], "default": "all", "series": [{
+        "key": "all", "printing_id": "", "label": "All cards", "grade": "Raw", "sales": sales, "asks": asks, "guide": guides,
+        "week": buckets(pts, "week"), "month": buckets(pts, "month"),
+        "summary": {**summarize(pts, now), "last": sales[-1] if sales else None, "n": len(sales)}}]}
+
+
+def view_character(st, idx, species: str, token: str, now: datetime, cur: str, home: str, book) -> str:
+    """One character: a portrait, what its cards are worth together, then the cards themselves."""
     from .character import cards_of, slug
     from .games import card_href
+    from .zone import book as sprites
     cat = idx.cat
     ids = cards_of(cat, species)
+    variants = [v for cid in ids for v in cat.versions(cid)]
     tiles = []
-    options = []
     priced = []
     moves_num = []
     for cid in ids:
         row = cat._cards[cid]
         key = "pkm-" + cid
         s = cat.set(row[3]) or {}
-        versions = cat.versions(cid)
-        lines = []
-        for v in versions:
+        best = None
+        for v in cat.versions(cid):
             g = cat.guide(v.id)
+            if not g:
+                continue
             label = v.edition or "Standard"
             where = f'{row[1]} · {s.get("name") or ""} {row[4]} · {label}'
-            if g:
-                lines.append(f'{e(label)} · guide {e(charts.fmt(g[0], "USD"))} on {e(g[1])}')
-                priced.append((g[0], where))
-                hist = cat.guide_history(v.id)
-                if len(hist) >= 2 and hist[0][1] and hist[0][1] != hist[-1][1]:
-                    pct = (hist[-1][1] - hist[0][1]) / hist[0][1] * 100
-                    moves_num.append((pct, where, hist[0], hist[-1]))
-            options.append(f'<option value="{e(v.id)}">{e(row[1])} · {e(s.get("name") or "")} {e(row[4] or "")} · {e(label)}</option>')
+            priced.append((g[0], where))
+            if best is None or g[0] < best[0]:
+                best = (g[0], label)
+            hist = cat.guide_history(v.id)
+            if len(hist) >= 2 and hist[0][1] and hist[0][1] != hist[-1][1]:
+                moves_num.append(((hist[-1][1] - hist[0][1]) / hist[0][1] * 100, where, hist[0], hist[-1]))
         if len(tiles) < 240:
-            own = "<br>".join(lines) if lines else "No price of its own yet."
+            money = (f'<span class="ct-from">from </span>' if len(cat.versions(cid)) > 1 else "") + e(charts.fmt(best[0], "USD")) \
+                if best else '<span class="ct-np">no price yet</span>'
             tiles.append(f'<a class="ctile" href="{e(card_href(key))}">{img(key, "small", row[1])}'
-                         f'<span class="ct-name">{e(row[1])}</span>'
-                         f'<span class="ct-meta">{e(s.get("name") or "")} · {e(row[4] or "")}/{e(s.get("printed_total") or "")}</span>'
-                         f'<span class="ct-meta">{e(row[6] or "")}</span>'
-                         f'<span class="ct-mkt">{own}</span></a>')
+                         f'<span class="ct-price">{money}</span></a>')
     priced.sort()
     moves_num.sort(key=lambda m: -abs(m[0]))
+    hist = character_history(st, slug(species), variants, now, cur, home, book, cat.guide_history)
+    ser = hist["series"][0]
+    sm = ser["summary"]
     vals = [p[0] for p in priced]
     up = [m for m in moves_num if m[0] > 0]
     down = [m for m in moves_num if m[0] < 0]
     median = vals[len(vals) // 2] if vals else None
+    recent = [p for t, p in [(datetime.fromisoformat(s["t"]), s["p"]) for s in ser["sales"]] if t >= now - timedelta(days=90)]
+    ch = (sm.get("change_90") or {}).get("pct")
+    perf = []
+    if sm.get("median_30") is not None:
+        perf.append(f'Typical sale, last 30 days: <b>{e(charts.fmt(sm["median_30"], cur))}</b> across {sm.get("n_30") or 0} sales.')
+    if ch is not None:
+        perf.append(f'<b class="{"mv-up" if ch > 0 else "mv-down" if ch < 0 else ""}">{ch:+.1f}%</b> over the last 3 months.')
+    elif (sm.get("trend") or {}).get("label") not in (None, "no clear trend"):
+        perf.append(f'Trend: {e(sm["trend"]["label"])}.')
+    if len(recent) >= 3:
+        recent.sort()
+        perf.append(f'Half the sales in the last 3 months landed between '
+                    f'<b>{e(charts.fmt(recent[int(len(recent) * .25)], cur))}</b> and '
+                    f'<b>{e(charts.fmt(recent[int(len(recent) * .75)], cur))}</b>.')
+    perf.append(f'<b>{len(ser["sales"])}</b> real sale{"s" if len(ser["sales"]) != 1 else ""} recorded across these cards.' if ser["sales"]
+                else 'No real sale of any of these cards yet. A guide is not a sale.')
     stats = (f'<div class="stats">'
              f'<div class="stat"><small>Cards</small><b>{len(ids)}</b></div>'
              f'<div class="stat"><small>Versions with a guide</small><b>{len(vals)}</b></div>'
-             f'<div class="stat"><small>Median guide</small><b>{e(charts.fmt(median, "USD")) if median is not None else "—"}</b></div>'
-             f'<div class="stat"><small>Cheapest–priciest</small><b>{e(charts.fmt(vals[0], "USD")) if vals else "—"} – {e(charts.fmt(vals[-1], "USD")) if vals else "—"}</b></div>'
+             f'<div class="stat"><small>Median guide</small><b>{e(charts.fmt(median, cur)) if median is not None else "—"}</b></div>'
+             f'<div class="stat"><small>Cheapest–priciest</small><b>{e(charts.fmt(vals[0], cur)) if vals else "—"} – {e(charts.fmt(vals[-1], cur)) if vals else "—"}</b></div>'
              f'<div class="stat"><small>Rising</small><b>{len(up)}</b></div>'
              f'<div class="stat"><small>Falling</small><b>{len(down)}</b></div></div>')
-    if len(priced) >= 2:
-        lo, hi = priced[0], priced[-1]
-        spread = (f'<p>The cheapest guide among these cards is {e(charts.fmt(lo[0], "USD"))} ({e(lo[1])}). '
-                  f'The highest is {e(charts.fmt(hi[0], "USD"))} ({e(hi[1])}). '
-                  'Those are different cards. The low one is not a price for the high one.</p>')
-    else:
-        spread = '<p>Not enough of these cards have their own guide price to compare.</p>'
+    spread = (f'<p>The cheapest guide among these cards is {e(charts.fmt(priced[0][0], cur))} ({e(priced[0][1])}). '
+              f'The highest is {e(charts.fmt(priced[-1][0], cur))} ({e(priced[-1][1])}). '
+              'Those are different cards. The low one is not a price for the high one.</p>') if len(priced) >= 2 else (
+              '<p>Not enough of these cards have their own guide price to compare.</p>')
     movers = "".join(
         f'<li class="mv {"up" if m[0] > 0 else "down"}"><b>{m[0]:+.1f}%</b> {e(m[1])}: '
         f'{e(charts.fmt(m[2][1], "USD"))} on {e(m[2][0])} → {e(charts.fmt(m[3][1], "USD"))} on {e(m[3][0])}</li>'
         for m in moves_num[:8]) or ('<li class="mv">No card of this character has two guide points that differ, '
                                     'so there is no move to show.</li>')
-    form = ""
-    if token and options:
-        form = (f'<form method="post" action="/pkm/character/sale" class="scanform">'
-                f'<input type="hidden" name="t" value="{e(token)}"><input type="hidden" name="back" value="/pkm/character/{e(slug(species))}">'
-                f'<label>Exact version<select name="printing" required>{"".join(options)}</select></label>'
-                '<label>Price<input name="amount" inputmode="decimal" required size="9"></label>'
-                '<label>Currency<select name="currency"><option>USD</option><option>TWD</option><option>JPY</option><option>EUR</option><option>GBP</option></select></label>'
-                f'<label>Date<input type="date" name="date" value="{now.date().isoformat()}" required></label>'
-                '<label>How it sold<select name="kind"><option value="transaction">Sold</option><option value="accepted_offer">Best offer accepted</option></select></label>'
-                '<button>Add sale</button></form>')
-    more = f' Showing the {len(tiles)} newest; the rest are one search away.' if len(ids) > len(tiles) else ""
-    return (f'<div class="charpage"><div><h1>{e(species)}</h1>'
-            f'<p class="sub">{len(ids)} card{"s" if len(ids) != 1 else ""}. Each one has its own price. Nothing on this page is a price for a different card.{more}</p>'
-            f'<section class="char-analyse"><h2>What these cards are worth</h2>{stats}{spread}'
-            f'<h3>Biggest moves</h3><ul class="mvlist">{movers}</ul>'
+    months = ser["month"][-18:]
+    vmax = max((b["n"] for b in months), default=0)
+    if months and vmax:
+        bars = "".join(
+            f'<div class="vcol"><div class="vbar" style="height:{max(3, round(b["n"] / vmax * 100))}%" '
+            f'data-tip="{e(b["start"][:7])}: {b["n"]} sale{"s" if b["n"] != 1 else ""}"></div>'
+            f'<small>{e(b["start"][5:7])}/{e(b["start"][2:4])}</small></div>' for b in months)
+        vol = (f'<p class="why small">Real sales per month, last {len(months)} months. '
+               f'Busiest month: {vmax}.</p><div class="vol">{bars}</div>')
+    else:
+        vol = ('<p class="why small">No real sale of any of these cards is recorded yet, so there is no monthly '
+               'volume to draw. The guides above are not sales.</p>')
+    vol = "<h3>Sales volume</h3>" + vol
+    dex = sprites().dex(species)
+    portrait = (f'<img class="charport" src="/pkm/icon/{dex}.png" alt="{e(species)}" width="220" height="220" '
+                f'decoding="async">' if dex else "")
+    chart = (f'<div data-hchart="/pkm/character/{e(slug(species))}/history.json" data-printing="" data-cur="{e(cur)}" '
+             f'data-default="all"><div class="htable"></div></div>')
+    return (f'<section class="charprof">{portrait}<div><h1>{e(species)}</h1>'
+            f'<p class="sub">{len(ids)} card{"s" if len(ids) != 1 else ""}. Each one keeps its own price; the charts '
+            'are the whole character together.</p></div></section>'
+            f'<section class="char-analyse"><h2>How {e(species)} is performing</h2>{stats}'
+            + "".join(f'<p>{p}</p>' for p in perf) + spread + chart
+            + f'<h3>Biggest moves</h3><ul class="mvlist">{movers}</ul>{vol}'
             '<p class="why small">Guide prices, not sales. A move is the first and last stored guide for that exact '
             'version; a card with one point shows no move.</p></section>'
             f'<h2>Every card of {e(species)}</h2>'
-            f'<div class="cgrid">{"".join(tiles) or "<p class=empty>No cards of this character.</p>"}</div></div>'
-            f'<aside class="char-side"><h2>Add a sale</h2><p class="why small">Pick the exact card and version. The sale counts for that version only.</p>{form}</aside></div>')
+            f'<div class="cgrid">{"".join(tiles) or "<p class=empty>No cards of this character.</p>"}</div>')
 
 
 HOME_CSS = """
@@ -777,6 +822,26 @@ section.char-analyse p{margin:8px 0;color:var(--fg2);font-size:13.5px}
 .mvlist .mv{background:var(--soft);border:1px solid var(--line);border-radius:10px;padding:8px 12px;font-size:13px;color:var(--fg2)}
 .mvlist .mv b{font-variant-numeric:tabular-nums;margin-right:6px}
 .mvlist .mv.up b{color:var(--good-text)}.mvlist .mv.down b{color:var(--crit)}
+.charprof{display:flex;gap:22px;align-items:center;margin:0 0 18px}
+.charprof h1{margin:0 0 6px}.charprof .sub{margin:0;max-width:560px}
+.charport{width:170px;height:170px;flex:none;object-fit:contain;filter:drop-shadow(0 14px 22px rgba(40,55,40,.16))}
+@media(max-width:640px){.charport{width:110px;height:110px}.charprof{gap:14px}}
+.char-analyse [data-hchart]{margin:12px 0 6px}
+.vol{display:flex;align-items:flex-end;gap:5px;height:120px;margin:8px 0 6px}
+.vcol{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%}
+.vbar{width:100%;max-width:40px;background:var(--teal);opacity:.75;border-radius:4px 4px 0 0}
+.vbar:hover{opacity:1}
+.vcol small{font-size:10px;color:var(--muted);margin-top:4px}
+.mv-up{color:var(--good-text)}.mv-down{color:var(--crit)}
+.cgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:22px 16px}
+.ctile{background:none;border:0;box-shadow:none;padding:0;gap:8px;align-items:center;border-radius:0}
+.ctile:hover{box-shadow:none;transform:none;border-color:transparent}
+.ctile .card{width:100%;margin:0;border-radius:4.5%/3.2%;box-shadow:0 10px 22px rgba(30,40,30,.16);transition:transform .16s var(--ease)}
+.ctile:hover .card{transform:translateY(-3px)}
+.ct-price{font-size:17px;font-weight:800;color:var(--fg);background:var(--surface);border:1px solid var(--line);
+border-radius:999px;padding:3px 14px;box-shadow:var(--shadow);font-variant-numeric:tabular-nums}
+.ct-from{font-size:12px;font-weight:600;color:var(--muted)}
+.ct-np{font-size:12px;font-weight:600;color:var(--muted)}
 @media(max-width:860px){.charpage{grid-template-columns:1fr}.char-side{position:static}}
 .shelf{background:none;border:0;padding:0;margin:26px 0}.shelf-h{display:flex;align-items:baseline;justify-content:space-between;margin:0 0 10px}
 .shelf-h h2{font-size:19px;margin:0}.shelf-h a{font-size:13px}
@@ -843,6 +908,7 @@ section.hero.hunt{padding:64px 12px 10px}
 font-size:clamp(30px,6vw,54px);letter-spacing:.01em;margin:0 0 26px;cursor:default}
 .huntitle span{display:inline-block;white-space:pre;transition:transform .35s cubic-bezier(.2,1.8,.4,1),color .35s;transition-delay:calc(var(--i)*30ms)}
 .huntitle:hover span{transform:translateY(-8px) rotate(-5deg);color:var(--accent)}
+a.hun img.hun-img{width:100%;height:200px;object-fit:cover;border-radius:8px;background:var(--bg)}
 .hungrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:18px}
 a.hun{display:flex;flex-direction:column;gap:8px;background:var(--surface);border:1px solid var(--line);border-radius:14px;
 padding:12px;text-decoration:none;color:inherit;transition:transform .15s,box-shadow .15s}
