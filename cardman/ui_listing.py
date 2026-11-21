@@ -506,7 +506,7 @@ def view_one(st, cards, key: str, now: datetime, token: str, M, profile: dict | 
         actions.append(f'<a class="btn" href="{e(url)}" target="_blank" rel="noreferrer noopener">Open the listing ↗</a>')
     if v.code == CHECK or not settled:
         actions.append('<a class="btn ghost" href="#confirm">Tell us which version it is</a>')
-    if c and d.get("photo") == "match":
+    if c and d.get("photo") in (None, "none", "match"):   # a clash or an unconfirmed photo is not this card's page
         pid = (top or claim).get("printing_id")
         href = card_href(pc) + (("?v=" + quote(pid, safe="")) if pid else "")
         actions.append(f'<a class="btn ghost" href="{e(href)}">See this card\'s prices</a>')

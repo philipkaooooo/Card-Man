@@ -107,7 +107,7 @@ def test_listing_filters_site_kind_and_price(tmp_path):
     st = Store(tmp_path / "s.sqlite")
     st.db.execute("CREATE TABLE opportunity (key TEXT PRIMARY KEY, stage TEXT, status TEXT, priority REAL, expected REAL, evpi REAL, kinds TEXT, "
                   "printing_id TEXT, snapshot_id TEXT, analysis_fp TEXT, payload_json TEXT, created_at TEXT, updated_at TEXT)")
-    rows = [("ebay_browse:EBAY_US:1", D(kinds=["REFERENCE_GAP"], scenarios=[sc(basis="reference")], all_in_home=100.0, title="Cheap eBay card")),
+    rows = [("ebay_browse:EBAY_US:1", D(kinds=["REFERENCE_GAP"], scenarios=[sc(basis="reference")], all_in_home=300.0, title="Cheap eBay card")),
             ("yahoo_auctions_jp:x1", D(kinds=["REFERENCE_GAP"], scenarios=[sc(basis="reference")], all_in_home=900.0, title="Dear Yahoo card")),
             ("ebay_browse:EBAY_US:2", D(kinds=["LOT", "COLLECTION"], title="Lot of 300 cards", all_in_home=300.0))]
     with st.db:

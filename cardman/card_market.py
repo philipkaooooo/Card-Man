@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 
+THIS_CARD = 0.95
 INDEX_VERSION = "photo-match-2"
 _PC = re.compile(r"@([^@|]+)")   # passcode (Yu-Gi-Oh!) or pkm-<card id> (Pokémon); see games.py
 _SCHEMA = """
@@ -43,9 +44,11 @@ def ensure_index(st) -> None:
     from .photo_match import apply
     for key, status, pj in st.db.execute("SELECT key, status, payload_json FROM opportunity"):
         d = apply(json.loads(pj), key, st.db)
-        # A title, or a price guide, is not enough to file a listing under a card. The photo has to be that card.
-        # A lot is not one card's photo, so it stays counted and stays out of the price.
-        if d.get("photo") != "match" and "LOT" not in (d.get("kinds") or []):
+        # A photo that is clearly not the card, or not clearly it, unbinds the listing: no filing, no price.
+        # A price guide is not what a card sells for: a guide-only listing is never filed under the card.
+        # No photo yet: the listing stays, as the engine stored it. A lot stays counted; it is never one card's photo.
+        kinds = d.get("kinds") or []
+        if d.get("photo") in ("clash", "unconfirmed") or ("REFERENCE_GAP" in kinds and "LOT" not in kinds):
             continue
         sc = d.get("scenarios") or []
         total = sum(s.get("weight") or 0 for s in sc)

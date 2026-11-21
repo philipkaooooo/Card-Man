@@ -150,7 +150,19 @@ def test_setlist_gaps_count_only_physical_sets_we_lack(tmp_path):
     assert [g[2] for g in R.setlist_gaps(b.con, root)] == ["zz9"]
 
 
-REAL = R.DB.exists() and (R.ROOT / "data" / "cache" / "pkm.sqlite").exists()
+def _master_has_pkm_rows() -> bool:
+    if not R.DB.exists():
+        return False
+    try:
+        con = sqlite3.connect(f"file:{R.DB}?mode=ro", uri=True)
+        n = con.execute("SELECT COUNT(*) FROM printing WHERE game='pkm'").fetchone()[0]
+        con.close()
+    except sqlite3.Error:
+        return False
+    return int(n or 0) > 0
+
+
+REAL = _master_has_pkm_rows()
 
 
 @pytest.mark.skipif(not REAL, reason="needs the local master card list")
