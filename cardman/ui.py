@@ -296,11 +296,12 @@ CURRENCIES = ("USD", "TWD")
 
 
 ON = ' class="on" aria-current="page"'
-# One header, five places. Every older page still exists and belongs to one of them.
-NAV = (("home", "Home", "/"), ("listings", "Listings", "/opportunities"), ("cards", "Cards", "/search"),
-       ("add", "Add sales", "/import"), ("settings", "Settings", "/settings"))
-NAV_OF = {"home": "home", "opportunities": "listings", "search": "cards", "import": "add", "costs": "settings", "settings": "settings",
-          "deals": "settings", "scan": "settings", "evidence": "settings", "results": "settings", "engine": "settings"}
+# One header, six places. Every older page still exists and belongs to one of them.
+NAV = (("home", "Home", "/"), ("listings", "Listings", "/opportunities"), ("market", "Market", "/market"),
+       ("cards", "Cards", "/search"), ("add", "Add sales", "/import"), ("settings", "Settings", "/settings"))
+NAV_OF = {"home": "home", "opportunities": "listings", "market": "market", "search": "cards", "import": "add", "costs": "settings",
+          "settings": "settings", "deals": "settings", "scan": "settings", "evidence": "settings", "results": "settings",
+          "engine": "settings"}
 SHELL_CSS = """
 body{display:flex;flex-direction:column;min-height:100vh}
 header.top{position:sticky;top:0;z-index:30;background:color-mix(in srgb,var(--surface) 92%,transparent);backdrop-filter:blur(8px);
@@ -325,6 +326,7 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     from .ui_listing import LISTING_CSS
     from .ui_settings import SETTINGS_CSS
     from .ui_chart import CHART_CSS
+    from .ui_market import MARKET_CSS
     from .ui_icons import EFFECTS_CSS, ICON_CSS, SPRITE
     from .ui_decide import DECIDE_CSS
     theme = theme if theme in THEMES else "market"
@@ -343,7 +345,7 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     tz = datetime.now().astimezone().strftime("UTC%z")
     return (f'<!doctype html><html lang="en" data-theme="{"vault" if theme == "vault" else "auto"}"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)} · CardMan</title>'
-            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{CHART_CSS}{ICON_CSS}{EFFECTS_CSS}{SHELL_CSS}{DECIDE_CSS}</style></head><body>{SPRITE}'
+            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{CHART_CSS}{ICON_CSS}{EFFECTS_CSS}{SHELL_CSS}{DECIDE_CSS}{MARKET_CSS}</style></head><body>{SPRITE}'
             + scope_links(f'<header class="top"><a class="logo" href="/">CardMan</a><nav class="main" aria-label="Main">{links}</nav>{hsearch}'
                           f'{games}{curs}</header><main class="page">{crumb}{flash}{body}</main>', game) +
             f'<footer class="foot">Private to this Mac · times {e(tz)} · press <kbd>/</kbd> to search</footer>'
@@ -1887,6 +1889,9 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     EM = EngineMoney(st, _engine_home(st), self._cur(), now) if _engine_ready(st) else None
                     return self._page("home", "Pokémon", view_home(st, idx, now, self._cur(), self._theme(), assumed_costs=assumed, EM=EM,
                                                                      game="pkm"), qs)
+                if parts == ["market"]:
+                    from .ui_market import view_market
+                    return self._page("market", "Market", view_market(st, now, self._cur(), _engine_home(st), qs, game="pkm"), qs)
                 if parts == ["opportunities"]:
                     from .ui_listing import view_list
                     if not _engine_ready(st):
@@ -2066,6 +2071,9 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     self._page("import", "Import", view_import_pages(st, token, qs.get("batch", [""])[0] or None,
                                                                      catalog() if catalog else None, csv_form,
                                                                      bookmark=bookmarklet(port, capture_key()), searches=[]), qs)
+                elif parts == ["market"]:
+                    from .ui_market import view_market
+                    self._page("market", "Market", view_market(st, now, self._cur(), _engine_home(st), qs, game="ygo"), qs)
                 elif parts == ["opportunities"]:
                     if not _engine_ready(st):
                         self._page("opportunities", "Listings", view_opportunities(st, now, token, self._cur(), "open"), qs)

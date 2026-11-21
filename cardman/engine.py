@@ -74,6 +74,8 @@ class TickReport:
     rejected: int = 0
     signals: int = 0
     seconds: float = 0.0
+    ask_rows: int = 0
+    trends: int = 0
     errors: list[str] = field(default_factory=list)
     routes: list[dict] = field(default_factory=list)
     ebay_sold: dict = field(default_factory=dict)
@@ -194,8 +196,26 @@ class Engine:
             r.grade_company, r.grade = hint.grade             # graded per eBay: never priced with ungraded copies
         if not r.grade_company and getattr(an.parsed, "grade_company", None) and an.parsed.grade:
             r.grade_company, r.grade = an.parsed.grade_company, an.parsed.grade   # "PSA 10" in the title: graded pool only
+        if not r.grade_company:
+            from . import conditions
+            r.condition = conditions.normalize(r.condition) or getattr(an.parsed, "condition", None)
         r.detail_marker = json.dumps(sig, sort_keys=True)
         return an
+
+    def _persist_condition(self, key: str, r: RawListing) -> None:
+        """Keep the condition the title names on the stored listing, so later passes price the same copy."""
+        if not r.condition:
+            return
+        row = self.db.execute("SELECT data_json FROM listing WHERE key=?", (key,)).fetchone()
+        if not row:
+            return
+        d = json.loads(row[0] or "{}")
+        if d.get("condition") == r.condition:
+            return
+        d["condition"] = r.condition
+        with self.db:
+            self.db.execute("UPDATE listing SET data_json=?, fingerprint=? WHERE key=?",
+                            (json.dumps(d, ensure_ascii=False), r.fingerprint(), key))
 
     def _load_catalog(self) -> Catalog:
         cache = IdentityCache(self.catalog_db)
@@ -218,7 +238,9 @@ class Engine:
             from . import listing_detail
             listing_detail.save(self.db, r.listing_id, {"image": {"imageUrl": r.photo_urls[0]},
                                                        "additionalImages": [{"imageUrl": u} for u in r.photo_urls[1:]]}, now, "search")
-        row = self.db.execute("SELECT price, kind FROM listing WHERE key=?", (r.key,)).fetchone()
+        row = self.db.execute("SELECT price, kind, data_json FROM listing WHERE key=?", (r.key,)).fetchone()
+        if row and not r.condition:
+            r.condition = (json.loads(row[2] or "{}")).get("condition")   # eBay's "Used" must not erase a title's NM
         state = "new" if row is None else ("changed" if (Decimal(row[0]) != r.price or row[1] != r.kind) else "same")
         data = {"description": r.description, "shipping": str(r.shipping) if r.shipping is not None else None, "photos": list(r.photos),
                 "grade_company": r.grade_company, "grade": r.grade, "condition": r.condition, "verified": r.verified, "printing_id": r.printing_id,
@@ -317,6 +339,7 @@ class Engine:
         verified = {**r.verified, **self.reviews(key)}
         authenticity = verified.pop("authenticity_ok", None)
         an = self._analyze(r, verified, ocr=True)
+        self._persist_condition(key, r)
         ids = [p.id for p in an.identity.candidates]
         fp = hashlib.sha256(json.dumps([ANALYSIS_VERSION, r.fingerprint(), verified, authenticity, ids[:500], self._evidence_version(ids),
                                         getattr(r, "detail_marker", ""), self._catalog_stamp(),
@@ -363,7 +386,7 @@ class Engine:
         p = an.identity.printing
         if not p or op.status == REJECTED or r.kind not in ("ask", "bid", "auction"):
             return None
-        val = book.value(p.id, r.grade_company, r.grade)
+        val = book.value(p.id, r.grade_company, r.grade, r.condition)
         if len(val.sales) < int(self.profile.get("min_comps", 3)) or not val.estimate:
             return None
         scenario = next((s for s in op.scenarios if s.printing_id == p.id), None)
@@ -523,6 +546,16 @@ class Engine:
         except Exception as x:
             rep.errors.append(f"photos: {type(x).__name__}")
         rep.signals = self.scan_market(book, now)
+        try:
+            from .history import update_ask_daily
+            rep.ask_rows = update_ask_daily(self.store, now, home)
+        except Exception as x:
+            rep.errors.append(f"ask snapshots: {type(x).__name__}: {x}")
+        try:
+            from .trends import refresh as refresh_trends
+            rep.trends = refresh_trends(self.store, now, home)
+        except Exception as x:
+            rep.errors.append(f"trend board: {type(x).__name__}: {x}")
         rep.open_opportunities = self.db.execute("SELECT COUNT(*) FROM opportunity WHERE status=?", (OPEN,)).fetchone()[0]
         rep.seconds = round(time.monotonic() - started, 3)
         with self.db:
@@ -544,6 +577,7 @@ class Engine:
             if r.game == "pkm" and self.pkm is None:
                 return
             an = self._analyze(r, verified)
+            self._persist_condition(r.key, r)
             cands = [p.id for p in an.identity.candidates][:200]
         self._record_observation(r, cands, now, rep)
 

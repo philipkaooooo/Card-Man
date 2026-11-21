@@ -152,3 +152,29 @@ def test_home_lists_recorded_sales_without_crashing(tmp_path):
     page = view_home(e.store, None, NOW + timedelta(hours=8), "USD", "market")
     # Home is the decisions only: search, then nothing that has no decision to make (no "Recently sold" shelf)
     assert "Recently sold" not in page and "Find the exact card" in page
+
+
+def test_a_unit_is_pinned_to_the_printing_its_own_listing_resolved_to(tmp_path):
+    """The title alone leaves 1st and Unlimited open; the tracked listing's own resolution settles it, once per unit."""
+    e = make(tmp_path)
+    tracked(e, ["1"])
+    b = FakeBrowse({"1": item(3)})
+    check(e, NOW, browse=b)
+    b.items["1"] = item(5)
+    check(e, NOW + timedelta(hours=7), browse=b)
+    assert len(e.store.original("ebay_qty:1:4").printing_candidates) > 1     # still ambiguous from the title
+    pid = e.store.original("ebay_qty:1:4").printing_candidates[0]
+    with e.db:
+        e.db.execute("CREATE TABLE IF NOT EXISTS card_listing (passcode TEXT NOT NULL, key TEXT NOT NULL, card_prob REAL NOT NULL, "
+                     "printing_id TEXT, printing_prob REAL, label TEXT, all_in REAL, status TEXT, lot INTEGER NOT NULL, "
+                     "PRIMARY KEY (passcode, key))")
+        e.db.execute("INSERT INTO card_listing VALUES ('89631139','ebay_browse:EBAY_US:1',1.0,?,0.97,'Blue-Eyes',10,'ok',0)", (pid,))
+        e.db.execute("INSERT INTO opportunity (key, printing_id) VALUES ('ebay_browse:EBAY_US:1', ?)", (pid,))
+    r = check(e, NOW + timedelta(hours=14), browse=b)
+    assert r.pinned == 2
+    assert e.store.effective("ebay_qty:1:4").printing_candidates == (pid,)
+    as_of = e.store.effective("ebay_qty:1:4", as_of=NOW + timedelta(hours=7))
+    assert as_of.printing_candidates != (pid,)                               # not known yet at that moment
+    r = check(e, NOW + timedelta(hours=21), browse=b)
+    assert r.pinned == 0                                                      # written once, never again
+
