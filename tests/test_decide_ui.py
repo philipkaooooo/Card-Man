@@ -48,7 +48,10 @@ def test_each_card_is_title_first_then_info_then_a_quiet_decision():
     v, html = card({"kinds": ["UNDERPRICED"], "printing_id": "p:x", "all_in_home": 4.0, "scenarios": [sc()]})
     assert v.code == PASS and "under" not in html and "track" not in html            # a suspect bargain is never sold as one
     v, html = card({"kinds": ["MISIDENTIFIED"], "all_in_home": 40.0, "scenarios": [sc()]})
-    assert v.code == CHECK and "under" not in html and "value $" not in html
+    assert v.code == CHECK and v.top is None and "under" not in html and "value $" not in html and "From price guides" not in html
+    v, html = card({"kinds": ["MISIDENTIFIED"], "all_in_home": 24.79,
+                    "scenarios": [sc(basis="reference", max_buy=80.0, n_sales=0, resale_mid=60.0)]})
+    assert v.top is None and "From price guides" not in html and "No sales yet" in html
 
 
 def test_price_track_only_with_a_value():

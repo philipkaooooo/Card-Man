@@ -153,9 +153,12 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", a
         if vault:
             items = [i for i in items if high(i[2])]
         counts = {c: sum(1 for i in items if i[3].code == c) for c in (BUY, CHECK, WATCH, PASS)}
-        rank = lambda i: (-(i[3].margin or -1e12), -(i[2].get("priority") or 0))
+        # A check with no sale price used to sort first, so the home opened on the wrong cards.
+        rank = lambda i: (i[3].margin is None, -(i[3].margin or 0), -(i[2].get("priority") or 0))
         buy = sorted((i for i in items if i[3].code == BUY), key=rank)[:6]
-        check = sorted((i for i in items if i[3].code == CHECK), key=rank)[:6]
+        worth = [i for i in items if i[3].code == CHECK and "MISIDENTIFIED" not in (i[2].get("kinds") or [])
+                 and (i[3].top or {}).get("basis") == "sales"]
+        check = sorted(worth or (i for i in items if i[3].code == CHECK and "MISIDENTIFIED" not in (i[2].get("kinds") or [])), key=rank)[:6]
         ph = photo_counts(st, [item_id_of(k, d) for k, _s, d, _v in buy + check])
         seen = first_seen(st, [k for k, *_ in buy + check])
         cards_of = lambda group: "".join(deal_card(k, d, v, idx, EM, now, ph, seen.get(k)) for k, _s, d, v in group)

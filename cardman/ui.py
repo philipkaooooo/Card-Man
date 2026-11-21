@@ -1736,9 +1736,11 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
         if _pk.get("m") != m:
             try:
                 cat = PkmCatalog(DB)
-                _pk.update(m=m, idx=PkmIndex(cat) if len(cat) else None)
+                idx = PkmIndex(cat) if len(cat) else None
             except Exception:
-                _pk.update(m=m, idx=None)
+                idx = None
+            if idx is not None:
+                _pk.update(m=m, idx=idx)          # a rebuild that empties the file must not wipe the catalog already on screen
         return _pk.get("idx")
 
     class H(BaseHTTPRequestHandler):
@@ -1912,7 +1914,7 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                 return self._switch_game(qs)
             if not parts and self.game == "ygo" and self._cookie("game") == "pkm" and "g" not in qs and not u.query:
                 return self._go("/pkm/")
-            if self.game == "pkm" and pcards() is None and parts[:1] in ([], ["search"], ["card"], ["opportunities"]):
+            if self.game == "pkm" and pcards() is None and parts[:1] in (["search"], ["card"], ["character"]):
                 return self._send(200, page("Pokémon", '<h1>Pokémon</h1><p class="empty">The Pokémon card catalog is still being '
                                             'downloaded. This page fills in once it is ready.</p>', nav="home", store=store_path,
                                             game="pkm", cur=self._cur(), theme=self._theme()))

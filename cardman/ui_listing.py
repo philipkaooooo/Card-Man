@@ -137,6 +137,10 @@ def verdict(d: dict, status: str, M) -> Verdict:
     sus = suspect(d)
     if sus:
         return Verdict(PASS, "Skip", sus, "Low", why, None, None)
+    if "MISIDENTIFIED" in kinds:
+        f = next((f["text"] for f in d.get("findings") or [] if f.get("kind") in ("ASPECT_CONFLICT", "CODE_NAME_MISMATCH", "PHOTO_CONTRADICTS_SELLER")), None)
+        return Verdict(CHECK, "2x Check", f or "The title and the card don't match. Check the photos to see which card it really is.",
+                       "Low", why, None, None)
     if "LOT" in kinds and "LOT_UNDERPRICED" not in kinds:
         size = _lot_size(d)
         what = f"A lot of {size} cards" if size else "A lot of several cards"
@@ -161,9 +165,6 @@ def verdict(d: dict, status: str, M) -> Verdict:
         if not (kinds & IDENTITY_KINDS) and (d.get("best_profit") is None or d.get("best_profit") <= 0):
             return V(PASS, "Skip", f"Costs more than it usually sells for: {M(all_in)} to you, but it's only worth up to {M(top['max_buy'])}.")
     if kinds & IDENTITY_KINDS:
-        if "MISIDENTIFIED" in kinds:
-            f = next((f["text"] for f in d.get("findings") or [] if f.get("kind") in ("ASPECT_CONFLICT", "CODE_NAME_MISMATCH", "PHOTO_CONTRADICTS_SELLER")), None)
-            return V(CHECK, "2x Check", f or "The title and the card don't match. Check the photos to see which card it really is.")
         return V(CHECK, "2x Check", "Can't tell which version this is, and they sell for different prices. Check the photos.")
     if "REFERENCE_GAP" in kinds or ref:
         # A guide is not a sale. It never fills "usually sells for" and it never makes a Watch.
@@ -279,12 +280,12 @@ def pair_art(key: str, d: dict, photos: dict | None, *, big: bool = False) -> st
     iid = item_id_of(key, d)
     has = bool(iid and (photos or {}).get(iid))
     official = img(pc, "large" if big else "small", "What this version looks like", cls="card") if pc else ""
-    if official and has:
+    if not pc:
+        official = '<span class="card ph" role="img" aria-label="Not one card yet"><span>?</span></span>'
+    if has:
         real = lphoto(iid, 0, "m" if big else "s", "Listing photo", cls="shot-photo")
         return _shot(official, real, d.get("photo"), big=big)
-    if has:
-        return lphoto(iid, 0, "m" if big else "s", d.get("title") or "", cls="card")
-    return official or _art(d, None)
+    return official if pc else _art(d, None)
 
 
 def _shot(official: str, real: str, photo: str | None, *, big: bool = False) -> str:
