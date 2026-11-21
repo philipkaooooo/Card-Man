@@ -103,10 +103,21 @@ def purge_database(path: str | Path, identifiers: list[str]) -> PurgeResult:
             cols = [c[1] for c in db.execute(f'PRAGMA table_info("{t}")') if c[2].upper() == "TEXT" and not c[5]]
             for c in cols:
                 res.rows += db.execute(f'UPDATE "{t}" SET "{c}"=cm_scrub("{c}") WHERE cm_has("{c}")').rowcount
-    if res.rows:
+    if res.rows and _space_for_vacuum(path):
         db.execute("VACUUM")
     db.close()
     return res
+
+
+def _space_for_vacuum(path: Path) -> bool:
+    """VACUUM rebuilds the file next to itself; without room it fails the whole purge. secure_delete already zeroed
+    the freed pages, so skipping the shrink leaves nothing readable, only slack in the file."""
+    try:
+        need = path.stat().st_size * 1.1
+        free = os.statvfs(path.parent).f_bavail * os.statvfs(path.parent).f_frsize
+        return free > need
+    except OSError:
+        return False
 
 
 _TOKEN = re.compile(rb"[A-Za-z0-9_.\-+/@*]{3,120}")
