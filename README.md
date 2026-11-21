@@ -1,15 +1,19 @@
-# CardMan: private Yu-Gi-Oh! buying intelligence
+# CardMan: private card-market buying intelligence (Yu-Gi-Oh! OCG/TCG + Pokémon)
 
-Scope and rules: see the project's CLAUDE.md execution contract (JP OCG + EN TCG, TWD default, no Pokémon, no SaaS).
+Pricing rules: `docs/pricing-method.md` — a price comes from real sales of one exact printing, in one exact condition.
 
-## Status (2026-11-04, second pass)
+## Status (2026-11-21)
 
 ### Data access (tested, see `data/source_registry.json`)
 - **Working:** YAML Yugi (github.com/DawnbrandBots/yaml-yugi, compiled from Yugipedia) through the git proxy.
-  Revision `f0bbcfe1` (2026-11-04): 14,416 cards, 86,185 JP/EN printings in the local cache.
-- **Blocked (HTTP 403 from the environment's network proxy):** YGOResources, YGOPRODeck, Konami DB, eBay,
-  TCGplayer, PriceCharting, PSA, Yahoo! Auctions JP, Mercari JP. The network setting has to allow these hosts.
-- **No credentials set:** eBay, TCGplayer, PriceCharting.
+  Incremental sync into `data/cache/identity.sqlite` (printings, history, retire-don't-delete).
+- **Sold data:** saved result pages from eBay, 130point, Yahoo! Auctions and Mercari are read by the Import page
+  (`cardman/sold_import.py`, `cardman/sold_pages.py`); manual CSV remains the fallback. A guide price is a lead,
+  never a sale; each catalog version is priced from its own row (`cardman/tcgplayer.py`, `cardman/catalog/`).
+- **Catalogs:** Pokémon (`data/cache/pkm.sqlite`), Yu-Gi-Oh! (`identity.sqlite`) and the joined master list
+  (`catalog.sqlite`, one TCGplayer price per version) are re-downloaded automatically when missing
+  (`cardman/catalog_boot.py`).
+- **Blocked without keys or an open network:** eBay Browse API, live TCGplayer, PriceCharting, PSA.
 
 ### Identity
 - `identity_sources.py`: YAML Yugi normalizer (family = Konami ID; artwork = passcode, so alternate-art
@@ -109,7 +113,7 @@ Paste a title and description as the seller wrote them (English or Japanese) wit
 
 ### Run
 ```
-pip install pytest && python -m pytest -q                      # 179 pass
+pip install pytest && python -m pytest -q                      # 456 pass, 3 skip
 python -m cardman.sources                                       # re-probe every source
 python -m cardman.identity_cache sync                           # clone/update YAML Yugi, sync cache
 python -m cardman.slice examples/identity_only_LB-01.json examples/manual_import_TEMPLATE.csv
@@ -119,11 +123,12 @@ python -m cardman.ui --store data/store/evidence.sqlite                         
 # the Scan page needs the identity cache: python -m cardman.identity_cache sync
 ```
 
-### Remaining gaps
-1. Network policy: open the hosts above, then test YGOResources (edition-level data) and YGOPRODeck live.
-2. EN edition (1st / Unlimited / Limited) and release dates: not in YAML Yugi; EN prints abstain until a
-   source with editions is reachable. Asian-English prints: no source yet (codes are quarantined on sight).
-3. eBay app keys for Browse; account exports for Product Research; no sold-data source is reachable yet,
-   so there are no real market observations.
-4. FX rates are still per listing file; comps from older runs need a rate near their sale date in that file.
-5. Image/OCR, grading sensitivities, Taiwan/JP sources, portfolio outcomes: not started.
+### Remaining gaps (2026-11-21)
+1. eBay app keys for Browse; sold data arrives as saved pages until then, so freshness depends on you re-saving.
+2. Japanese print dates: YGOResources lists English prints broadly and JP ones poorly — a missing date is unknown,
+   never "not the original".
+3. Two pricing lines ran in parallel on `main` and this branch (`mark`/refused-book caps over there, simulated
+   max-buy and an engine-checked spread scanner here). The one-SKU TCGplayer screening from `main` is imported;
+   the caps line is not merged. Pick one economics before further `main` work.
+4. The real-catalog registry tests skip until `catalog.sqlite` has been built once with an open network
+   (`python -c "from cardman.catalog_boot import ensure; ensure()"`).
