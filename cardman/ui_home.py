@@ -215,7 +215,8 @@ def _hun_side(base: str, v: str, t: str) -> str:
         for code, label in fresh)
     return ('<aside class="hunside"><h3>Signal</h3>' + links + '<h3>Fresh</h3>' + times +
             '<p class="hun-why small">Signal is the read on the price: green under what to pay, amber worth a '
-            'second look, red above it. Unrated listings have no sales history yet.</p></aside>')
+            'second look, red above it. Unrated listings have no sales history yet. '
+            'Most asks sit above what a card really sells for, so red is the common read and green is rare on purpose.</p></aside>')
 
 
 def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, base: str = "/") -> str:
@@ -236,7 +237,7 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
         "ORDER BY l.first_seen DESC LIMIT 400").fetchall()
     from .ui_listing import lphoto, verdict
     cut = now - _WINDOW[t] if t in _WINDOW else None
-    tiles = []
+    entries = []
     for key, source, title, url, price, currency, seen, dj, payload, status, iid, imgs in rows:
         try:
             d = json.loads(payload) if payload else (json.loads(dj) if dj else {})
@@ -256,7 +257,10 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
         code = "none"
         if M is not None and payload:
             try:
-                code = _CLS_OF.get(verdict(d, status or "OPEN", M).code, "none")
+                vv = verdict(d, status or "OPEN", M)
+                code = _CLS_OF.get(vv.code, "none")
+                if code == "bad" and not (vv.top or {}).get("basis"):
+                    code = "none"      # a red laser has to be a measured red, not an absence of evidence
             except Exception:
                 code = "none"
         if v != "all" and code != v:
@@ -265,21 +269,24 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
         when = _ago(seen, now)
         own = len(json.loads(imgs or "[]")) if imgs else 0
         art = lphoto(iid, 0, "m", title or "", cls="hun-img") if own else img(_listing_art(d), "large", title or "", cls="card hun-img")
-        tiles.append(f'<a class="hun" href="{e(url)}" data-key="{e(key)}" data-signal="{e(code)}">'
-                     f'<span class="laser l-{e(code)}"></span>{art}'
-                     f'<span class="hun-b"><span class="hun-name">{e((title or "")[:90])}</span>'
-                     f'<span class="hun-price">{e(price_txt)}</span>'
-                     f'<span class="hun-meta">{e(_source_label(source))}{" · " + e(when) if when else ""}</span></span></a>')
-        if len(tiles) >= 12:
-            break
+        entries.append(({"good": 0, "avg": 1, "bad": 2}.get(code, 3), seen or "",
+                        f'<a class="hun" href="{e(url)}" data-key="{e(key)}" data-signal="{e(code)}">'
+                        f'<span class="laser l-{e(code)}"></span>{art}'
+                        f'<span class="hun-b"><span class="hun-name">{e((title or "")[:90])}</span>'
+                        f'<span class="hun-price">{e(price_txt)}</span>'
+                        f'<span class="hun-meta">{e(_source_label(source))}{" · " + e(when) if when else ""}</span></span></a>'))
+    entries.sort(key=lambda x: x[1], reverse=True)
+    entries.sort(key=lambda x: x[0])
+    tiles = [h for _r, _s, h in entries[:12]]
     grid = (f'<div class="hungrid">{"".join(tiles)}</div>' if tiles else
             '<p class="empty">' + ("Nothing matches this filter yet — widen it above, or the collector has not reached this signal today."
                                    if v != "all" or t != "all" else
                                    'Nothing posted yet. The collector runs every few minutes; you can also '
                                    '<a href="/import">import saved pages</a> from any marketplace, Facebook Marketplace included.') + "</p>")
     return ('<section class="hunzone">' + _hun_side(base, v, t) +
-            '<div class="hunmain"><div class="home-h"><h2 class="hun-h">New listings</h2>'
-            '<a href="/opportunities">All listings →</a></div>' + grid + "</div></section>")
+            '<div class="hunmain"><div class="hun-head"><h2 class="hun-h">New listings</h2>'
+            f'<span class="hun-count">{len(tiles)} newest · best signals first</span>'
+            '<a class="hun-all" href="/opportunities">All listings →</a></div>' + grid + "</div></section>")
 
 
 def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", assumed_costs: bool = True, EM=None, game: str = "ygo",
@@ -725,7 +732,9 @@ def record_sale(st, catalog, passcode: str, form: dict, now: datetime) -> str:
 
 
 def character_history(st, name: str, variants: list, now: datetime, cur: str, home: str, book, guide) -> dict:
-    """One series for the whole character: every sale, ask and guide of every card it owns, on one timeline."""
+    """One series for the whole character: every sale, ask and guide of every card it owns, on one timeline.
+
+    Also returns `live`: the latest ask per version, keyed by printing id, so the page can name what is on sale."""
     from .history import Converter, cached_build, buckets, summarize
     h = cached_build(st, "pkm-char:" + name, variants, now,
                      Converter(st, home, cur, getattr(book, "fx", None)), guide_fn=guide)
@@ -733,192 +742,202 @@ def character_history(st, name: str, variants: list, now: datetime, cur: str, ho
     asks = sorted((a for ser in h["series"] for a in ser["asks"]), key=lambda a: (a["d"], a["low"]))
     guides = sorted((g for ser in h["series"] for g in ser["guide"]), key=lambda g: g["d"])
     pts = [(datetime.fromisoformat(s["t"]), s["p"]) for s in sales]
-    return {"currency": h["currency"], "now": h["now"], "default": "all", "series": [{
+    live = {}
+    for ser in h["series"]:
+        if ser["asks"]:
+            live[ser["printing_id"]] = max(ser["asks"], key=lambda a: a["d"])
+    return {"currency": h["currency"], "now": h["now"], "default": "all", "live": live, "series": [{
         "key": "all", "printing_id": "", "label": "All cards", "grade": "Raw", "sales": sales, "asks": asks, "guide": guides,
         "week": buckets(pts, "week"), "month": buckets(pts, "month"),
         "summary": {**summarize(pts, now), "last": sales[-1] if sales else None, "n": len(sales)}}]}
 
 
-def _quartiles(vals: list[float]) -> dict:
-    import statistics
-    if not vals:
-        return {}
-    if len(vals) >= 4:
-        q = statistics.quantiles(vals, n=4, method="inclusive")
-    else:
-        q = [vals[0], vals[len(vals) // 2], vals[-1]]
-    return {"min": vals[0], "p25": q[0], "med": q[1], "p75": q[2], "max": vals[-1], "n": len(vals)}
+def _rank_svg(pts: list[dict], cur: str, w: int = 920, h: int = 260, fs: int = 13, compact: bool = False) -> str:
+    """Each card version as one dot, cheapest on the left, on a log price axis; a live ask hangs off its dot.
 
-
-def _ladder_svg(vals: list[float], cur: str, w: int = 920, h: int = 250, nb: int = 12, fs: int = 13,
-                compact: bool = False) -> str:
-    """Card versions binned by guide price on a log axis, with the quartiles marked.
-
-    A character's cards run from pocket change to four figures; a linear axis flattens that into one spike. Log bins
-    show the shape of the market: where the bulk sits, how long the tail is, and where the middle half lands. Text is
-    sized in viewBox units, so two renders are made: a wide one and a narrow one the CSS swaps at 700px.
+    No bins and no invented averages: every dot is a real version and its real guide price, so the shape of the
+    character's catalogue is visible as it is. A line below a dot is a version listed under its guide right now.
+    Two renders are made (wide and narrow) because SVG text scales with the viewBox; CSS swaps them at 700px.
     """
     import math
-    vals = sorted(v for v in vals if v > 0)
-    if len(vals) < 3 or vals[-1] <= vals[0]:
+    pts = sorted((p for p in pts if p.get("v") and p["v"] > 0), key=lambda p: p["v"])
+    n = len(pts)
+    if n < 3:
         return ""
-    import statistics
-    q = statistics.quantiles(vals, n=4, method="inclusive")
-    lo, hi = vals[0], vals[-1]
-    edges = [lo * (hi / lo) ** (i / nb) for i in range(nb + 1)]
-    edges[-1] = hi + 1e-9
-    counts = [0] * nb
-    for v in vals:
-        for i in range(nb):
-            if edges[i] <= v < edges[i + 1]:
-                counts[i] += 1
-                break
-    cmax = max(counts) or 1
-    L, R, T, B = 6, 6, 40, 46
+    lo, hi = pts[0]["v"], pts[-1]["v"]
+    if hi <= lo:
+        return ""
+    L, R, T, B = (44, 8, 26, 34) if not compact else (40, 8, 24, 32)
     base = h - B
-    plot_h = h - T - B
-    bw = (w - L - R) / nb
     a, b = math.log(lo), math.log(hi)
 
-    def X(v):
-        return L + (w - L - R) * (math.log(max(v, lo)) - a) / (b - a)
+    def Y(v):
+        return T + (base - T) * (1 - (math.log(min(max(v, lo), hi)) - a) / (b - a))
 
-    out = [f'<svg class="ladsvg" viewBox="0 0 {w} {h}" style="font-size:{fs}px" '
-           f'role="img" aria-label="How many cards sit at each price, log scale">']
-    out.append(f'<line x1="{L}" x2="{w - R}" y1="{base}" y2="{base}" class="laaxis"/>')
-    out.append(f'<text x="0" y="14" class="tlab">{len(vals)} card versions</text>')
-    for i, c in enumerate(counts):
-        if not c:
-            continue
-        bh = max(3.0, plot_h * c / cmax)
-        x = L + i * bw
-        out.append(f'<rect x="{x + 1.2:.1f}" y="{base - bh:.1f}" width="{bw - 2.4:.1f}" height="{bh:.1f}" rx="3" class="ladbar">'
-                   f'<title>{charts.fmt(edges[i], cur)} to {charts.fmt(min(edges[i + 1], hi), cur)}: {c} card'
-                   f'{"s" if c != 1 else ""}</title></rect>')
-        if c >= cmax * 0.5:
-            out.append(f'<text x="{x + bw / 2:.1f}" y="{base - bh - 5:.1f}" text-anchor="middle" class="labar">{c}</text>')
+    def X(i):
+        return L + (w - L - R) * i / (n - 1)
+
+    out = [f'<svg class="ladsvg" viewBox="0 0 {w} {h}" style="font-size:{fs}px" role="img" '
+           f'aria-label="Every card version from cheapest to priciest, log price scale">']
+    out.append(f'<text x="0" y="12" class="tlab">{n} card versions, cheapest on the left</text>')
     ticks, p = [], 0
     while p < 9:
         for m in (1, 3):
-            t = m * 10 ** p
+            t = float(m * 10 ** p)
             if lo <= t <= hi:
                 ticks.append(t)
         p += 1
-    if compact:
-        ticks = ticks[::2] if len(ticks) > 4 else ticks
+    if compact and len(ticks) > 4:
+        ticks = ticks[::2]
     for t in ticks:
-        x = X(t)
-        out.append(f'<line x1="{x:.1f}" x2="{x:.1f}" y1="{base}" y2="{base + 5}" class="latick"/>')
-        out.append(f'<text x="{x:.1f}" y="{h - 14}" text-anchor="middle" class="tlab">'
+        y = Y(t)
+        out.append(f'<line x1="{L}" x2="{w - R}" y1="{y:.1f}" y2="{y:.1f}" class="lagrid"/>')
+        out.append(f'<text x="{L - 6}" y="{y + 4:.1f}" text-anchor="end" class="tlab">'
                    f'{charts.fmt(t, cur).replace(".00", "")}</text>')
-    for i, cls in enumerate(("lap25", "lamed", "lap75")):
-        x = X(q[i])
-        out.append(f'<line x1="{x:.1f}" x2="{x:.1f}" y1="{T - 26}" y2="{base:.1f}" class="{cls}"/>')
-        out.append(f'<text x="{x:.1f}" y="{T - 30}" text-anchor="middle" class="lalab">{charts.fmt(q[i], cur)}</text>')
+    out.append(f'<line x1="{L}" x2="{w - R}" y1="{base}" y2="{base}" class="laaxis"/>')
+    r = 3.4 if not compact else 2.9
+    for i, q in enumerate(pts):
+        x, y = X(i), Y(q["v"])
+        tip = f'{q["name"]}: guide {charts.fmt(q["v"], cur)}'
+        if q.get("ask"):
+            tip += f', lowest live ask {charts.fmt(q["ask"], cur)}'
+            if q["ask"] < q["v"]:
+                ya = Y(q["ask"])
+                out.append(f'<line x1="{x:.1f}" x2="{x:.1f}" y1="{y:.1f}" y2="{ya:.1f}" class="askd"/>')
+        out.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r}" class="ladot"><title>{e(tip)}</title></circle>')
     out.append("</svg>")
     return "".join(out)
 
 
 def view_character(st, idx, species: str, token: str, now: datetime, cur: str, home: str, book) -> str:
-    """One character: a hero, what its cards are worth together as an index, then the cards themselves."""
+    """One character: what each of its cards costs, what is on sale now, then the cards themselves."""
     from .character import cards_of, slug
     from .games import card_href
+    from .history import Converter
     from .zone import book as sprites
     cat = idx.cat
+    conv = Converter(st, home, cur, getattr(book, "fx", None))
+
+    def money(usd):
+        try:
+            v = conv(usd, "USD", now, fetch=False)
+        except Exception:
+            v = None
+        return float(v if v is not None else usd)
+
     ids = cards_of(cat, species)
     variants = [v for cid in ids for v in cat.versions(cid)]
     tiles = []
     priced = []
-    moves_num = []
+    where_of = {}
+    gdays = []
     for cid in ids:
         row = cat._cards[cid]
         key = "pkm-" + cid
         s = cat.set(row[3]) or {}
         best = None
         for v in cat.versions(cid):
+            label = v.edition or "Standard"
+            where = f'{row[1]} · {s.get("name") or ""} {row[4]} · {label}'
+            where_of[v.id] = where
             g = cat.guide(v.id)
             if not g:
                 continue
-            label = v.edition or "Standard"
-            where = f'{row[1]} · {s.get("name") or ""} {row[4]} · {label}'
-            priced.append((g[0], where))
-            if best is None or g[0] < best[0]:
-                best = (g[0], label)
-            hist = cat.guide_history(v.id)
-            if len(hist) >= 2 and hist[0][1] and hist[0][1] != hist[-1][1]:
-                moves_num.append(((hist[-1][1] - hist[0][1]) / hist[0][1] * 100, where, hist[0], hist[-1]))
+            gdays.append(str(g[1])[:10])
+            val = money(g[0])
+            priced.append({"v": val, "name": where, "id": v.id, "ask": None})
+            if best is None or val < best[0]:
+                best = (val, label)
         if len(tiles) < 240:
-            money = (f'<span class="ct-from">from </span>' if len(cat.versions(cid)) > 1 else "") + e(charts.fmt(best[0], "USD")) \
+            price = (f'<span class="ct-from">from </span>' if len(cat.versions(cid)) > 1 else "") + e(charts.fmt(best[0], cur)) \
                 if best else '<span class="ct-np">no price yet</span>'
             tiles.append(f'<a class="ztile" href="{e(card_href(key))}">{img(key, "small", row[1])}'
-                         f'<span class="ct-price">{money}</span></a>')
-    hist = character_history(st, slug(species), variants, now, cur, home, book, cat.guide_history)
-    ser = hist["series"][0]
+                         f'<span class="ct-price">{price}</span></a>')
+    hx = character_history(st, slug(species), variants, now, cur, home, book, cat.guide_history)
+    ser = hx["series"][0]
+    live = hx["live"]
+    latest_day = max((a["d"] for a in live.values()), default=None)
+    if latest_day:
+        live = {vid: a for vid, a in live.items() if a["d"] == latest_day}
     months = ser["month"][-18:]
     n_sales = len(ser["sales"])
-    priced.sort()
-    moves_num.sort(key=lambda m: -abs(m[0]))
-    vals = [p[0] for p in priced]
-    up = [m for m in moves_num if m[0] > 0]
-    down = [m for m in moves_num if m[0] < 0]
-    q = _quartiles(vals)
-    median = q.get("med") if q else None
-    fdays = sorted(str(d)[:10] for v in variants for d, x in cat.guide_history(v.id) if d and x)
-    first_day = fdays[0] if fdays else None
-    if q:
-        lead = (f'<b>{q["n"]}</b> priced card versions, from <b>{e(charts.fmt(q["min"], cur))}</b> to '
-                f'<b>{e(charts.fmt(q["max"], cur))}</b>. The middle half sits between '
-                f'<b>{e(charts.fmt(q["p25"], cur))}</b> and <b>{e(charts.fmt(q["p75"], cur))}</b>, '
-                f'median <b>{e(charts.fmt(q["med"], cur))}</b>. Log scale: equal distances are equal multiples.')
-        chart = (f'<div class="idxchart"><span class="lad-d">{_ladder_svg(vals, cur)}</span>'
-                 f'<span class="lad-m">{_ladder_svg(vals, cur, w=400, h=230, nb=8, fs=11, compact=True)}</span></div>'
-                 f'<div class="idxleg"><span><i class="kdot"></i>Card versions per price band</span>'
-                 f'<span><i class="kmed"></i>Median</span><span><i class="kq"></i>25th to 75th percentile</span></div>')
+    priced.sort(key=lambda p: p["v"])
+    guide_of = {p["id"]: p["v"] for p in priced}
+    for p in priced:
+        a = live.get(p["id"])
+        if a:
+            p["ask"] = a["low"]
+    n_buy = sum(a.get("n") or 0 for a in live.values())
+    deals = sorted(({"pct": (a["low"] - guide_of[vid]) / guide_of[vid] * 100, "name": where_of.get(vid, vid),
+                     "ask": a["low"], "guide": guide_of[vid]}
+                    for vid, a in live.items() if vid in guide_of and guide_of[vid] and a.get("low")),
+                   key=lambda d: d["pct"])
+    under = [d for d in deals if d["pct"] < 0]
+    fday = max(gdays) if gdays else None
+    first_day = min(gdays) if gdays else None
+    if priced:
+        lo_p, hi_p = priced[0]["v"], priced[-1]["v"]
+        bits = [f'<b>{len(priced)}</b> card versions priced from <b>{e(charts.fmt(lo_p, cur))}</b> to '
+                f'<b>{e(charts.fmt(hi_p, cur))}</b>' + (f' — {hi_p / lo_p:,.0f}× apart' if lo_p and hi_p / lo_p >= 10 else "") + '.']
+        if n_buy:
+            bits.append(f'<b>{n_buy}</b> listing{"s" if n_buy != 1 else ""} across <b>{len(live)}</b> cards in the '
+                        f'latest listing snapshot ({e(latest_day)}).')
+        else:
+            bits.append('Nothing is listed right now, so the guide prices are the only prices on record.')
+        if under:
+            d0 = under[0]
+            bits.append(f'<b>{len(under)}</b> version{"s" if len(under) != 1 else ""} sit'
+                        f'{"s" if len(under) == 1 else ""} under guide; the deepest is <b>{abs(d0["pct"]):.0f}%</b> under — '
+                        f'<b>{e(d0["name"])}</b> at <b>{e(charts.fmt(d0["ask"], cur))}</b> against a '
+                        f'<b>{e(charts.fmt(d0["guide"], cur))}</b> guide.')
+        elif deals:
+            bits.append('Everything listed asks at or above its guide right now.')
+        lead = " ".join(bits)
+        chart = (f'<div class="idxchart"><span class="lad-d">{_rank_svg(priced, cur)}</span>'
+                 f'<span class="lad-m">{_rank_svg(priced, cur, w=400, h=230, fs=11, compact=True)}</span></div>'
+                 f'<div class="idxleg"><span><i class="kdot"></i>Guide price, one dot per card version</span>'
+                 f'<span><i class="kask"></i>A version listed under its guide, hanging by the gap</span></div>')
     else:
-        lead = f'Not one of these cards has its own guide price yet, so there is no price spread to draw.'
+        lead = 'No guide price exists for any card of this character yet.'
         chart = ""
     perf = []
-    if vals:
-        perf.append(f'Median guide across these cards: <b>{e(charts.fmt(median, cur))}</b>.')
-        perf.append(f'Cheapest card <b>{e(charts.fmt(vals[0], cur))}</b>, priciest <b>{e(charts.fmt(vals[-1], cur))}</b>. '
-                    'They are different cards; the low one is not a price for the high one.')
-    else:
-        perf.append('Not one of these cards has its own guide price yet.')
-    if up or down:
-        perf.append(f'<b>{len(up)}</b> versions rising and <b>{len(down)}</b> falling against their first recorded guide.')
+    if fday:
+        perf.append(f'Guides are TCGplayer market prices, latest snapshot <b>{e(fday)}</b>; they are not sales.')
+    if priced:
+        perf.append(f'Cheapest version: <b>{e(priced[0]["name"])}</b> at <b>{e(charts.fmt(priced[0]["v"], cur))}</b>. '
+                    f'Priciest: <b>{e(priced[-1]["name"])}</b> at <b>{e(charts.fmt(priced[-1]["v"], cur))}</b>. '
+                    'Different cards; the low price does not buy the high one.')
+    if under:
+        perf.append(f'<b>{len(under)}</b> versions are listed under guide right now. The table on the right is the shopping list.')
+    elif deals:
+        perf.append('No version is listed under guide right now; every ask is at or above its guide.')
     perf.append(f'<b>{n_sales}</b> real sale{"s" if n_sales != 1 else ""} recorded across these cards.'
-                if n_sales else 'No real sale of any of these cards yet. A guide is not a sale.')
-    last_ask_day = max((a["d"] for a in ser["asks"]), default=None)
-    now_asks = [a for a in ser["asks"] if a["d"] == last_ask_day]
-    if now_asks:
-        import statistics
-        n_listed = sum(a["n"] for a in now_asks)
-        lows = sorted(a["low"] for a in now_asks)
-        perf.append(f'For sale right now: <b>{n_listed}</b> listing{"s" if n_listed != 1 else ""} across '
-                    f'<b>{len(now_asks)}</b> card{"s" if len(now_asks) != 1 else ""}, cheapest at '
-                    f'<b>{e(charts.fmt(lows[0], cur))}</b>, typical listed at '
-                    f'<b>{e(charts.fmt(statistics.median(lows), cur))}</b> (snapshot {e(last_ask_day)}).')
+                if n_sales else 'No real sale of any of these cards is recorded yet.')
     stats = (f'<div class="chero-stats">'
              f'<div><small>Cards</small><b>{len(ids)}</b></div>'
-             f'<div><small>Versions priced</small><b>{len(vals)}</b></div>'
-             f'<div><small>Median guide</small><b>{e(charts.fmt(median, cur)) if median is not None else "—"}</b></div>'
-             f'<div><small>Cheapest</small><b>{e(charts.fmt(vals[0], cur)) if vals else "—"}</b></div>'
-             f'<div><small>Priciest</small><b>{e(charts.fmt(vals[-1], cur)) if vals else "—"}</b></div>'
+             f'<div><small>Versions priced</small><b>{len(priced)}</b></div>'
+             f'<div><small>Priciest</small><b>{e(charts.fmt(priced[-1]["v"], cur)) if priced else "—"}</b></div>'
+             f'<div><small>Listed now</small><b>{n_buy}</b></div>'
+             f'<div><small>Under guide</small><b>{len(under)}</b></div>'
              f'<div><small>Sales recorded</small><b>{n_sales}</b></div></div>')
-    movers = "".join(
-        f'<li class="mv {"up" if m[0] > 0 else "down"}"><b>{m[0]:+.0f}%</b><span>{e(m[1])}</span>'
-        f'<small>{e(charts.fmt(m[2][1], "USD"))} → {e(charts.fmt(m[3][1], "USD"))}</small></li>'
-        for m in moves_num[:6])
-    if movers:
+    if deals:
+        rows = "".join(
+            f'<tr><td><span class="dname">{e(d["name"])}</span></td>'
+            f'<td class="n">{e(charts.fmt(d["ask"], cur))}</td><td class="n">{e(charts.fmt(d["guide"], cur))}</td>'
+            f'<td class="n"><span class="{"dunder" if d["pct"] < 0 else "dover"}">{d["pct"]:+.0f}%</span></td></tr>'
+            for d in deals[:8])
+        more = f'<p class="why small">Plus {len(deals) - 8} more versions listed.</p>' if len(deals) > 8 else ""
+        board = (f'<h3>On sale right now</h3><table class="dbord"><thead><tr><th>Card version</th><th class="n">Live ask</th>'
+                 f'<th class="n">Guide</th><th class="n">vs guide</th></tr></thead><tbody>{rows}</tbody></table>{more}'
+                 f'<p class="why small">From the {e(latest_day)} listing snapshot: lowest live listing of each version '
+                 'against its guide price; negative means listed under it. A gap past about 60% usually means the '
+                 'listing is a different printing — open the card first.</p>')
         facts = (f'<div class="chcols"><div><h3>What the numbers say</h3><ul class="chfacts">'
-                 + "".join(f"<li>{p}</li>" for p in perf) + '</ul></div>'
-                 f'<div><h3>Biggest moves</h3><ul class="mvlist">{movers}</ul></div></div>')
-        foot = ('<p class="why small">Guide prices, not sales. A move is the first and last stored guide for that '
-                'exact version.</p>')
+                 + "".join(f"<li>{p}</li>" for p in perf) + f'</ul></div><div>{board}</div></div>')
     else:
         facts = ('<h3>What the numbers say</h3><ul class="chfacts">' + "".join(f"<li>{p}</li>" for p in perf) + '</ul>')
-        foot = ('<p class="why small">Guide prices, not sales. A move needs two stored guide points for the same '
-                'version; each version has one snapshot so far, so no moves are shown.</p>')
+    foot = ('<p class="why small">Guide prices, not sales. No version has a second saved guide yet, so no price moves '
+            'are shown.</p>')
     vmax = max((b["n"] for b in months), default=0)
     if months and vmax:
         bars = "".join(
@@ -993,18 +1012,24 @@ filter:drop-shadow(0 26px 34px rgba(35,55,45,.24)) drop-shadow(0 4px 8px rgba(35
 @media(max-width:700px){.lad-d{display:none}.lad-m{display:block}}
 .ladsvg{display:block;width:100%;height:auto;overflow:visible}
 .ladsvg .laaxis{stroke:var(--axis);stroke-width:1.4}
-.ladsvg .latick{stroke:var(--axis);stroke-width:1}
+.ladsvg .lagrid{stroke:var(--line);stroke-width:1;stroke-dasharray:2 4;opacity:.7}
 .ladsvg .tlab{fill:var(--muted);font-size:1em}
-.ladsvg .ladbar{fill:var(--s3);fill-opacity:.5}
-.ladsvg .ladbar:hover{fill-opacity:.85}
-.ladsvg .labar{fill:var(--fg2);font-size:.85em;font-weight:600}
-.ladsvg .lamed{stroke:var(--fg);stroke-width:2.2}.ladsvg .lap25,.ladsvg .lap75{stroke:var(--fg2);stroke-width:1.2;stroke-dasharray:3 3}
-.ladsvg .lalab{fill:var(--fg);font-size:1em;font-weight:700}
+.ladsvg .ladot{fill:var(--fg2);fill-opacity:.55}
+.ladsvg .ladot:hover{fill:var(--fg);fill-opacity:1}
+.ladsvg .askd{stroke:var(--teal);stroke-width:2;stroke-linecap:round}
+.ladsvg .askp{stroke:var(--fg2);stroke-width:1.4;stroke-opacity:.5;stroke-linecap:round}
 .idxleg{display:flex;flex-wrap:wrap;gap:16px;margin:6px 0 2px;font-size:12px;color:var(--fg2)}
-.idxleg i{display:inline-block;width:12px;height:12px;border-radius:50%;vertical-align:middle;margin-right:6px}
-.idxleg .kdot{background:color-mix(in srgb,var(--s3) 60%,transparent)}
-.idxleg .kmed{background:var(--fg);border-radius:2px;width:14px;height:3px}
-.idxleg .kq{background:repeating-linear-gradient(90deg,var(--fg2) 0 3px,transparent 3px 6px);border-radius:0;width:14px;height:8px}
+.idxleg i{display:inline-block;vertical-align:middle;margin-right:6px}
+.idxleg .kdot{width:10px;height:10px;border-radius:50%;background:var(--fg2);opacity:.6}
+.idxleg .kask{width:3px;height:14px;border-radius:2px;background:var(--teal)}
+.dbord{width:100%;border-collapse:collapse;font-size:13px}
+.dbord th{text-align:left;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;
+padding:0 8px 6px 0;border-bottom:1px solid var(--line);white-space:nowrap}
+.dbord td{padding:7px 8px 7px 0;border-bottom:1px solid var(--line);vertical-align:middle}
+.dbord td.n,.dbord th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.dbord .dname{display:block;max-width:330px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)}
+.dbord .dunder{color:var(--teal);font-weight:700}.dbord .dover{color:var(--fg2)}
+.dbord tr:last-child td{border-bottom:0}
 .chcols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:26px;margin:6px 0 0}
 @media(max-width:820px){.chcols{grid-template-columns:1fr}.chero{flex-direction:column;align-items:flex-start;gap:10px}}
 .chfacts{list-style:none;margin:0;padding:0;display:grid;gap:8px}
@@ -1093,7 +1118,7 @@ font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;font-we
 :root[data-theme="vault"] form.search button{background:var(--accent);border-color:var(--accent);color:#15130f}
 :root[data-theme="vault"] .tile-l,:root[data-theme="vault"] .ctile{border-color:#2f2a21;background:linear-gradient(180deg,#18150f,#13110d)}
 :root[data-theme="vault"] .tl-price{color:var(--accent)}
-.hunzone{max-width:1400px;margin:56px auto 64px;padding:0 20px;display:flex;gap:26px;align-items:flex-start}
+.hunzone{max-width:none;margin:56px 0 64px;padding:0 28px;display:flex;gap:26px;align-items:flex-start}
 .hunside{flex:0 0 176px;position:sticky;top:96px;display:flex;flex-direction:column;gap:2px;font-size:13px}
 .hunside h3{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:14px 0 4px}
 .hunside h3:first-child{margin-top:0}
@@ -1105,14 +1130,19 @@ font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;font-we
 .dot.good{background:#2fbf71;box-shadow:0 0 6px #2fbf7190}.dot.avg{background:#e6a23c;box-shadow:0 0 6px #e6a23c90}
 .dot.bad{background:#e05252;box-shadow:0 0 6px #e0525290}.dot.none{background:var(--line)}
 .hunmain{flex:1 1 auto;min-width:0}
-.hunmain .home-h{margin:0 0 16px}
-.hun-h{text-transform:uppercase;letter-spacing:.06em}
-section.hero.hunt{padding:64px 12px 10px}
+.hun-head{display:flex;align-items:flex-end;gap:18px;margin:0 0 26px}
+.hun-h{font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;font-weight:800;font-size:clamp(38px,7vw,76px);
+line-height:.95;letter-spacing:-.02em;text-transform:uppercase;margin:0;color:var(--fg)}
+.hun-h::after{content:"";display:block;height:6px;width:150px;margin-top:12px;border-radius:3px;
+background:linear-gradient(90deg,#2fbf71,#e6a23c,#e05252)}
+.hun-count{font-size:13px;color:var(--muted);padding-bottom:8px}
+.hun-all{margin-left:auto;font-size:14px;padding-bottom:8px}
+section.hero.hunt{padding:84px 12px 14px}
 .huntitle{font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;font-style:italic;font-weight:700;
-font-size:clamp(30px,6vw,54px);letter-spacing:.01em;margin:0 0 26px;cursor:default}
+font-size:clamp(34px,7vw,64px);letter-spacing:.01em;margin:0 0 30px;cursor:default}
 .huntitle span{display:inline-block;white-space:pre;transition:transform .35s cubic-bezier(.2,1.8,.4,1),color .35s;transition-delay:calc(var(--i)*30ms)}
 .huntitle:hover span{transform:translateY(-8px) rotate(-5deg);color:var(--accent)}
-.hungrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:20px}
+.hungrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:22px}
 a.hun{position:relative;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);border-radius:16px;
 overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06);text-decoration:none;color:inherit;transition:transform .15s,box-shadow .15s}
 a.hun:hover{transform:translateY(-4px);box-shadow:0 12px 28px rgba(0,0,0,.18)}
@@ -1121,7 +1151,7 @@ a.hun:hover{transform:translateY(-4px);box-shadow:0 12px 28px rgba(0,0,0,.18)}
 .l-avg{background:linear-gradient(90deg,#e6a23c,#f0c078);box-shadow:0 0 10px #e6a23c80}
 .l-bad{background:linear-gradient(90deg,#e05252,#f08080);box-shadow:0 0 10px #e0525280}
 .l-none{background:var(--line)}
-a.hun img.hun-img,a.hun span.hun-img{width:100%;height:220px;object-fit:cover;border-radius:0;background:var(--bg)}
+a.hun img.hun-img,a.hun span.hun-img{width:100%;height:230px;object-fit:cover;border-radius:0;background:var(--bg)}
 a.hun span.card.hun-img,a.hun img.card.hun-img{object-fit:contain;padding:10px;box-sizing:border-box}
 .hun-b{display:flex;flex-direction:column;gap:5px;padding:12px 14px 14px}
 .hun-name{font-size:14px;font-weight:600;color:var(--fg);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:2.7em}
