@@ -21,6 +21,24 @@ def test_every_charizard_label_files_under_charizard():
     assert species_of("N's Zoroark") == ["Zoroark"]
 
 
+def test_legend_and_oversized_names_resolve_to_the_pokemon():
+    assert species_of("Darkrai & Cresselia Legend - 99/102 &") == ["Darkrai", "Cresselia"]
+    assert species_of("Palkia & Dialga Legends - 101/102 +") == ["Palkia", "Dialga"]
+    assert species_of("Espeon & Deoxys GX Oversized") == ["Espeon", "Deoxys"]
+    assert species_of("Celebi V - 245/264") == ["Celebi"]
+    assert species_of("Flareon E4") == ["Flareon"] and species_of("Raichu GL") == ["Raichu"]
+    assert species_of("Garchomp C LV.X") == ["Garchomp"]
+
+
+def test_registry_card_type_decides_the_supertype():
+    from cardman.pkm_catalog import _supertype
+    assert _supertype('{"Card Type": "Supporter"}') == "Trainer"
+    assert _supertype('{"Card Type": "Pokémon Tool"}') == "Trainer"
+    assert _supertype('{"Card Type": "Basic Energy"}') == "Energy"
+    assert _supertype('{"Card Type": "Psychic"}') == "Pokémon"
+    assert _supertype(None) is None and _supertype("not json") is None
+
+
 def test_trainer_cards_and_source_duplicates_are_not_characters_or_extra_cards(tmp_path):
     from cardman.character import species_index
     from tests.pkm_fixture import catalog

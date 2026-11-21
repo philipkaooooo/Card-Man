@@ -10,25 +10,31 @@ import re
 
 # Form labels, card suffixes and owner labels: they name a version of the Pokémon, never another Pokémon.
 _LEAD = re.compile(r"^(mega|m|radiant|shining|light|dark|detective|special|delivery|team|alolan|galarian|hisuian|paldean)$", re.I)
-_TAIL = re.compile(r"^(ex|gx|v|vmax|vstar|v-?union|break|prime|legend|star|lv\.?x|g|x|y|δ|◇|✪)$", re.I)
-_TRAIL_NUM = re.compile(r"\s*[-–]\s*\d+$")
+_TAIL = re.compile(r"^(ex|gx|v|vmax|vstar|v-?union|break|prime|legend|star|lv\.?x|g|x|y|e4|gl|fb|c|δ|◇|✪)$", re.I)
+_TAIL_NAME = re.compile(r"^(legends?|oversized|jumbo)$", re.I)
+_TRAIL_NUM = re.compile(r"\s*[-–]\s*\d+(?:/\d+)?$")
+_TRAIL_JUNK = re.compile(r"[\s&+]+$")
 
 
-def species_of(name: str) -> list[str]:
-    """The Pokémon in a card name. A tag-team card is both. A form (ex, VSTAR, Mega X, Ash's) is not a different
-    character: every Charizard card files under Charizard."""
-    text = _TRAIL_NUM.sub("", name or "")
-    text = (text.replace("-EX", " EX").replace("-GX", " GX").replace("-V", " V").replace("-VMAX", " VMAX")
-                .replace("-VSTAR", " VSTAR").replace("δ", " ").replace("★", " ").replace("◇", " ").replace("✪", " "))
+def _part(text: str) -> str:
     parts = [p for p in text.split() if p]
     while parts and _LEAD.match(parts[0]):
         parts.pop(0)
     while len(parts) > 1 and parts[0].endswith(("'s", "’s")):
         parts.pop(0)                      # Ash's Pikachu, Blaine's Charizard: the owner is not the character
-    while parts and _TAIL.match(parts[-1]):
+    while parts and (_TAIL.match(parts[-1]) or _TAIL_NAME.match(parts[-1])):
         parts.pop()
-    text = " ".join(parts).strip() or name.strip()
-    return [p.strip() for p in re.split(r"\s+&\s+", text) if p.strip()] or [name.strip()]
+    return " ".join(parts)
+
+
+def species_of(name: str) -> list[str]:
+    """The Pokémon in a card name. A tag-team card is both. A form (ex, VSTAR, Mega X, Ash's) is not a different
+    character: every Charizard card files under Charizard."""
+    text = (name or "").replace("-EX", " EX").replace("-GX", " GX").replace("-V", " V").replace("-VMAX", " VMAX") \
+                       .replace("-VSTAR", " VSTAR").replace("δ", " ").replace("★", " ").replace("◇", " ").replace("✪", " ")
+    text = _TRAIL_NUM.sub("", _TRAIL_JUNK.sub("", text))
+    found = [p for p in (_part(p) for p in re.split(r"\s+&\s+", text)) if p]
+    return found or [name.strip()]
 
 
 def slug(name: str) -> str:

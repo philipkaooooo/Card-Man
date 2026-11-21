@@ -349,7 +349,8 @@ class PkmCatalog:
                 for row in con.execute("SELECT cid, set_id, set_name, release, number, name, rarity, image, subset, data_json FROM extra_card"):
                     cid, sid, sname, rel, number, name, rarity = row[:7]
                     self._extra[cid] = row
-                    self._cards[cid] = (cid, name, norm(name), sid, (number or "").split("/")[0], None, rarity, None, None, rel)
+                    self._cards[cid] = (cid, name, norm(name), sid, (number or "").split("/")[0], _supertype(row[9]),
+                                        rarity, None, None, rel)
                     if row[8] != "Jumbo":                       # a jumbo card is not a single: never a listing candidate
                         self.by_name.setdefault(norm(name), []).append(cid) if hasattr(self, "by_name") else None
             if "dropped" in tables:
@@ -564,6 +565,22 @@ _SUFFIX_WORDS = {"ex", "gx", "v", "vmax", "vstar", "break", "prime", "legend", "
 
 def _num(n: str | None) -> str:
     return (n or "").lstrip("0").lower() or "0"
+
+
+_TRAINER_TYPES = {"supporter", "item", "stadium", "tool", "pokémon tool", "technical machine"}
+
+
+def _supertype(data_json: str | None) -> str | None:
+    """The registry keeps the printed card type in its JSON. Trainer subtypes and Energy are not Pokémon."""
+    try:
+        t = (json.loads(data_json or "{}").get("Card Type") or "").strip().lower()
+    except (ValueError, TypeError):
+        return None
+    if not t:
+        return None
+    if t in _TRAINER_TYPES:
+        return "Trainer"
+    return "Energy" if "energy" in t else "Pokémon"
 
 
 def main(argv: list[str] | None = None) -> None:
