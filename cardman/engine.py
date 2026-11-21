@@ -618,14 +618,23 @@ def main(argv: list[str] | None = None) -> None:
     for f in ("printed-code", "rarity", "edition", "product", "language", "authentic"):
         ap.add_argument(f"--{f}")
     a = ap.parse_args(argv)
-    eng = Engine(a.store)
-    eng._skip_daily_catalog = False          # the long-running engine keeps the master card list fresh
     if a.cmd == "confirm":
+        eng = Engine(a.store)
         if not a.key:
             ap.error("confirm needs a listing key")
         eng.confirm(a.key, {"printed_set_code": a.printed_code, "verified_rarity": a.rarity, "verified_edition": a.edition, "verified_product": a.product,
                             "card_language": a.language, "authenticity_ok": {"yes": True, "no": False}.get(a.authentic or "")},
                     actor="cli", now=datetime.now(timezone.utc))
+        return
+    import fcntl                          # one pass at a time across the loop, the Check button, and a manual run
+    holder = open(Path(str(a.store) + ".engine.lock"), "a+")
+    try:
+        fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print(json.dumps({"skipped": "another engine is running"}))
+        return
+    eng = Engine(a.store)
+    eng._skip_daily_catalog = False          # the long-running engine keeps the master card list fresh
     while True:
         if a.cmd == "run":
             with eng.db:

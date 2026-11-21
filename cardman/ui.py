@@ -2205,19 +2205,15 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                         self._redirect(f"/obs/{quote(oid)}", err=str(x))
                 elif parts == ["engine", "tick"]:
                     try:
-                        if not ENGINE_LOCK.acquire(blocking=False):
-                            return self._redirect("/opportunities", msg="A check is already running in the background; refresh in a minute.")
-                        try:
-                            from .engine import Engine
-                            eng = Engine(store_path, catalog=catalog() if catalog else None)
-                            rep = eng.tick(now)
-                            eng.db.close()
-                        finally:
-                            ENGINE_LOCK.release()
-                        self._redirect("/opportunities", msg=f"Checked: {rep.new_listings} new, {rep.analyzed} analyzed, "
-                                       f"{rep.open_opportunities} open.", err="; ".join(rep.errors[:3]))
+                        import subprocess
+                        import sys as _sys
+                        subprocess.Popen([_sys.executable, "-m", "cardman.engine", "once", "--store", store_path],
+                                         cwd=str(Path(__file__).resolve().parent.parent),
+                                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                         start_new_session=True)
+                        self._redirect("/opportunities", msg="Check started. It runs in its own process, so the board stays live.")
                     except Exception as x:
-                        self._redirect("/opportunities", err=f"Check failed: {type(x).__name__}: {x}")
+                        self._redirect("/opportunities", err=f"Check failed to start: {type(x).__name__}: {x}")
                 elif len(parts) == 3 and parts[0] == "opp" and parts[2] == "confirm":
                     k = unquote(parts[1])
                     try:
