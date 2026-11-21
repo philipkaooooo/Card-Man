@@ -183,10 +183,10 @@ def app2(tmp_path):
     srv.shutdown()
 
 
-def test_one_header_with_five_places_and_old_pages_still_reachable(app2):
+def test_one_header_with_six_places_and_old_pages_still_reachable(app2):
     h = app2.get("/deals?syn=1")
     nav = h[h.index('<nav class="main"'):h.index("</nav>")]
-    assert nav.count("<a ") == 5 and all(x in nav for x in (">Home<", ">Listings<", ">Cards<", ">Add sales<", ">Settings<"))
+    assert nav.count("<a ") == 6 and all(x in nav for x in (">Characters<", ">Home<", ">Listings<", ">Cards<", ">Add sales<", ">Settings<"))
     assert 'aria-current="page">Settings' in nav                      # Deals lives under Settings now
     assert h.index('class="logo"') < h.index("<nav") < h.index('class="curs"')
     assert "← Settings" in h
