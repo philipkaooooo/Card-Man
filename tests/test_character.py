@@ -86,10 +86,15 @@ def test_market_rows_rank_characters_and_open_on_cached_art(tmp_path):
 def test_character_page_leads_with_the_price_analysis(tmp_path):
     import types
     from datetime import datetime, timezone
+    from cardman.store import Store
     from cardman.ui_home import view_character
     from tests.pkm_fixture import catalog
-    page = view_character(types.SimpleNamespace(cat=catalog(tmp_path)), "Charizard", "",
-                          datetime.now(timezone.utc))
-    assert page.index("What these cards are worth") < page.index("Every card of Charizard")
+    st = Store(tmp_path / "s.sqlite")
+    idx = types.SimpleNamespace(cat=catalog(tmp_path))
+    page = view_character(st, idx, "Charizard", "", datetime.now(timezone.utc), "USD", "USD",
+                          types.SimpleNamespace(fx=None))
+    assert page.index("How Charizard is performing") < page.index("Every card of Charizard")
     assert 'class="stats"' in page and 'class="mvlist"' in page and "Median guide" in page
+    assert 'data-hchart="/pkm/character/charizard/history.json"' in page and "Sales volume" in page
     assert "Guide prices, not sales." in page
+    assert "Add a sale" not in page and 'class="ct-name"' not in page and 'class="ct-price"' in page

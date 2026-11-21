@@ -110,14 +110,14 @@ def icon(ok: bool | None) -> str:
 
 
 CSS = """
-:root{color-scheme:light;--bg:#f2f6fa;--surface:#ffffff;--fg:#111c25;--fg2:#3e4f5c;--muted:#677888;
+:root{color-scheme:light;--bg:#fbf9f4;--surface:#ffffff;--fg:#111c25;--fg2:#3e4f5c;--muted:#677888;
 --line:#e1e9f0;--axis:#ccdae4;--soft:#edf3f8;--accent:#0e7f7b;
 --s1:#0e7f7b;--s2:#3b82d6;--s3:#12a08f;--s4:#c77b12;--neg:#d0453f;
 --good:#12a08f;--good-text:#0b6f64;--crit:#c9383b;--warn:#c98a12;
 --sky:#7fc3e6;--sky-text:#1f76a5;--teal:#12a08f;--teal-deep:#0b6f64;--slate:#4b6175;--grey:#5f7080;
 --track:#e1e9f0;--shadow:0 1px 2px rgba(15,30,45,.05),0 8px 24px rgba(15,30,45,.06);
 --shadow-hi:0 2px 6px rgba(15,30,45,.07),0 16px 40px rgba(15,30,45,.12);
---canvas:linear-gradient(180deg,#90ee90 0,#c6f2c4 200px,#e9f8e6 520px,#fbfcfa 100%);
+--canvas:linear-gradient(180deg,#ffffff 0,#fdfbf7 55%,#f9f6ee 100%);
 --ease:cubic-bezier(.2,.8,.2,1);--r:14px}
 @media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){color-scheme:dark;--bg:#0d0d0d;
 --surface:#1a1a19;--fg:#f0efec;--fg2:#c3c2b7;--muted:#898781;--line:#2c2c2a;--axis:#383835;--soft:#232322;
@@ -1911,13 +1911,26 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                         return self._page("search", c["name_en"], view_card(
                             st, idx, key, now, self._cur(), book=_book(st, now), catalog=idx.cat, home=_engine_home(st), token=token,
                             filters={k: qs.get(k, [""])[0][:300] for k in ("platform", "graded", "type", "v")}), qs, crumb=("Cards", "/pkm/search"))
+                if len(parts) == 3 and parts[0] == "character" and parts[2] == "history.json" \
+                        and _re.fullmatch(r"[a-z0-9-]{1,48}", parts[1]):
+                    from .character import cards_of, find_species
+                    from .ui_home import character_history
+                    who = find_species(idx.cat, parts[1]) if idx else None
+                    if not who:
+                        raise KeyError(parts[1])
+                    variants = [v for cid in cards_of(idx.cat, who) for v in idx.cat.versions(cid)]
+                    out = character_history(st, parts[1], variants, now, self._cur(), _engine_home(st), _book(st, now),
+                                            idx.cat.guide_history)
+                    return self._send(200, json.dumps(out).encode(), "application/json")
                 if len(parts) == 2 and parts[0] == "character" and _re.fullmatch(r"[a-z0-9-]{1,48}", parts[1]):
                     from .character import find_species
                     who = find_species(idx.cat, parts[1]) if idx else None
                     if not who:
                         raise KeyError(parts[1])
                     from .ui_home import view_character
-                    return self._page("search", who, view_character(idx, who, token, now), qs, crumb=("Cards", "/pkm/search"))
+                    return self._page("search", who, view_character(st, idx, who, token, now, self._cur(),
+                                                                    _engine_home(st), _book(st, now)), qs,
+                                      crumb=("Cards", "/pkm/search"))
                 if len(parts) == 2 and parts[0] == "icon" and parts[1].endswith(".png") and parts[1][:-4].isdigit():
                     from .zone import icon
                     body, ctype = icon(int(parts[1][:-4]))

@@ -82,6 +82,7 @@ def test_motion_rules():
 
 def test_palette_is_reflective_white_with_teal_and_slate():
     from cardman.ui import CSS as BASE_CSS
-    assert "--bg:#f2f6fa" in BASE_CSS and "--surface:#ffffff" in BASE_CSS and "--teal:#12a08f" in BASE_CSS
+    assert "--bg:#fbf9f4" in BASE_CSS and "--surface:#ffffff" in BASE_CSS and "--teal:#12a08f" in BASE_CSS
+    assert "--canvas:linear-gradient(180deg,#ffffff 0,#fdfbf7 55%,#f9f6ee 100%)" in BASE_CSS   # tusk white, no green wash
     assert ':root[data-theme="auto"]' in DECIDE_CSS                 # dark block stays with the decide look
     assert not re.search(r"orange|#d9660f|#f28b38|#a64805|#ffa65e", BASE_CSS + DECIDE_CSS, re.I)
