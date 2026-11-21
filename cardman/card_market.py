@@ -21,6 +21,7 @@ CREATE INDEX IF NOT EXISTS card_listing_pc ON card_listing(passcode, card_prob);
 CREATE TABLE IF NOT EXISTS card_listing_meta (k TEXT PRIMARY KEY, v TEXT);
 """
 SITE = {"ebay": "eBay", "yahoo": "Yahoo! Auctions", "mercari": "Mercari", "130point": "130point", "manual": "You", "other": "Other"}
+THIS_CARD = 0.95   # at or above this, the listing is this card; below it, only "might be"
 
 
 def site_of(source: str) -> str:
