@@ -48,8 +48,10 @@ def rail(counts: dict, active: str | None, href, compact: bool = False) -> str:
     pills = []
     for code in (BUY, CHECK, WATCH, PASS):
         on = active == code
+        current = ' aria-current="true"' if on else ""
+        tip = e(LABEL[code] + ": " + LANE_WHY[code])
         pills.append(f'<a class="lane l-{LANE[code]}{" on" if on else ""}" href="{e(href(code, on))}"'
-                     f'{" aria-current=\"true\"" if on else ""} data-tip="{e(LABEL[code] + ": " + LANE_WHY[code])}">'
+                     f'{current} data-tip="{tip}">'
                      f'<span class="lane-i">{_icon(code)}</span><span class="lane-w">{e(LABEL[code])}</span>'
                      f'<b class="lane-n" data-n="{counts.get(code, 0)}">{counts.get(code, 0):,}</b></a>')
     return (f'<nav class="rail{" compact" if compact else ""}" aria-label="Decisions"><span class="rail-ind" aria-hidden="true"></span>'

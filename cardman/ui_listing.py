@@ -423,7 +423,8 @@ def view_list(st, cards, now, M, *, v_filter: str, t_filter: str, home_cur: str,
 
     def chip(param, val, text):
         on = state[param] == val
-        return f'<a class="fchip{" on" if on else ""}" href="{e(href(**{param: val}))}"{" aria-current=\"true\"" if on else ""}>{e(text)}</a>'
+        current = ' aria-current="true"' if on else ""
+        return f'<a class="fchip{" on" if on else ""}" href="{e(href(**{param: val}))}"{current}>{e(text)}</a>'
     bar = ('<div class="filterbar">'
            + rail(counts, v_filter if v_filter in ORDER else None, lambda code, on: href(v="all" if on else code))
            + '<div class="fsecs"><div class="fsec" role="group" aria-label="All Cards"><h3>All Cards</h3>'
