@@ -605,7 +605,7 @@ class Engine:
                 return
             an = self._analyze(r, verified)
             self._persist_condition(r.key, r)
-            cands = [p.id for p in an.identity.candidates][:200]
+            cands = list(dict.fromkeys(p.id for p in an.identity.candidates))[:200]
         self._record_observation(r, cands, now, rep)
 
 

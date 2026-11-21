@@ -219,8 +219,9 @@ class Store:
                 "INSERT INTO observation VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (o.id, o.evidence_type.value, o.source, o.listing_id, o.source_event_id, _ts(o.event_time),
                  _ts(o.capture_time), int(o.synthetic_fixture), canonical(d), h, _ts(now or _now())))
+            distinct = dict.fromkeys(o.printing_candidates)   # two evidence paths can name the same print; the link is a set
             self.db.executemany("INSERT INTO observation_printing VALUES (?,?)",
-                                [(o.id, p) for p in o.printing_candidates])
+                                [(o.id, p) for p in distinct])
         return True
 
     def set_status(self, obs_id: str, status: str, reason: str, *, actor: str, now: datetime | None = None) -> None:
