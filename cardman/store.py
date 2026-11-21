@@ -155,9 +155,14 @@ class Store:
             self.path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(str(path), timeout=30)     # wait for the engine's write instead of failing the page
         self.db.execute("PRAGMA foreign_keys=ON")
-        self.db.executescript(_SCHEMA)
-        with self.db:
-            self.db.execute("INSERT OR IGNORE INTO meta VALUES ('store_schema_version', ?)", (str(STORE_SCHEMA_VERSION),))
+        try:   # already set up: a page only reads, so it never waits behind the engine's long write
+            ready = self.db.execute("SELECT value FROM meta WHERE key='store_schema_version'").fetchone()
+        except sqlite3.Error:
+            ready = None
+        if not ready or ready[0] != str(STORE_SCHEMA_VERSION):
+            self.db.executescript(_SCHEMA)
+            with self.db:
+                self.db.execute("INSERT OR IGNORE INTO meta VALUES ('store_schema_version', ?)", (str(STORE_SCHEMA_VERSION),))
 
     def save_public_listings(self, rows: list[dict], seen_at: datetime) -> tuple[int, list[str]]:
         """Current asks that already name one card. A listing id never moves to a different card.

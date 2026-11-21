@@ -428,8 +428,10 @@ class PkmCatalog:
                                (cid, p.edition)).fetchone()
         if row:
             return (row[0], row[1])
+        if self.registry_path is None:            # a catalog given no master list (tests) never reads the real one
+            return None
         from .catalog_boot import version_market
-        return version_market(pid)
+        return version_market(pid, self.registry_path)
 
     def guide_history(self, pid: str) -> list[tuple[str, float]]:
         p = self.by_id.get(pid)

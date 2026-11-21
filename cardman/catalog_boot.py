@@ -28,15 +28,14 @@ def _count(db: Path, sql: str) -> int:
         return 0
 
 
-def missing() -> list[str]:
-    """Catalogs that are absent or empty, in the order they have to be built."""
-    from .catalog.registry import DB as MASTER
-    from .identity_cache import IdentityCache
-    from .pkm_catalog import DB as PKM
+def missing(root: Path = ROOT) -> list[str]:
+    """Catalogs that are absent or empty under root (the app's own folder by default), in the order they are built."""
+    cache = root / "data" / "cache"
+    PKM, MASTER = cache / "pkm.sqlite", cache / "catalog.sqlite"
     out = []
     if _count(PKM, "SELECT COUNT(*) FROM pkm_card") == 0:
         out.append("pkm")
-    if _count(ROOT / "data" / "cache" / "identity.sqlite", "SELECT COUNT(*) FROM printing") == 0:
+    if _count(cache / "identity.sqlite", "SELECT COUNT(*) FROM printing") == 0:
         out.append("ygo")
     if "pkm" not in out and "ygo" not in out and _count(MASTER, "SELECT COUNT(*) FROM printing") == 0:
         out.append("master")
@@ -55,9 +54,11 @@ def read_status() -> dict:
         return {}
 
 
-def version_market(pid: str) -> tuple[float, str] | None:
-    """The latest TCGplayer market price stored for this exact version. None if that version has no row."""
-    from .catalog.registry import DB as MASTER
+def version_market(pid: str, master: Path | None = None) -> tuple[float, str] | None:
+    """The latest TCGplayer market price stored for this exact version in the master list (the app's own by default).
+    None if that version has no row."""
+    from .catalog.registry import DB
+    MASTER = Path(master) if master else DB
     if not pid or not MASTER.exists():
         return None
     con = _market_con(MASTER)
