@@ -94,16 +94,28 @@ def purge_database(path: str | Path, identifiers: list[str]) -> PurgeResult:
     return res
 
 
+_TOKEN = re.compile(rb"[A-Za-z0-9_.\-+/@*]{3,120}")
+_ALLOWED = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-+/@*")
+
+
 def purge_files(raw_root: str | Path, identifiers: list[str]) -> int:
-    rx = _pattern(identifiers)
+    ids = {i.encode() for i in identifiers if i}
     root = Path(raw_root)
-    if rx is None or not root.exists():
+    if not ids or not root.exists():
         return 0
+    rx = _pattern(identifiers)
+    # An identifier outside the token alphabet cannot be found by the fast membership test; scan everything instead.
+    tokenizable = all(c in _ALLOWED for i in identifiers if i for c in i)
     changed = 0
     for f in root.rglob("*"):
         if not f.is_file():
             continue
-        text = f.read_bytes().decode("utf-8", errors="surrogateescape")
+        data = f.read_bytes()
+        # One token pass is far cheaper than a 1,200-way alternation scoped to whole words: a file without any
+        # candidate token cannot contain a match, so only those that do pay for the precise substitution.
+        if tokenizable and not any(t in ids for t in _TOKEN.findall(data)):
+            continue
+        text = data.decode("utf-8", errors="surrogateescape")
         new = rx.sub(REDACTED, text)
         if new != text:
             with open(f, "r+b") as out:     # same blocks where the filesystem allows it
@@ -171,7 +183,9 @@ def sync(*, url: str | None = None, secret: str | None = None, databases=None, r
     # until the single pass succeeds, so an interruption leaves the queue untouched and it is simply redone.
     while records:
         out = purge(records, databases=databases, raw=raw, log_db=log_db)
-        call(url, secret, {"processed": out["processed"]})     # only after every purge above succeeded
+        # The webhook removes at most 500 ids per confirmation; a larger list is rejected whole and the queue never clears.
+        for i in range(0, len(out["processed"]), 500):
+            call(url, secret, {"processed": out["processed"][i:i + 500]})     # only after every purge above succeeded
         total["processed"] += len(out["processed"])
         total["rows"] += out["rows"]
         total["files"] += out["files"]
