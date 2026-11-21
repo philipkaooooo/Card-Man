@@ -310,6 +310,14 @@ document.querySelectorAll('[data-tip][title]').forEach(function(el){el.removeAtt
  b.addEventListener('click',function(ev){ev.preventDefault();ev.stopPropagation();
   var box=b.parentElement&&b.parentElement.querySelector('.shot-real');if(box)box.hidden=!box.hidden;});
 });})();
+(function(){var q=document.getElementById('cfind'),b=document.getElementById('zmore'),g=document.querySelector('.zgrid');
+if(!q&&!b)return;
+function filt(){var s=q?q.value.toLowerCase():'';
+ document.querySelectorAll('.zchar').forEach(function(a){a.hidden=!!(s&&a.getAttribute('data-name').indexOf(s)<0)})}
+if(q)q.addEventListener('input',filt);
+if(b&&g)b.addEventListener('click',function(){var t=document.getElementById('zrest');if(!t)return;
+ g.appendChild(t.content.cloneNode(true));t.remove();b.parentNode.remove();filt()});
+})();
 """
 
 

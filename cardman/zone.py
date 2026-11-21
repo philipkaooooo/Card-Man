@@ -88,6 +88,9 @@ def icon(dex: int) -> tuple[bytes, str]:
     return svg.encode(), "image/svg+xml"
 
 
+LEAN = 100
+
+
 def view_zone(cat) -> str:
     from .ui import e
     found = rows(cat)
@@ -96,31 +99,36 @@ def view_zone(cat) -> str:
         tiles.append(
             f'<a class="zchar" href="/pkm/character/{e(slug)}" data-name="{e(name.lower())}">'
             f'<img src="/pkm/icon/{dex}.png" alt="" width="104" height="104" loading="lazy" decoding="async">'
-            f'<span class="znm"><b>{e(name)}</b><small>{n} card{"s" if n != 1 else ""}</small></span></a>')
-    script = ("<script>(function(){var q=document.getElementById('cfind');if(!q)return;"
-              "q.addEventListener('input',function(){var s=q.value.toLowerCase();"
-              "document.querySelectorAll('.zchar').forEach(function(a){"
-              "a.hidden=s && a.getAttribute('data-name').indexOf(s)<0;});});})();</script>")
+            f'<span class="znm"><b>{e(name)}</b><small><b>{n}</b> card{"s" if n != 1 else ""}</small></span></a>')
+    shown, hidden = "".join(tiles[:LEAN]), "".join(tiles[LEAN:])
+    more = (f'<template id="zrest">{hidden}</template>'
+            f'<div class="zmorewrap"><button id="zmore" type="button">Show all {len(found)} characters</button></div>'
+            if hidden else "")
     empty = '<p class="empty">The Pokémon card list is still loading.</p>' if cat is None else ""
     return (f'<style>main.page{{max-width:min(96vw,1840px)}}</style>'
             f'<section class="zone"><h1>Characters</h1>'
             f'<p class="sub">{len(found)} Pokémon with a card on this site. The picture is that Pokémon. '
             f'The number is how many different cards it has.</p>'
             f'<input id="cfind" class="cfind" placeholder="Find a character" autocomplete="off">'
-            f'<div class="zgrid">{"".join(tiles)}</div>{empty}</section>{script}')
+            f'<div class="zgrid">{shown}</div>{more}{empty}</section>')
 
 
 CHAR_CSS = """
 section.zone{padding-top:4px}section.zone h1{font-size:clamp(28px,4vw,40px);letter-spacing:-.02em;margin:0 0 6px}
 .cfind{width:min(420px,100%);margin:0 0 18px;border-radius:999px;padding:10px 16px}
-.zgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:20px 10px}
-.zchar{display:flex;flex-direction:column;align-items:center;gap:5px;text-align:center;text-decoration:none;color:var(--fg);
+.zgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:22px 12px}
+.zchar{display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;text-decoration:none;color:var(--fg);
 background:none;border:0;border-radius:14px;padding:4px 0 0;box-shadow:none}
 .zchar img{width:104px;height:104px;object-fit:contain;filter:drop-shadow(0 10px 14px rgba(20,60,40,.13));
 transition:transform .16s var(--ease)}
 .zchar:hover img{transform:translateY(-4px)}
 .znm{display:flex;flex-direction:column;align-items:center;max-width:100%;background:var(--surface);
-border:1px solid var(--line);border-radius:999px;padding:3px 12px 4px;box-shadow:var(--shadow)}
-.znm b{font-size:12.5px;font-weight:650;line-height:1.25;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.znm small{color:var(--muted);font-size:11.5px;line-height:1.2}
+border:1px solid var(--line);border-radius:999px;padding:4px 14px 5px;box-shadow:var(--shadow)}
+.znm b{font-size:15px;font-weight:700;line-height:1.25;letter-spacing:-.01em;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.znm small{color:var(--fg2);font-size:12px;line-height:1.25}
+.znm small b{font-size:12.5px;color:var(--fg)}
+.zmorewrap{grid-column:1/-1;text-align:center;margin:20px 0 4px}
+.zmorewrap button{border:1px solid var(--axis);border-radius:999px;background:var(--surface);color:var(--fg);
+font-weight:650;font-size:14px;padding:9px 22px;cursor:pointer;box-shadow:var(--shadow)}
+.zmorewrap button:hover{box-shadow:var(--shadow-hi)}
 """

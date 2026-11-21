@@ -81,3 +81,15 @@ def test_market_rows_rank_characters_and_open_on_cached_art(tmp_path):
     assert [r[2] for r in rows] == ["Charizard"]                    # Ununium has no priced card: not a market yet
     priced, cards, _name, rep = rows[0]
     assert (priced, cards) == (3, 3) and rep == "c2"                # the tile opens on a card with cached art
+
+
+def test_character_page_leads_with_the_price_analysis(tmp_path):
+    import types
+    from datetime import datetime, timezone
+    from cardman.ui_home import view_character
+    from tests.pkm_fixture import catalog
+    page = view_character(types.SimpleNamespace(cat=catalog(tmp_path)), "Charizard", "",
+                          datetime.now(timezone.utc))
+    assert page.index("What these cards are worth") < page.index("Every card of Charizard")
+    assert 'class="stats"' in page and 'class="mvlist"' in page and "Median guide" in page
+    assert "Guide prices, not sales." in page

@@ -73,13 +73,13 @@
   "authenticated": true,
   "permitted": "yes: keyed Browse API under eBay API License Agreement",
   "available": true,
-  "tested_at": "2026-11-07T17:39:00.986551+00:00",
-  "last_success": "2026-11-07T17:39:00.986551+00:00",
+  "tested_at": "2026-11-07T17:40:57.712810+00:00",
+  "last_success": "2026-11-07T17:40:57.712810+00:00",
   "failure_reason": null,
   "credential_env": "EBAY_CLIENT_ID",
   "credential_present": true,
   "notes": "needs app keys + OAuth; adapter cardman.ebay_browse (asking/bid only, never sold)",
-  "probe_detail": "live pull {'ACTIVE_ASKING': 150} across 3 queries"
+  "probe_detail": "live pull {'ACTIVE_ASKING': 140} across 3 queries"
  },
  {
   "source": "ebay_product_research",
