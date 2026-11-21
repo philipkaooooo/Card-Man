@@ -159,15 +159,25 @@ def sync(*, url: str | None = None, secret: str | None = None, databases=None, r
     raw = raw if raw is not None else paths["raw"]
     log_db = log_db or databases[0]
     total = {"configured": True, "processed": 0, "rows": 0, "files": 0}
+    records: list[dict] = []
+    seen_ids: set[str] = set()
     for _ in range(max_batches):
-        records = call(url, secret)["deletions"]
-        if not records:
+        batch = [r for r in call(url, secret)["deletions"] if r.get("notificationId") and r["notificationId"] not in seen_ids]
+        if not batch:
             break
+        seen_ids.update(r["notificationId"] for r in batch)
+        records += batch
+    # One purge for the whole queue: a batch-by-batch drain re-read every raw file per batch. Nothing is confirmed
+    # until the single pass succeeds, so an interruption leaves the queue untouched and it is simply redone.
+    while records:
         out = purge(records, databases=databases, raw=raw, log_db=log_db)
         call(url, secret, {"processed": out["processed"]})     # only after every purge above succeeded
         total["processed"] += len(out["processed"])
         total["rows"] += out["rows"]
         total["files"] += out["files"]
+        records = [r for r in call(url, secret)["deletions"]
+                   if r.get("notificationId") and r["notificationId"] not in seen_ids] if len(records) == max_batches else []
+        seen_ids.update(r["notificationId"] for r in records)
     return total
 
 
