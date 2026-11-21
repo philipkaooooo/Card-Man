@@ -383,6 +383,40 @@ def _decoded(st, game: str | None) -> list[tuple]:
     return _DECODED[marker]
 
 
+def open_listings(st, M, game: str | None = None) -> list[tuple]:
+    """Every public eBay listing still up. The analysis is attached when we have one. A skip is still a listing."""
+    tables = {r[0] for r in st.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "listing" not in tables:
+        return decisions(st, M, game)
+    from .photo_match import apply
+    if "opportunity" in tables:
+        rows = st.db.execute(
+            "SELECT l.key, l.source, l.listing_id, l.title, l.url, l.kind, l.price, l.currency, l.data_json, "
+            "o.status, o.payload_json FROM listing l LEFT JOIN opportunity o ON o.key=l.key "
+            "WHERE l.ended_at IS NULL AND l.kind IN ('ask','bid','auction') AND l.source LIKE 'ebay%' "
+            "ORDER BY l.last_seen DESC").fetchall()
+    else:
+        rows = [(k, s, i, t, u, kind, p, c, d, None, None) for k, s, i, t, u, kind, p, c, d in st.db.execute(
+            "SELECT key, source, listing_id, title, url, kind, price, currency, data_json FROM listing "
+            "WHERE ended_at IS NULL AND kind IN ('ask','bid','auction') AND source LIKE 'ebay%' ORDER BY last_seen DESC")]
+    out = []
+    for key, source, listing_id, title, url, kind, price, currency, data_json, status, payload in rows:
+        data = json.loads(data_json or "{}")
+        d = json.loads(payload) if payload else {
+            "title": title, "url": url, "listing_id": listing_id, "kind": kind, "price": price,
+            "currency": currency, "game": data.get("game") or "ygo", "shipping": data.get("shipping"),
+            "kinds": [], "scenarios": []}
+        g = d.get("game") or data.get("game") or "ygo"
+        if game and g != game:
+            continue
+        d = apply(d, key, st.db)
+        d.setdefault("title", title)
+        d.setdefault("listing_id", listing_id)
+        d.setdefault("url", url)
+        out.append((key, status or "OPEN", d, verdict(d, status or "OPEN", M)))
+    return out
+
+
 def decisions(st, M, game: str | None = None) -> list[tuple]:
     """Every listing of one game (or all) with its verdict: (key, status, payload, verdict). Games never mix."""
     from .photo_match import apply
@@ -404,13 +438,14 @@ def site_of(key: str) -> str:
 def view_list(st, cards, now, M, *, v_filter: str, t_filter: str, home_cur: str, site: str = "any", game: str = "ygo") -> str:
     """Listings: the decision rail (with live counts) on top, then two filter sections, then one card per listing."""
     from .ui_decide import deal_card, first_seen, rail
-    items = decisions(st, M, game)
+    items = open_listings(st, M, game)
     is_lot = lambda d: "LOT" in (d.get("kinds") or [])
     pool = [i for i in items if (t_filter != "singles" or not is_lot(i[2])) and (t_filter != "lots" or is_lot(i[2]))
             and (site == "any" or site_of(i[0]) == site)]
     counts = {c: sum(1 for i in pool if i[3].code == c) for c in ORDER}      # counts follow the other filters
-    shown = [i for i in pool if (v_filter == "all" and i[3].code != PASS) or i[3].code == v_filter or v_filter == "every"]
-    shown.sort(key=lambda i: (ORDER[i[3].code], -(i[3].margin if i[3].margin is not None else -1e12), -(i[2].get("priority") or 0)))
+    shown = [i for i in pool if v_filter in ("all", "every") or i[3].code == v_filter]
+    if v_filter != "all":
+        shown.sort(key=lambda i: (ORDER[i[3].code], -(i[3].margin if i[3].margin is not None else -1e12), -(i[2].get("priority") or 0)))
     state = {"v": v_filter, "t": t_filter, "site": site}
 
     def href(**kw):
@@ -434,10 +469,17 @@ def view_list(st, cards, now, M, *, v_filter: str, t_filter: str, home_cur: str,
     seen = first_seen(st, [key for key, *_ in page_items])
     rows = [deal_card(key, d, v, cards, M, now, ph, seen.get(key), (sp or {}).get(d.get("printing_id") or "", "") if not is_lot(d) else "")
             for key, status, d, v in page_items]
-    hidden = "" if v_filter in (PASS, "every") else f'<p class="muted small">{counts[PASS]:,} skipped listings are hidden. <a href="{e(href(v=PASS))}">Show them</a>.</p>'
+    hidden = ""
     more = f'<p class="muted small">Showing the first 150 of {len(shown):,}. Pick a lane or a site to see the rest.</p>' if len(shown) > 150 else ""
-    return ('<h1>Listings</h1><p class="sub">Every listing with our take. We only say Buy when real sales back the price.</p>'
-            + bar + hidden
+    other_note = ""
+    if not pool:
+        other = "ygo" if game == "pkm" else "pkm"
+        n_other = len(open_listings(st, M, other))
+        if n_other:
+            other_note = f'<p class="empty">{n_other:,} live eBay listings are under the other game. Switch the game in the top bar.</p>'
+    return ('<h1>Listings</h1><p class="sub">{n} public eBay listings still up. A Skip is still shown. Nothing here was deleted.</p>'
+            .format(n=f"{len(pool):,}")
+            + bar + hidden + other_note
             + (f'<div class="deals">{"".join(rows)}</div>' if rows else '<p class="empty">Nothing matches these filters. Try “All cards” or “All sites”.</p>')
             + more)
 

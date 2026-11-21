@@ -226,6 +226,20 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", a
                       'CardMan checks eBay every 15 minutes while it is open; you can also <a href="/import">add sales</a>.</p>'))
         out.append('<div class="home-h"><h2>2x Checks</h2><a href="/opportunities?v=CHECK">All 2x Checks →</a></div>'
                    + (f'<div class="deals">{cards_of(check)}</div>' if check else '<p class="empty">Nothing to double-check right now.</p>'))
+        from .ui_listing import open_listings
+        live = open_listings(st, EM, game)
+        shown = live[:8]
+        ph2 = photo_counts(st, [item_id_of(k, d) for k, _s, d, _v in shown])
+        seen2 = first_seen(st, [k for k, *_ in shown])
+        other = ""
+        if not live:
+            n_other = len(open_listings(st, EM, "ygo" if game == "pkm" else "pkm"))
+            if n_other:
+                other = f" {n_other:,} are under the other game. Switch it in the top bar."
+        out.append('<div class="home-h"><h2>Live eBay listings</h2><a href="/opportunities">All listings →</a></div>'
+                   + (f'<div class="deals">{"".join(deal_card(k, d, v, idx, EM, now, ph2, seen2.get(k)) for k, _s, d, v in shown)}</div>'
+                      f'<p class="muted small">{len(live):,} public eBay listings still up. The rest are on Listings.</p>' if shown else
+                      f'<p class="empty">No eBay listing still up for this game.{other}</p>'))
     return "".join(out)
 
 
