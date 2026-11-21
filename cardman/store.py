@@ -155,6 +155,13 @@ class Store:
             self.path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(str(path), timeout=30)     # wait for the engine's write instead of failing the page
         self.db.execute("PRAGMA foreign_keys=ON")
+        if str(path) != ":memory:":
+            # WAL keeps every page readable while a pass writes. It sticks in the file, so one open is enough.
+            try:
+                if str(self.db.execute("PRAGMA journal_mode").fetchone()[0]).lower() != "wal":
+                    self.db.execute("PRAGMA journal_mode=WAL")
+            except sqlite3.OperationalError:
+                pass          # a pass holds the file right now; the next open flips it
         try:   # already set up: a page only reads, so it never waits behind the engine's long write
             ready = self.db.execute("SELECT value FROM meta WHERE key='store_schema_version'").fetchone()
         except sqlite3.Error:

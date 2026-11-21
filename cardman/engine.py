@@ -48,6 +48,7 @@ CREATE INDEX IF NOT EXISTS opp_rank ON opportunity(status, priority);
 CREATE TABLE IF NOT EXISTS inbox_seen (hash TEXT PRIMARY KEY, file TEXT, at TEXT);
 CREATE TABLE IF NOT EXISTS ocr_cache (path TEXT, mtime REAL, codes_json TEXT, text TEXT, PRIMARY KEY (path, mtime));
 CREATE TABLE IF NOT EXISTS market_signal (id TEXT PRIMARY KEY, kind TEXT, printing_id TEXT, at TEXT, detail_json TEXT);
+CREATE TABLE IF NOT EXISTS listing_analysis (key TEXT PRIMARY KEY, ids_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS engine_run (at TEXT, data_json TEXT);
 CREATE TABLE IF NOT EXISTS engine_meta (k TEXT PRIMARY KEY, v TEXT);
 """
@@ -91,7 +92,7 @@ class Engine:
                  inbox: str | Path | None = None, raw_dir: str | Path | None = None, fx_get=None, reference_get=None, use_reference: bool = True):
         self.store_path = store_path
         self.store = Store(store_path)
-        self.db = sqlite3.connect(store_path)
+        self.db = sqlite3.connect(store_path, timeout=30)
         self.db.executescript(_SCHEMA)
         self.catalog_db = catalog_db or str(ROOT / "data" / "cache" / "identity.sqlite")
         self.catalog = catalog if catalog is not None else self._load_catalog()
@@ -329,24 +330,48 @@ class Engine:
     def _evidence_version(self, ids: list[str]) -> str:
         if not ids:
             return "0"
-        ph = ",".join("?" * len(ids[:500]))
-        return "/".join(str(x) for x in self.db.execute(
+        key = tuple(ids[:500])
+        memo = self.__dict__.setdefault("_ev_memo", {})
+        hit = memo.get(key)
+        if hit is not None:
+            return hit
+        ph = ",".join("?" * len(key))
+        val = "/".join(str(x) for x in self.db.execute(
             f"SELECT COUNT(*), MAX(o.recorded_at) FROM observation o JOIN observation_printing p ON p.obs_id=o.id WHERE p.printing_id IN ({ph})",
-            ids[:500]).fetchone())
+            key).fetchone())
+        memo[key] = val
+        return val
 
     def analyze_listing(self, key: str, book: PriceBook, now: datetime, rep: TickReport, *, force: bool = False) -> Opportunity | None:
         r = self.listing_from_row(key)
         verified = {**r.verified, **self.reviews(key)}
         authenticity = verified.pop("authenticity_ok", None)
+        stamp = (getattr(r, "detail_marker", ""), self._catalog_stamp(), now.date().isoformat() if r.ends_at else "")
+        prev = self.db.execute("SELECT analysis_fp, created_at, snapshot_id FROM opportunity WHERE key=?", (key,)).fetchone()
+
+        def fingerprint(ids: list[str]) -> str:
+            return hashlib.sha256(json.dumps([ANALYSIS_VERSION, r.fingerprint(), verified, authenticity, ids[:500], self._evidence_version(ids),
+                                              *stamp], sort_keys=True, default=str).encode()).hexdigest()[:16]
+
+        # Replay the last candidate set instead of re-identifying the card: the identity inputs are the only thing that changes.
+        if prev and not force:
+            stored = self.db.execute("SELECT ids_json FROM listing_analysis WHERE key=?", (key,)).fetchone()
+            if stored:
+                try:
+                    ids = json.loads(stored[0])
+                except ValueError:
+                    ids = None
+                if isinstance(ids, list) and prev[0] == fingerprint(ids):
+                    rep.skipped_unchanged += 1
+                    return None
         an = self._analyze(r, verified, ocr=True)
         self._persist_condition(key, r)
         ids = [p.id for p in an.identity.candidates]
-        fp = hashlib.sha256(json.dumps([ANALYSIS_VERSION, r.fingerprint(), verified, authenticity, ids[:500], self._evidence_version(ids),
-                                        getattr(r, "detail_marker", ""), self._catalog_stamp(),
-                                        now.date().isoformat() if r.ends_at else ""], sort_keys=True, default=str).encode()).hexdigest()[:16]
-        prev = self.db.execute("SELECT analysis_fp, created_at, snapshot_id FROM opportunity WHERE key=?", (key,)).fetchone()
+        fp = fingerprint(ids)
         if prev and prev[0] == fp and not force:
             rep.skipped_unchanged += 1
+            with self.db:
+                self.db.execute("INSERT OR REPLACE INTO listing_analysis VALUES (?,?)", (key, json.dumps(ids)))
             return None
         rep.analyzed += 1
         op = evaluate_listing(r, an, book, self.catalog_for(r.game), self.ledger, now)
@@ -376,6 +401,7 @@ class Engine:
             body["expected_profit"] = None
             body["kinds"] = op.kinds
         with self.db:
+            self.db.execute("INSERT OR REPLACE INTO listing_analysis VALUES (?,?)", (key, json.dumps(ids)))
             self.db.execute("INSERT OR REPLACE INTO opportunity VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                             (key, op.stage, op.status, op.priority, op.expected_profit, op.evpi, json.dumps(op.kinds), op.printing_id, snapshot, fp,
                              json.dumps(body, ensure_ascii=False, default=str), prev[1] if prev else now.isoformat(), now.isoformat()))
@@ -474,6 +500,7 @@ class Engine:
         started = time.monotonic()
         now = now or datetime.now(timezone.utc)
         rep = TickReport(at=now.isoformat())
+        self.__dict__.pop("_ev_memo", None)
         home = self.profile["home_currency"]
         for base in ("USD", "JPY", "TWD"):
             if base != home:
@@ -592,6 +619,7 @@ def main(argv: list[str] | None = None) -> None:
         ap.add_argument(f"--{f}")
     a = ap.parse_args(argv)
     eng = Engine(a.store)
+    eng._skip_daily_catalog = False          # the long-running engine keeps the master card list fresh
     if a.cmd == "confirm":
         if not a.key:
             ap.error("confirm needs a listing key")
