@@ -94,8 +94,9 @@ def test_character_page_leads_with_the_price_analysis(tmp_path):
     page = view_character(st, idx, "Charizard", "", datetime.now(timezone.utc), "USD", "USD",
                           types.SimpleNamespace(fx=None))
     assert page.index("How Charizard is performing") < page.index("Every card of Charizard")
-    assert 'class="chero"' in page and 'class="chero-stats"' in page and "Median guide" in page
-    assert 'class="chfacts"' in page and "Sales volume" in page
+    assert 'class="chero"' in page and 'class="chero-stats"' in page and "Listed now" in page
+    assert 'class="chfacts"' in page and "Sales volume" in page and 'class="ladsvg"' in page
+    assert "Median" not in page and "percentile" not in page
     assert "Guide prices, not sales." in page
     assert "Add a sale" not in page and 'class="ct-name"' not in page and 'class="ct-price"' in page and 'class="ztile"' in page
     assert 'class="cgrid2"' in page and "data-hchart" not in page

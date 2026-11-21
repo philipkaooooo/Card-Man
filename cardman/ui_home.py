@@ -923,12 +923,12 @@ def view_character(st, idx, species: str, token: str, now: datetime, cur: str, h
     if deals:
         rows = "".join(
             f'<tr><td><span class="dname">{e(d["name"])}</span></td>'
-            f'<td class="n">{e(charts.fmt(d["ask"], cur))}</td><td class="n">{e(charts.fmt(d["guide"], cur))}</td>'
+            f'<td class="n">{e(charts.fmt(d["ask"], cur))}</td><td class="n gcol">{e(charts.fmt(d["guide"], cur))}</td>'
             f'<td class="n"><span class="{"dunder" if d["pct"] < 0 else "dover"}">{d["pct"]:+.0f}%</span></td></tr>'
             for d in deals[:8])
         more = f'<p class="why small">Plus {len(deals) - 8} more versions listed.</p>' if len(deals) > 8 else ""
         board = (f'<h3>On sale right now</h3><table class="dbord"><thead><tr><th>Card version</th><th class="n">Live ask</th>'
-                 f'<th class="n">Guide</th><th class="n">vs guide</th></tr></thead><tbody>{rows}</tbody></table>{more}'
+                 f'<th class="n gcol">Guide</th><th class="n">vs guide</th></tr></thead><tbody>{rows}</tbody></table>{more}'
                  f'<p class="why small">From the {e(latest_day)} listing snapshot: lowest live listing of each version '
                  'against its guide price; negative means listed under it. A gap past about 60% usually means the '
                  'listing is a different printing — open the card first.</p>')
@@ -1030,6 +1030,7 @@ padding:0 8px 6px 0;border-bottom:1px solid var(--line);white-space:nowrap}
 .dbord .dname{display:block;max-width:330px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)}
 .dbord .dunder{color:var(--teal);font-weight:700}.dbord .dover{color:var(--fg2)}
 .dbord tr:last-child td{border-bottom:0}
+@media(max-width:700px){.dbord .gcol{display:none}.dbord .dname{max-width:min(52vw,260px)}}
 .chcols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:26px;margin:6px 0 0}
 @media(max-width:820px){.chcols{grid-template-columns:1fr}.chero{flex-direction:column;align-items:flex-start;gap:10px}}
 .chfacts{list-style:none;margin:0;padding:0;display:grid;gap:8px}
