@@ -297,9 +297,10 @@ CURRENCIES = ("USD", "TWD")
 
 ON = ' class="on" aria-current="page"'
 # One header, five places. Every older page still exists and belongs to one of them.
-NAV = (("home", "Home", "/"), ("listings", "Listings", "/opportunities"), ("cards", "Cards", "/search"),
-       ("add", "Add sales", "/import"), ("settings", "Settings", "/settings"))
+NAV = (("characters", "Characters", "/pkm/characters"), ("home", "Home", "/"), ("listings", "Listings", "/opportunities"),
+       ("cards", "Cards", "/search"), ("add", "Add sales", "/import"), ("settings", "Settings", "/settings"))
 NAV_OF = {"home": "home", "opportunities": "listings", "search": "cards", "import": "add", "costs": "settings", "settings": "settings",
+          "characters": "characters",
           "deals": "settings", "scan": "settings", "evidence": "settings", "results": "settings", "engine": "settings"}
 SHELL_CSS = """
 body{display:flex;flex-direction:column;min-height:100vh}
@@ -327,6 +328,7 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     from .ui_chart import CHART_CSS
     from .ui_icons import EFFECTS_CSS, ICON_CSS, SPRITE
     from .ui_decide import DECIDE_CSS
+    from .zone import CHAR_CSS
     theme = theme if theme in THEMES else "market"
     where = NAV_OF.get(nav, "")
     links = "".join(f'<a href="{h}"{ON if k == where else ""}>{e(t)}</a>' for k, t, h in NAV)
@@ -343,7 +345,7 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     tz = datetime.now().astimezone().strftime("UTC%z")
     return (f'<!doctype html><html lang="en" data-theme="{"vault" if theme == "vault" else "auto"}"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)} · CardMan</title>'
-            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{CHART_CSS}{ICON_CSS}{EFFECTS_CSS}{SHELL_CSS}{DECIDE_CSS}</style></head><body>{SPRITE}'
+            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{CHART_CSS}{ICON_CSS}{EFFECTS_CSS}{SHELL_CSS}{DECIDE_CSS}{CHAR_CSS}</style></head><body>{SPRITE}'
             + scope_links(f'<header class="top"><a class="logo" href="/">CardMan</a><nav class="main" aria-label="Main">{links}</nav>{hsearch}'
                           f'{games}{curs}</header><main class="page">{crumb}{flash}{body}</main>', game) +
             f'<footer class="foot">Private to this Mac · times {e(tz)} · press <kbd>/</kbd> to search</footer>'
@@ -1867,9 +1869,13 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                         raise KeyError(parts[1])
                     from .ui_home import view_character
                     return self._page("search", who, view_character(idx, who, token, now), qs, crumb=("Cards", "/pkm/search"))
+                if len(parts) == 2 and parts[0] == "icon" and parts[1].endswith(".png") and parts[1][:-4].isdigit():
+                    from .zone import icon
+                    body, ctype = icon(int(parts[1][:-4]))
+                    return self._send(200, body, ctype)
                 if parts == ["characters"]:
-                    from .ui_home import view_characters
-                    return self._page("search", "Character markets", view_characters(idx), qs, crumb=("Cards", "/pkm/search"))
+                    from .zone import view_zone
+                    return self._page("characters", "Characters", view_zone(idx.cat if idx else None), qs)
                 if parts == ["search"]:
                     from .ui_home import Money, view_search
                     q = qs.get("q", [""])[0][:120]
