@@ -37,6 +37,7 @@ STATUSES = ("CANCELLED", "REFUNDED", "RELISTED", "INVALID", "DUPLICATE", "VALID"
 MAX_UPLOAD = 5 * 1024 * 1024
 MAX_PAGES_UPLOAD = 80 * 1024 * 1024     # saved results pages are a few MB each, several at once
 MIN_COMPS = 3
+COVERAGE_ROWS = 300      # overview table cap: one row per printing is 39k rows and half a minute of HTML otherwise
 SYN = ' <span class="tag syn">synthetic</span>'
 
 GATES = ("identity", "authenticity", "comps", "ceiling", "fresh_availability")
@@ -893,15 +894,14 @@ def reason_group(r: str) -> str:
 
 
 def view_evidence(st: Store, now: datetime, printing: str | None, include_synthetic: bool) -> str:
-    printings = st.printing_ids()
-    opts = '<option value="">All printings</option>' + "".join(
-        f'<option{" selected" if p == printing else ""}>{e(p)}</option>' for p in printings)
     out = ['<h1>Evidence</h1><p class="sub">Market records in the store and whether a valuation made now would use '
            'them.</p><form class="inline" method="get" action="/evidence">'
-           f'<label>Printing<select name="printing">{opts}</select></label>'
+           f'<label>Printing<input name="printing" value="{e(printing or "")}" size="52" '
+           f'placeholder="p:EN_TCG:LOB-EN001:ultra-rare@89631139"></label>'
            f'<label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" name="syn" value="1"'
            f'{" checked" if include_synthetic else ""}>count synthetic fixtures</label><button>Show</button></form>']
-    if not printings:
+    have = st.db.execute("SELECT COUNT(DISTINCT printing_id) FROM observation_printing").fetchone()[0]
+    if not have:
         out.append('<section><p class="muted">No observations stored. Use Import to add a manual CSV.</p></section>')
         return "".join(out)
 
@@ -913,12 +913,14 @@ def view_evidence(st: Store, now: datetime, printing: str | None, include_synthe
         return comps, v
 
     if not printing:
-        rows = []
         stats = []
-        for pid in printings:
-            obs = st.observation_list(pid, as_of=now)
-            comps, _ = verdicts(pid)
+        for pid, n in st.db.execute(
+                "SELECT p.printing_id, COUNT(DISTINCT o.id) FROM observation_printing p JOIN observation o ON o.id=p.obs_id "
+                "GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT ?", (COVERAGE_ROWS,)):
+            obs = st.observations_for(pid, as_of=now)
+            comps, _ = select_comps(obs, pid, as_of=now, include_synthetic=include_synthetic)
             stats.append((pid, obs, comps))
+        rows = []
         scale = max([MIN_COMPS * 2] + [len(c) for _, _, c in stats])
         for pid, obs, comps in sorted(stats, key=lambda s: -len(s[2])):
             cur = {c.currency for c in comps}
@@ -931,7 +933,8 @@ def view_evidence(st: Store, now: datetime, printing: str | None, include_synthe
                         f'<span>{len(comps)}</span></span></td><td class="n">{e(med)}</td>'
                         f'<td class="d">{day(last) if last else "—"}</td></tr>')
         out.append('<section><h2>Coverage by printing</h2><p class="why">How many usable sales each printing has. '
-                   f'A valuation needs {MIN_COMPS} (the black tick); fewer means no buy ceiling.</p>'
+                   f'A valuation needs {MIN_COMPS} (the black tick); fewer means no buy ceiling. '
+                   f'The {COVERAGE_ROWS} printings with the most records are shown; type any printing id above for the rest.</p>'
                    '<div class="wrap"><table><tr><th>Printing</th><th class="n">Records</th><th>Usable sales</th>'
                    '<th class="n">Median sale</th><th>Latest sale</th></tr>' + "".join(rows) + '</table></div></section>')
         return "".join(out)
