@@ -8,6 +8,7 @@ Uncertain pairs are left alone: this only speaks when the best window clearly ag
 from __future__ import annotations
 
 import io
+import os
 import re
 import struct
 import subprocess
@@ -433,29 +434,33 @@ def _passcodes(d: dict) -> list[str]:
 _BYTES_CACHE: dict[str, tuple[int, int, bytes | None]] = {}
 
 
-def _cached(path: Path) -> bytes | None:
-    """Bytes per file identity, so a re-captured photo at the same path is read again and a warm one is not re-read."""
+def _cached(path: str) -> bytes | None:
+    """Bytes per file identity, so a re-captured photo at the same path is read again and a warm one is not re-read.
+    Takes the joined path as a string: forty thousand listings a page turn Path arithmetic into the hot loop."""
     try:
-        st = path.stat()
+        st = os.stat(path)
     except OSError:
         return None
-    key = str(path)
-    hit = _BYTES_CACHE.get(key)
+    hit = _BYTES_CACHE.get(path)
     if hit is not None and hit[0] == st.st_mtime_ns and hit[1] == st.st_size:
         return hit[2]
-    data = path.read_bytes() if st.st_size > 32 else None
+    try:
+        with open(path, "rb") as f:
+            data = f.read() if st.st_size > 32 else None
+    except OSError:
+        return None
     if len(_BYTES_CACHE) > 8192:
         _BYTES_CACHE.clear()
-    _BYTES_CACHE[key] = (st.st_mtime_ns, st.st_size, data)
+    _BYTES_CACHE[path] = (st.st_mtime_ns, st.st_size, data)
     return data
 
 
 def _listing_bytes(item_id: str, root: Path | None) -> bytes | None:
     from .listing_detail import CACHE, cache_key
-    base = Path(root) if root is not None else CACHE
+    base = str(Path(root) if root is not None else CACHE)
     for size in ("s", "m"):
         k = cache_key(item_id, 0, size)
-        data = _cached(base / k[:2] / f"{k}.img")
+        data = _cached(f"{base}/{k[:2]}/{k}.img")
         if data is not None:
             return data
     return None
@@ -463,12 +468,12 @@ def _listing_bytes(item_id: str, root: Path | None) -> bytes | None:
 
 def _catalog_bytes(passcode: str, root: Path | None) -> bytes | None:
     from .cardinfo import IMAGES
-    base = Path(root) if root is not None else IMAGES
+    base = str(Path(root) if root is not None else IMAGES)
     if passcode.startswith("pkm-"):
         cid = passcode[4:]
-        paths = [base / "pkm" / size / f"{cid}{ext}" for size in ("small", "large") for ext in (".png", ".jpg")]
+        paths = [f"{base}/pkm/{size}/{cid}{ext}" for size in ("small", "large") for ext in (".png", ".jpg")]
     else:
-        paths = [base / "artwork" / size / f"{passcode}.jpg" for size in ("small", "full")]
+        paths = [f"{base}/artwork/{size}/{passcode}.jpg" for size in ("small", "full")]
     for path in paths:
         data = _cached(path)
         if data is not None:
