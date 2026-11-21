@@ -63,12 +63,13 @@ def purge_database(path: str | Path, identifiers: list[str]) -> PurgeResult:
     if rx is None or not path.exists():
         return res
     ids = set(identifiers)
-    # A token screen decides whether a value can hold a whole-word match at all; the placeholders are exactly the
-    # whole-word boundaries the pattern would accept, so the screen never passes a value the pattern would match.
-    tokenizable = all(set(i) <= _ALLOWED for i in identifiers if i)
+    # A token screen decides whether a value can hold a whole-word match at all; the token alphabet is a superset of
+    # the whole-word boundaries, so the screen never passes a value the pattern would match. An identifier outside the
+    # alphabet (an EIAS token carries + / =) is screened by plain containment instead: a whole-word match implies it.
+    plain = [i for i in ids if not set(i) <= _ALLOWED]
 
     def hits(v) -> bool:
-        return isinstance(v, str) and (not tokenizable or any(t in ids for t in _TOKEN_S.findall(v)))
+        return isinstance(v, str) and (any(t in ids for t in _TOKEN_S.findall(v)) or any(i in v for i in plain))
 
     def scrub(v):
         return rx.sub(REDACTED, v) if hits(v) else v
@@ -130,16 +131,17 @@ def purge_files(raw_root: str | Path, identifiers: list[str]) -> int:
     if not ids or not root.exists():
         return 0
     rx = _pattern(identifiers)
-    # An identifier outside the token alphabet cannot be found by the fast membership test; scan everything instead.
-    tokenizable = all(c in _ALLOWED for i in identifiers if i for c in i)
+    # An identifier outside the token alphabet cannot be found by the fast membership test; containment is the cheap
+    # equivalent for those, since a match necessarily contains the identifier as written.
+    plain = [i.encode() for i in identifiers if i and not set(i) <= _ALLOWED]
     changed = 0
     for f in root.rglob("*"):
         if not f.is_file():
             continue
         data = f.read_bytes()
-        # One token pass is far cheaper than a 1,200-way alternation scoped to whole words: a file without any
-        # candidate token cannot contain a match, so only those that do pay for the precise substitution.
-        if tokenizable and not any(t in ids for t in _TOKEN.findall(data)):
+        # Far cheaper than a 1,200-way alternation scoped to whole words: a file without any candidate token cannot
+        # contain a match, so only those that do pay for the precise substitution.
+        if not any(t in ids for t in _TOKEN.findall(data)) and not any(i in data for i in plain):
             continue
         text = data.decode("utf-8", errors="surrogateescape")
         new = rx.sub(REDACTED, text)
