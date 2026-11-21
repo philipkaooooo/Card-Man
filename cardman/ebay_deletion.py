@@ -67,9 +67,10 @@ def purge_database(path: str | Path, identifiers: list[str]) -> PurgeResult:
     # the whole-word boundaries, so the screen never passes a value the pattern would match. An identifier outside the
     # alphabet (an EIAS token carries + / =) is screened by plain containment instead: a whole-word match implies it.
     plain = [i for i in ids if not set(i) <= _ALLOWED]
+    rx_plain = re.compile("|".join(map(re.escape, plain))) if plain else None
 
     def hits(v) -> bool:
-        return isinstance(v, str) and (any(t in ids for t in _TOKEN_S.findall(v)) or any(i in v for i in plain))
+        return isinstance(v, str) and (any(t in ids for t in _TOKEN_S.findall(v)) or (rx_plain is not None and rx_plain.search(v) is not None))
 
     def scrub(v):
         return rx.sub(REDACTED, v) if hits(v) else v
@@ -134,6 +135,7 @@ def purge_files(raw_root: str | Path, identifiers: list[str]) -> int:
     # An identifier outside the token alphabet cannot be found by the fast membership test; containment is the cheap
     # equivalent for those, since a match necessarily contains the identifier as written.
     plain = [i.encode() for i in identifiers if i and not set(i) <= _ALLOWED]
+    rx_plain = re.compile(b"|".join(map(re.escape, plain))) if plain else None
     changed = 0
     for f in root.rglob("*"):
         if not f.is_file():
@@ -141,7 +143,7 @@ def purge_files(raw_root: str | Path, identifiers: list[str]) -> int:
         data = f.read_bytes()
         # Far cheaper than a 1,200-way alternation scoped to whole words: a file without any candidate token cannot
         # contain a match, so only those that do pay for the precise substitution.
-        if not any(t in ids for t in _TOKEN.findall(data)) and not any(i in data for i in plain):
+        if not any(t in ids for t in _TOKEN.findall(data)) and (rx_plain is None or rx_plain.search(data) is None):
             continue
         text = data.decode("utf-8", errors="surrogateescape")
         new = rx.sub(REDACTED, text)
