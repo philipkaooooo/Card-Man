@@ -166,15 +166,10 @@ def first_seen(st, keys) -> dict[str, str]:
 # -- look -------------------------------------------------------------------------------------------------------------
 
 DECIDE_CSS = """
-:root{--bg:#FBFDFE;--surface:#FFFFFF;--line:#E6EEF2;--axis:#D3DFE6;--soft:#F2F7FA;--fg:#1F2A33;--fg2:#3F4E59;--muted:#5F6F7A;
---sky:#8EC9E8;--sky-text:#2B7BA6;--teal:#1E9E9A;--teal-deep:#137C7A;--slate:#4F6378;--grey:#66737C;
---accent:var(--teal-deep);--good:var(--teal);--good-text:var(--teal-deep);--warn:var(--slate);--s1:var(--teal);--s2:var(--sky);--s3:var(--teal-deep);--s4:var(--slate);
---track:#E6EEF2;--shadow:0 1px 2px rgba(31,42,51,.04),0 4px 16px rgba(31,42,51,.05);--shadow-hi:0 2px 4px rgba(31,42,51,.05),0 12px 32px rgba(31,42,51,.09);
---ease:cubic-bezier(.2,.8,.2,1);--r:14px}
 @media (prefers-color-scheme:dark){:root[data-theme="auto"]{color-scheme:dark;--bg:#0F171C;--surface:#152027;--line:#23323B;--axis:#2E414C;
 --soft:#1A2830;--fg:#E6EEF2;--fg2:#C2CFD7;--muted:#93A4AE;--sky:#8EC9E8;--sky-text:#8EC9E8;--teal:#4CC9C3;--teal-deep:#4CC9C3;--slate:#A9B8C8;
---grey:#9AA6AE;--track:#23323B;--shadow:0 1px 2px rgba(0,0,0,.25),0 4px 16px rgba(0,0,0,.2);--shadow-hi:0 2px 4px rgba(0,0,0,.3),0 12px 32px rgba(0,0,0,.35)}}
-body{background:var(--bg);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,"Noto Sans TC","Noto Sans JP",sans-serif;
+--grey:#9AA6AE;--track:#23323B;--shadow:0 1px 2px rgba(0,0,0,.25),0 4px 16px rgba(0,0,0,.2);--shadow-hi:0 2px 4px rgba(0,0,0,.3),0 12px 32px rgba(0,0,0,.35);--canvas:none}}
+body{background-color:var(--bg);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,"Noto Sans TC","Noto Sans JP",sans-serif;
 -webkit-font-smoothing:antialiased}
 header.top{background:color-mix(in srgb,var(--surface) 88%,transparent);border-bottom:1px solid var(--line)}
 nav.main a.on{background:var(--soft);box-shadow:inset 0 -2px 0 var(--teal)}

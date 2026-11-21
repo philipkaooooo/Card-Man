@@ -110,15 +110,23 @@ def icon(ok: bool | None) -> str:
 
 
 CSS = """
-:root{color-scheme:light;--bg:#f9f9f7;--surface:#fcfcfb;--fg:#0b0b0b;--fg2:#52514e;--muted:#898781;
---line:#e1e0d9;--axis:#c3c2b7;--soft:#f0efec;--accent:#256abf;
---s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;--neg:#e34948;
---good:#0ca30c;--good-text:#006300;--crit:#d03b3b;--warn:#fab219}
+:root{color-scheme:light;--bg:#f2f6fa;--surface:#ffffff;--fg:#111c25;--fg2:#3e4f5c;--muted:#677888;
+--line:#e1e9f0;--axis:#ccdae4;--soft:#edf3f8;--accent:#0e7f7b;
+--s1:#0e7f7b;--s2:#3b82d6;--s3:#12a08f;--s4:#c77b12;--neg:#d0453f;
+--good:#12a08f;--good-text:#0b6f64;--crit:#c9383b;--warn:#c98a12;
+--sky:#7fc3e6;--sky-text:#1f76a5;--teal:#12a08f;--teal-deep:#0b6f64;--slate:#4b6175;--grey:#5f7080;
+--track:#e1e9f0;--shadow:0 1px 2px rgba(15,30,45,.05),0 8px 24px rgba(15,30,45,.06);
+--shadow-hi:0 2px 6px rgba(15,30,45,.07),0 16px 40px rgba(15,30,45,.12);
+--canvas:linear-gradient(180deg,#ffffff 0,#f5f9fc 300px,#f1f5f9 100%);
+--ease:cubic-bezier(.2,.8,.2,1);--r:14px}
 @media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){color-scheme:dark;--bg:#0d0d0d;
 --surface:#1a1a19;--fg:#f0efec;--fg2:#c3c2b7;--muted:#898781;--line:#2c2c2a;--axis:#383835;--soft:#232322;
---accent:#6da7ec;--s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;--neg:#e66767;--good-text:#0ca30c}}
+--accent:#6da7ec;--s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;--neg:#e66767;--good-text:#0ca30c;
+--sky:#8EC9E8;--sky-text:#8EC9E8;--teal:#4CC9C3;--teal-deep:#4CC9C3;--slate:#A9B8C8;--grey:#9AA6AE;--track:#23323B;
+--shadow:0 1px 2px rgba(0,0,0,.25),0 4px 16px rgba(0,0,0,.2);--shadow-hi:0 2px 4px rgba(0,0,0,.3),0 12px 32px rgba(0,0,0,.35);--canvas:none}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,"Segoe UI",
+body{margin:0;color:var(--fg);background:var(--bg);background-image:var(--canvas);
+font:14px/1.5 system-ui,-apple-system,"Segoe UI",
 "Noto Sans TC","Noto Sans JP",sans-serif}
 header{background:var(--surface);border-bottom:1px solid var(--line);padding:10px 16px;display:flex;gap:14px;
 align-items:center;flex-wrap:wrap;position:sticky;top:0;z-index:5}
@@ -144,7 +152,7 @@ aside .menu:not([open])>details{display:none}header .store{display:none}}
 h1{font-size:20px;margin:6px 0 2px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 h2{font-size:15px;margin:0 0 4px}
 .sub{color:var(--fg2);margin:0 0 14px}
-section{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:16px;margin:0 0 14px}
+section{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;margin:0 0 14px;box-shadow:var(--shadow)}
 section .why{color:var(--fg2);margin:0 0 10px;max-width:78ch}
 a{color:var(--accent)}
 table{border-collapse:collapse;width:100%}
@@ -170,7 +178,7 @@ list-style:none}
 .next{margin:12px 0 0;padding:10px 12px;background:var(--soft);border-radius:6px}
 .next ol{margin:4px 0 0;padding-left:20px}
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:0 0 14px}
-.tile{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px;box-shadow:var(--shadow)}
 .tile small{display:block;color:var(--fg2);font-size:12px}.tile span{font-size:22px;font-weight:600}
 .tile em{display:block;font-style:normal;color:var(--muted);font-size:12px}
 .cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}@media(max-width:860px){.cols{grid-template-columns:1fr}}
@@ -297,21 +305,30 @@ CURRENCIES = ("USD", "TWD")
 
 
 ON = ' class="on" aria-current="page"'
-# One header, seven places. Every older page still exists and belongs to one of them.
-NAV = (("characters", "Characters", "/pkm/characters"), ("home", "Home", "/"), ("listings", "Listings", "/opportunities"),
-       ("market", "Market", "/market"), ("cards", "Cards", "/search"), ("add", "Add sales", "/import"),
-       ("settings", "Settings", "/settings"))
+# One header, six places. Cards opens on hover to the card list and the character index.
+NAV = (("home", "Home", "/"), ("listings", "Listings", "/opportunities"), ("market", "Market", "/market"),
+       ("cards", "Cards", "/search"), ("add", "Add sales", "/import"), ("settings", "Settings", "/settings"))
+SUBS = {"cards": (("search", "Card search", "/search"), ("characters", "Characters", "/pkm/characters"))}
 NAV_OF = {"home": "home", "opportunities": "listings", "market": "market", "search": "cards", "import": "add",
-          "costs": "settings", "settings": "settings", "characters": "characters",
+          "costs": "settings", "settings": "settings", "characters": "cards",
           "deals": "settings", "scan": "settings", "evidence": "settings", "results": "settings", "engine": "settings"}
 SHELL_CSS = """
 body{display:flex;flex-direction:column;min-height:100vh}
-header.top{position:sticky;top:0;z-index:30;background:color-mix(in srgb,var(--surface) 92%,transparent);backdrop-filter:blur(8px);
-border-bottom:1px solid var(--line);padding:0 20px;display:flex;align-items:center;gap:18px;height:58px}
+header.top{position:sticky;top:0;z-index:30;background:color-mix(in srgb,var(--surface) 86%,transparent);backdrop-filter:saturate(1.5) blur(12px);
+border-bottom:1px solid var(--line);box-shadow:0 1px 0 rgba(15,30,45,.03),0 10px 30px rgba(15,30,45,.05);
+padding:0 20px;display:flex;align-items:center;gap:18px;height:58px}
 header.top .logo{font-weight:800;font-size:17px;color:var(--fg);text-decoration:none;letter-spacing:-.01em}
 nav.main{display:flex;gap:2px;align-items:center}nav.main a{color:var(--fg2);text-decoration:none;padding:7px 12px;border-radius:8px;
-font-weight:550;font-size:14px;white-space:nowrap}nav.main a:hover{background:var(--soft);color:var(--fg)}
-nav.main a.on{color:var(--fg);background:var(--soft);box-shadow:inset 0 -2px 0 var(--accent)}
+font-weight:550;font-size:14px;white-space:nowrap}nav.main a:hover{background:var(--surface);color:var(--fg);box-shadow:var(--shadow)}
+nav.main a.on{color:var(--fg);background:var(--surface);box-shadow:var(--shadow),inset 0 -2px 0 var(--accent)}
+nav.main .nwrap{position:relative}
+nav.main .caret{display:inline-block;margin-left:5px;font-size:9px;color:var(--muted);transform:translateY(-1px)}
+nav.main .nsub{position:absolute;top:100%;left:0;min-width:190px;display:none;flex-direction:column;gap:1px;padding:6px;
+background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow-hi);z-index:40}
+nav.main .nsub a{padding:8px 10px;border-radius:8px;box-shadow:none}
+nav.main .nsub a:hover{background:var(--soft);box-shadow:none}
+nav.main .nsub a.on{background:var(--soft);box-shadow:none}
+nav.main .nwrap:hover .nsub,nav.main .nwrap:focus-within .nsub{display:flex}
 header.top .hsearch{flex:1;max-width:440px;margin-left:auto}header.top .curs{flex:none}header.top .games a{font-weight:600}header.top .games{margin-left:auto}header.top .hsearch+.games{margin-left:0}@media(max-width:1100px){header.top .hsearch{max-width:300px}}
 main.page{width:100%;max-width:1180px;margin:0 auto;padding:22px 20px 40px;flex:1}
 .crumb-back{display:inline-block;margin:0 0 10px;color:var(--fg2);text-decoration:none;font-size:13px}.crumb-back:hover{color:var(--fg)}
@@ -334,7 +351,14 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     from .zone import CHAR_CSS
     theme = theme if theme in THEMES else "market"
     where = NAV_OF.get(nav, "")
-    links = "".join(f'<a href="{h}"{ON if k == where else ""}>{e(t)}</a>' for k, t, h in NAV)
+    links = ""
+    for k, t, h in NAV:
+        if k in SUBS:
+            items = "".join(f'<a href="{sh}"{ON if sk == where else ""}>{e(st)}</a>' for sk, st, sh in SUBS[k])
+            links += (f'<div class="nwrap"><a href="{h}"{ON if k == where else ""}>{e(t)}'
+                      f'<span class="caret" aria-hidden="true">▾</span></a><div class="nsub">{items}</div></div>')
+        else:
+            links += f'<a href="{h}"{ON if k == where else ""}>{e(t)}</a>'
     curs = ('<span class="curs" role="group" aria-label="Display currency">' + "".join(
         f'<a href="/currency?{urlencode({"c": c, "back": path})}" class="{"on" if c == cur else ""}">{c}</a>'
         for c in CURRENCIES) + '</span>')
@@ -1880,7 +1904,7 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     return self._send(200, body, ctype)
                 if parts == ["characters"]:
                     from .zone import view_zone
-                    return self._page("characters", "Characters", view_zone(idx.cat if idx else None), qs)
+                    return self._page("characters", "Characters", view_zone(idx.cat if idx else None), qs, crumb=("Cards", "/pkm/search"))
                 if parts == ["search"]:
                     from .ui_home import Money, view_search
                     q = qs.get("q", [""])[0][:120]

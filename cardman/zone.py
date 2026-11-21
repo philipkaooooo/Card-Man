@@ -114,8 +114,9 @@ section.zone{padding-top:4px}section.zone h1{font-size:clamp(28px,4vw,40px);lett
 .cfind{width:min(420px,100%);margin:0 0 16px;border-radius:999px;padding:10px 16px}
 .zgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:10px}
 .zchar{display:flex;flex-direction:column;align-items:center;gap:4px;text-align:center;text-decoration:none;color:var(--fg);
-background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:12px 8px 10px}
+background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:12px 8px 10px;box-shadow:var(--shadow);
+transition:box-shadow .15s var(--ease),transform .15s var(--ease),border-color .15s var(--ease)}
 .zchar img{width:96px;height:96px;object-fit:contain}
 .zchar b{font-size:13px;font-weight:650;line-height:1.2}.zchar small{color:var(--muted);font-size:12px}
-.zchar:hover{border-color:var(--axis)}
+.zchar:hover{border-color:var(--axis);box-shadow:var(--shadow-hi);transform:translateY(-2px)}
 """

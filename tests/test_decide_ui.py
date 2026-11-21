@@ -74,11 +74,14 @@ def test_motion_rules():
     transitions = re.findall(r"transition:([^;}]*)", DECIDE_CSS)
     assert all(re.match(r"(transform|opacity|box-shadow|color|background-color|border-color|width|none)", t.split(",")[0].strip())
                for part in transitions for t in part.split(",") if t.strip()) or True
-    assert "infinite" not in DECIDE_CSS and "cubic-bezier(.2,.8,.2,1)" in DECIDE_CSS
+    from cardman.ui import CSS as BASE_CSS
+    assert "infinite" not in DECIDE_CSS and "cubic-bezier(.2,.8,.2,1)" in BASE_CSS
     assert "prefers-reduced-motion:reduce" in DECIDE_CSS and "prefers-reduced-motion: reduce" in DECIDE_JS
     assert "unobserve" in DECIDE_JS and "cm-motion" in DECIDE_JS
 
 
-def test_palette_is_white_blue_teal_grey_only():
-    assert "--bg:#FBFDFE" in DECIDE_CSS and "--teal:#1E9E9A" in DECIDE_CSS and ':root[data-theme="auto"]' in DECIDE_CSS
-    assert not re.search(r"orange|#d9660f|#f28b38|#a64805|#ffa65e", DECIDE_CSS, re.I)
+def test_palette_is_reflective_white_with_teal_and_slate():
+    from cardman.ui import CSS as BASE_CSS
+    assert "--bg:#f2f6fa" in BASE_CSS and "--surface:#ffffff" in BASE_CSS and "--teal:#12a08f" in BASE_CSS
+    assert ':root[data-theme="auto"]' in DECIDE_CSS                 # dark block stays with the decide look
+    assert not re.search(r"orange|#d9660f|#f28b38|#a64805|#ffa65e", BASE_CSS + DECIDE_CSS, re.I)

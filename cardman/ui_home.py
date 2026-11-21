@@ -164,48 +164,6 @@ def _own_guides(idx, passcode: str) -> str:
     return f'<span class="ct-mkt">{ " · ".join(bits) }{more}<br>guide, not a sale</span>'
 
 
-def _markets(idx, game: str) -> str:
-    """The catalogs and the character markets, on the home, not behind a listing."""
-    if game == "pkm":
-        cat = idx.cat if idx is not None and getattr(idx, "cat", None) is not None else None
-        n = len(cat) if cat is not None else 0
-        count = f"{n:,} Pokémon cards are on this site. " if n else ""
-        return ('<section><h2>Character markets</h2>'
-                f'<p class="sub">{count}Every character is priced by its own cards; one print is never the price of another. '
-                '<a href="/pkm/characters">All character markets →</a></p>'
-                f'<div class="cgrid">{_char_tiles(cat, 12)}</div></section>')
-    who = ["Blue-Eyes White Dragon", "Dark Magician", "Red-Eyes Black Dragon", "Exodia the Forbidden One", "Ash Blossom"]
-    links = "".join(f'<a class="fchip" href="/search?q={e(n.replace(" ", "+"))}">{e(n)}</a>' for n in who)
-    return ('<section><h2>Card markets</h2>'
-            '<p class="sub">Every printing has its own guide price. Open the card, then pick the version. '
-            'A guide is not a sale.</p>'
-            f'<div class="fchips">{links}</div></section>')
-
-
-def _char_tiles(cat, limit: int) -> str:
-    """Character tiles with the newest cached picture of each, strongest markets first."""
-    if cat is None:
-        return '<p class="empty">The Pokémon card list is still downloading; character markets fill in when it lands.</p>'
-    from .character import market_rows, slug
-    return "".join(f'<a class="ctile" href="/pkm/character/{e(slug(name))}">{img("pkm-" + rep, "small", name)}'
-                   f'<span class="ct-name">{e(name)}</span>'
-                   f'<span class="ct-meta">{cards} cards · {priced} with their own price</span></a>'
-                   for priced, cards, name, rep in market_rows(cat)[:limit])
-
-
-def view_characters(idx) -> str:
-    """The whole character market: every Pokémon whose cards carry their own prices, biggest first."""
-    cat = idx.cat if idx is not None and getattr(idx, "cat", None) is not None else None
-    if cat is None:
-        return '<h1>Character markets</h1><p class="empty">No Pokémon catalog loaded yet.</p>'
-    from .character import market_rows
-    rows = market_rows(cat)
-    return (f'<h1>Character markets</h1><p class="sub">{len(rows):,} characters carry their own prices across {len(cat):,} cards. '
-            'Open one: every print, its own guide, its own sales. Nothing here prices a different card.</p>'
-            f'<div class="cgrid">{_char_tiles(cat, 300)}</div>'
-            + (f'<p class="muted small">Showing the 300 strongest of {len(rows):,}. Search for any other by name.</p>' if len(rows) > 300 else ""))
-
-
 def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", assumed_costs: bool = True, EM=None, game: str = "ygo") -> str:
     """Search, then the decisions: the rail with live counts, the top Buys, then the 2x Checks. Nothing else."""
     from .ui_listing import BUY, CHECK, WATCH, decisions, row_html
@@ -221,9 +179,15 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", a
              '<a href="/search?q=%E9%9D%92%E7%9C%BC%E3%81%AE%E7%99%BD%E9%BE%8D">青眼の白龍</a> · <a href="/search?q=LOB-EN001">LOB-EN001</a></p></section>'))]
     if assumed_costs:
         out.append('<p class="note slimnote">"Worth paying up to" prices use <b>starter</b> costs. <a href="/settings">Set your real fees and shipping</a>.</p>')
-    out.append(_markets(idx, game))
     from .ui_market import movement_strip
     out.append(movement_strip(st, game, M))
+    if game != "pkm":                     # characters live under Cards now; the ygo quick names stay here
+        who = ["Blue-Eyes White Dragon", "Dark Magician", "Red-Eyes Black Dragon", "Exodia the Forbidden One", "Ash Blossom"]
+        links = "".join(f'<a class="fchip" href="/search?q={e(n.replace(" ", "+"))}">{e(n)}</a>' for n in who)
+        out.append('<section><h2>Card markets</h2>'
+                   '<p class="sub">Every printing has its own guide price. Open the card, then pick the version. '
+                   'A guide is not a sale.</p>'
+                   f'<div class="fchips">{links}</div></section>')
 
     if "opportunity" in have and EM is not None:
         from .ui_decide import deal_card, first_seen, rail
@@ -768,8 +732,8 @@ box-shadow:0 12px 32px rgba(0,0,0,.14);overflow:hidden;text-align:left}
 .sugg a{display:flex;gap:10px;align-items:center;padding:7px 12px;color:var(--fg);text-decoration:none}
 .sugg a.on,.sugg a:hover{background:var(--soft)}.sugg img,.sugg .ph{width:30px;height:44px;flex:none}
 .sugg b{display:block;font-weight:600}.sugg small{color:var(--muted)}
-section.hero{text-align:center;padding:46px 12px 26px;max-width:760px;margin:0 auto;background:none;border:0}
-section.hero.slim{padding:26px 12px 12px}.slimnote{max-width:760px;margin:0 auto 6px;font-size:13px}
+section.hero{text-align:center;padding:46px 12px 26px;max-width:760px;margin:0 auto;background:none;border:0;box-shadow:none}
+section.hero.slim{padding:26px 12px 12px;box-shadow:none}.slimnote{max-width:760px;margin:0 auto 6px;font-size:13px}
 .soldlist{list-style:none;padding:0;margin:0;display:grid;gap:8px}.soldlist li{display:grid;grid-template-columns:40px 1fr auto;gap:12px;align-items:center;
 background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:8px 12px}.soldlist .card{width:40px;height:58px}
 .sold-p{font-weight:700;font-variant-numeric:tabular-nums}
@@ -787,7 +751,7 @@ background:var(--surface);border:1px solid var(--line);border-radius:12px;paddin
 @media(max-width:800px){.shell{grid-template-columns:minmax(0,1fr)!important}header{flex-wrap:wrap}header .hsearch{order:9;flex-basis:100%;max-width:none}
 header .store{display:none}form.search.big input{font-size:16px;padding:12px 16px}form.search.big button{padding:0 16px}}
 .tile-l{display:flex;gap:12px;padding:12px;background:var(--surface);border:1px solid var(--line);border-radius:12px;color:var(--fg);
-text-decoration:none;transition:box-shadow .15s,transform .15s}.tile-l:hover{box-shadow:0 6px 18px rgba(0,0,0,.08);transform:translateY(-1px)}
+text-decoration:none;transition:box-shadow .15s,transform .15s}.tile-l:hover{box-shadow:var(--shadow-hi);transform:translateY(-2px);border-color:var(--axis)}
 .tile-l .card{width:64px;height:93px;flex:none}.tl-body{display:flex;flex-direction:column;gap:3px;min-width:0}
 .tl-title{font-weight:600;font-size:13px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .tl-price{font-size:17px;font-weight:700;font-variant-numeric:tabular-nums}.tl-sub{display:flex;flex-wrap:wrap;gap:4px}
@@ -805,8 +769,8 @@ font-weight:800;font-size:13px;letter-spacing:.08em;color:var(--fg2)}.card.lotph
 .empty{color:var(--muted);padding:12px 0}
 .search-page{max-width:720px;margin:4px 0 18px}
 .cgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(168px,45%),1fr));gap:14px}
-.ctile{display:flex;flex-direction:column;gap:3px;padding:10px;background:var(--surface);border:1px solid var(--line);border-radius:12px;color:var(--fg);text-decoration:none}
-.ctile:hover{box-shadow:0 6px 18px rgba(0,0,0,.08)}.ctile .card{width:100%;margin:0 0 6px}
+.ctile{display:flex;flex-direction:column;gap:3px;padding:10px;background:var(--surface);border:1px solid var(--line);border-radius:12px;color:var(--fg);text-decoration:none;box-shadow:var(--shadow);transition:box-shadow .15s var(--ease),transform .15s var(--ease),border-color .15s var(--ease)}
+.ctile:hover{box-shadow:var(--shadow-hi);transform:translateY(-2px);border-color:var(--axis)}.ctile .card{width:100%;margin:0 0 6px}
 .ct-name{font-weight:600;line-height:1.25}.ct-ja{font-size:12px;color:var(--fg2)}.ct-meta{font-size:12px;color:var(--muted)}
 .ct-why{font-size:11px;color:var(--accent)}.ct-mkt{font-size:12px;font-weight:650;color:var(--fg)}
 .plat{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:5px;border:1px solid var(--axis);white-space:nowrap}
@@ -832,7 +796,7 @@ table.prints td{vertical-align:middle}table.prints td.scan{width:46px}table.prin
 .themes{display:inline-flex;border:1px solid var(--axis);border-radius:6px;overflow:hidden}.themes a{padding:0 8px;font-size:12px}
 .themes a.on{background:var(--fg);color:var(--surface)}
 :root[data-theme="vault"]{color-scheme:dark;--bg:#0c0b09;--surface:#15130f;--fg:#f4eedf;--fg2:#d2c8b1;--muted:#8d846f;--line:#2a261f;
---axis:#3a3429;--soft:#1e1b16;--accent:#d4af6a;--good-text:#9ccf7e;--good:#6fae4f}
+--axis:#3a3429;--soft:#1e1b16;--accent:#d4af6a;--good-text:#9ccf7e;--good:#6fae4f;--canvas:none}
 :root[data-theme="vault"] .hero h1,:root[data-theme="vault"] .cname,:root[data-theme="vault"] .shelf-h h2{
 font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;font-weight:600;letter-spacing:0}
 :root[data-theme="vault"] .hero h1{color:var(--accent);font-size:44px}
