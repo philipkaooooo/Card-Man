@@ -48,7 +48,8 @@ _RARITY_RE = [(name, re.compile(pat, re.I)) for name, pat in RARITY_TERMS]
 
 _GRADE_RE = re.compile(r"(?<![A-Za-z])(PSA|BGS|CGC|ARS|SGC|TAG|GMA|BECKETT|AGS)[\s\-:]*(?:GEM[\s\-]*(?:MINT|MT|-?MT)?\s*|MINT\s*|PRISTINE\s*|鑑定\s*)?(\d{1,2}(?:\.\d)?)(?![\d])", re.I)
 _CERT_RE = re.compile(r"(?:cert|certificate|証明書|鑑定番号|編號)[\s#:：No\.]*(\d{7,10})", re.I)
-_LOT_SIZE_RE = re.compile(r"(\d{1,5})\s*(?:枚|張|cards?\b|pcs\b|ct\b)", re.I)
+_LOT_SIZE_RE = re.compile(r"(?:lot of\s*)?(\d{1,5})\s*\+?\s*(?:(?:yu-?gi-?oh!?|ygo|vintage|mixed|holo)\s*){0,3}(?:枚|張|cards?\b|pcs\b|ct\b)"
+                          r"|lot of\s*(\d{1,5})\b", re.I)
 
 COUNTERFEIT_CUES = ("proxy", "プロキシ", "orica", "オリカ", "オリジナルカード", "replica", "レプリカ", "fake", "偽物", "コピー品",
                     "コピーカード", "複製", "海賊版", "盜版", "盗版", "仿製", "custom card", "カスタムカード", "fan made", "fanmade",
@@ -127,7 +128,14 @@ def parse_listing_text(text: str) -> ParsedListing:
     condition = next((n for n, p in CONDITION_TERMS if re.search(p, low)), None)
     language = next((n for n, p in LANGUAGE_TERMS if re.search(p, low)), None)
     # Sizes of 1-3 are usually "x3 same card", or noise; a lot needs a cue or a real count.
-    sizes = [int(x) for x in _LOT_SIZE_RE.findall(norm)]
+    # "1996 Card Lot" is a year, not 1,996 cards: a year followed by the singular "card" is not a count.
+    sizes = []
+    for m in _LOT_SIZE_RE.finditer(norm):
+        g = 1 if m.group(1) else 2
+        n = int(m.group(g))
+        if 1990 <= n <= 2035 and re.match(r"\s*card\b", norm[m.end(g):], re.I):
+            continue
+        sizes.append(n)
     lot_size = max(sizes) if sizes else None
     is_lot = bool(_cues(low, LOT_CUES)) or (lot_size is not None and lot_size >= 2)
     if len(codes) >= 3:

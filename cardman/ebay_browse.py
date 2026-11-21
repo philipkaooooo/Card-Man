@@ -49,6 +49,7 @@ class SearchResult:
     total: int | None
     pages: int
     titles: dict[str, str] = field(default_factory=dict)   # observation id -> seller's title
+    photos: dict[str, list] = field(default_factory=dict)  # observation id -> the listing's own photo URLs
 
 
 def _ts(s: str | None) -> datetime | None:
@@ -157,7 +158,7 @@ class EbayBrowse:
         self._token = (body["access_token"], time.time() + int(body.get("expires_in", 7200)))
         return self._token[0]
 
-    def search(self, q: str, *, catalog: Catalog | None = None, category_ids: str | None = None,
+    def search(self, q: str, *, catalog: Catalog | None = None, category_ids: str | None = None, aspect_filter: str | None = None,
                limit: int = 50, max_pages: int = 3, now: datetime | None = None,
                synthetic: bool = False) -> SearchResult:
         """Paginated search. Raw pages are stored before parsing; an error raises, never returns []."""
@@ -166,10 +167,13 @@ class EbayBrowse:
         params = {"q": q, "limit": str(limit), "offset": "0"}
         if category_ids:
             params["category_ids"] = category_ids
+        if aspect_filter:
+            params["aspect_filter"] = aspect_filter
         url = f"{SEARCH_URL}?{urllib.parse.urlencode(params)}"
         obs, refs, total, pages = [], [], None, 0
         seen: set[str] = set()
         titles: dict[str, str] = {}
+        photos: dict[str, list] = {}
         while url and pages < max_pages:
             req = urllib.request.Request(url, headers={"Authorization": f"Bearer {tok}",
                                                        "X-EBAY-C-MARKETPLACE-ID": self.marketplace})
@@ -187,6 +191,8 @@ class EbayBrowse:
                 obs.append(map_item(item, captured_at=now, raw_ref=ref, catalog=catalog,
                                     marketplace=self.marketplace, synthetic=synthetic))
                 titles[obs[-1].id] = item.get("title") or ""
+                from .listing_detail import _imgs
+                photos[obs[-1].id] = _imgs(item)
             url = page.get("next")
             pages += 1
-        return SearchResult(obs, refs, total, pages, titles)
+        return SearchResult(obs, refs, total, pages, titles, photos)

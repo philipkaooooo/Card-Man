@@ -1,0 +1,30 @@
+{
+ "count": 10,
+ "result": [
+  {
+   "skuId": "274233",
+   "variant": "1st Edition",
+   "condition": "Near Mint",
+   "language": "English",
+   "totalTransactionCount": "2",
+   "buckets": [
+    {
+     "bucketStartDate": "2026-03-23",
+     "quantitySold": "1",
+     "transactionCount": "1",
+     "lowSalePrice": "14.99",
+     "highSalePrice": "14.99",
+     "marketPrice": "2007.5"
+    },
+    {
+     "bucketStartDate": "2026-02-09",
+     "quantitySold": "1",
+     "transactionCount": "1",
+     "lowSalePrice": "4000",
+     "highSalePrice": "4000",
+     "marketPrice": "4000"
+    }
+   ]
+  }
+ ]
+}

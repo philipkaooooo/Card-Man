@@ -124,7 +124,7 @@ def test_pages_render_and_link_by_passcode(server):
     s, h, body = get("/")
     assert s == 200 and b"Find the exact card." in body and b"img-src 'self' data:" in h["Content-Security-Policy"].encode()
     s, _, body = get("/card/89631139")
-    assert b"Blue-Eyes White Dragon" in body and b"89631139" in body and b"printings" in body and "青眼の白龍".encode() in body
+    assert b"Blue-Eyes White Dragon" in body and b"89631139" in body and b"versions of this card" in body and "青眼の白龍".encode() in body
     _, _, body = get("/search?q=dragon")
     assert b"/card/" in body
     _, _, body = get("/", cookie="theme=vault")
@@ -134,7 +134,7 @@ def test_pages_render_and_link_by_passcode(server):
 def test_exact_search_goes_straight_to_the_card(server):
     get, _ = server
     s, _, body = get("/search?q=89631139")         # urllib follows the 303
-    assert b"Blue-Eyes White Dragon" in body and b"Passcode" in body and b"89631139" in body
+    assert b"Blue-Eyes White Dragon" in body and b"Card number" in body and b"89631139" in body
 
 
 def test_suggestions_and_images_are_served_locally(server):

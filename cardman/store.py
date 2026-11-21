@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS snapshot (
     stage TEXT, payload_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS snapshot_printing (snapshot_id TEXT NOT NULL, printing_id TEXT NOT NULL,
     PRIMARY KEY (snapshot_id, printing_id));
+CREATE TABLE IF NOT EXISTS observation_identity (
+    obs_id TEXT NOT NULL, printing_id TEXT NOT NULL, actor TEXT NOT NULL, recorded_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS snapshot_redaction (snapshot_id TEXT PRIMARY KEY, redacted_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS invalidation (
     printing_id TEXT NOT NULL, reason TEXT NOT NULL, recorded_at TEXT NOT NULL);
@@ -64,6 +66,13 @@ CREATE INDEX IF NOT EXISTS outcome_position ON outcome(position);
 CREATE TABLE IF NOT EXISTS decision (
     snapshot_id TEXT NOT NULL REFERENCES snapshot(id), action TEXT NOT NULL, rationale TEXT NOT NULL,
     wait_trigger TEXT, decided_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS public_listing (
+    source TEXT NOT NULL, listing_id TEXT NOT NULL, product_id TEXT NOT NULL, card_key TEXT NOT NULL,
+    name TEXT NOT NULL, number TEXT, printing TEXT NOT NULL, condition TEXT NOT NULL, language TEXT NOT NULL,
+    price TEXT NOT NULL, shipping TEXT, label TEXT NOT NULL, sales INTEGER NOT NULL, exit_low TEXT,
+    after_fees TEXT, multiple TEXT, why TEXT NOT NULL, seen_at TEXT NOT NULL,
+    PRIMARY KEY (source, listing_id));
+CREATE INDEX IF NOT EXISTS public_listing_card ON public_listing(card_key);
 """
 
 
@@ -144,11 +153,47 @@ class Store:
         self.path = Path(path)
         if str(path) != ":memory:":
             self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(str(path))
+        self.db = sqlite3.connect(str(path), timeout=30)     # wait for the engine's write instead of failing the page
         self.db.execute("PRAGMA foreign_keys=ON")
-        self.db.executescript(_SCHEMA)
+        try:   # already set up: a page only reads, so it never waits behind the engine's long write
+            ready = self.db.execute("SELECT value FROM meta WHERE key='store_schema_version'").fetchone()
+        except sqlite3.Error:
+            ready = None
+        if not ready or ready[0] != str(STORE_SCHEMA_VERSION):
+            self.db.executescript(_SCHEMA)
+            with self.db:
+                self.db.execute("INSERT OR IGNORE INTO meta VALUES ('store_schema_version', ?)", (str(STORE_SCHEMA_VERSION),))
+
+    def save_public_listings(self, rows: list[dict], seen_at: datetime) -> tuple[int, list[str]]:
+        """Current asks that already name one card. A listing id never moves to a different card.
+
+        The same id seen again with the same card updates the price and the label. A different
+        card key is refused and the old row stays.
+        """
+        written, refused = 0, []
         with self.db:
-            self.db.execute("INSERT OR IGNORE INTO meta VALUES ('store_schema_version', ?)", (str(STORE_SCHEMA_VERSION),))
+            for row in rows:
+                key = (row["source"], str(row["listing_id"]))
+                prev = self.db.execute("SELECT card_key FROM public_listing WHERE source=? AND listing_id=?", key).fetchone()
+                if prev and prev[0] != row["card_key"]:
+                    refused.append(f"{key[0]}:{key[1]} is {prev[0]}, not {row['card_key']}")
+                    continue
+                self.db.execute(
+                    "INSERT INTO public_listing (source, listing_id, product_id, card_key, name, number, printing,"
+                    " condition, language, price, shipping, label, sales, exit_low, after_fees, multiple, why, seen_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                    " ON CONFLICT(source, listing_id) DO UPDATE SET"
+                    " price=excluded.price, shipping=excluded.shipping, label=excluded.label, sales=excluded.sales,"
+                    " exit_low=excluded.exit_low, after_fees=excluded.after_fees, multiple=excluded.multiple,"
+                    " why=excluded.why, seen_at=excluded.seen_at, name=excluded.name, number=excluded.number",
+                    (row["source"], str(row["listing_id"]), str(row["product_id"]), row["card_key"], row["name"],
+                     row.get("number"), row["printing"], row["condition"], row["language"], str(row["price"]),
+                     None if row.get("shipping") is None else str(row["shipping"]), row["label"], int(row["sales"]),
+                     None if row.get("exit_low") is None else str(row["exit_low"]),
+                     None if row.get("after_fees") is None else str(row["after_fees"]),
+                     None if row.get("multiple") is None else str(row["multiple"]), row["why"], _ts(seen_at)))
+                written += 1
+        return written, refused
 
     # -- observations --------------------------------------------------------------------------
     def add_observation(self, o: MarketObservation, *, now: datetime | None = None) -> bool:
@@ -205,18 +250,64 @@ class Store:
         row = self.db.execute(q + " ORDER BY rowid DESC LIMIT 1", args).fetchone()
         if row:
             o = MarketObservation(**{**o.__dict__, "status": row[0], "status_reason": row[1]})
+        iq = "SELECT printing_id FROM observation_identity WHERE obs_id=?" + (" AND recorded_at<=?" if as_of is not None else "")
+        ident = self.db.execute(iq + " ORDER BY rowid DESC LIMIT 1", args).fetchone()
+        if ident:
+            o = MarketObservation(**{**o.__dict__, "printing_candidates": (ident[0],)})
         return o
+
+    def same_sale(self, obs_id: str) -> list[str]:
+        """Records of the same sale from different sites, joined by their upstream id (e.g. ebay:<item>)."""
+        lin = self.original(obs_id).upstream_lineage
+        if not lin:
+            return [obs_id]
+        out = []
+        for oid, dj in self.db.execute("SELECT id, data_json FROM observation WHERE data_json LIKE ?", (f'%{lin[0]}%',)):
+            if set(json.loads(dj).get("upstream_lineage") or ()) & set(lin):
+                out.append(oid)
+        return out or [obs_id]
+
+    def confirm_identity(self, obs_id: str, printing_id: str, *, actor: str, now: datetime | None = None) -> None:
+        """A person says which exact printing a recorded sale was. Kept as an event, like a status: the sale record
+        itself is never rewritten, and the confirmation only counts from the moment it was made."""
+        self.original(obs_id)          # KeyError if there is no such record
+        with self.db:
+            self.db.execute("INSERT INTO observation_identity VALUES (?,?,?,?)", (obs_id, printing_id, actor, _ts(now or _now())))
+            self.db.execute("INSERT OR IGNORE INTO observation_printing VALUES (?,?)", (obs_id, printing_id))
 
     def status_history(self, obs_id: str) -> list[tuple[str, str, str, str]]:
         return self.db.execute("SELECT status, reason, actor, recorded_at FROM observation_status WHERE obs_id=?"
                                " ORDER BY rowid", (obs_id,)).fetchall()
+
+    def effective_many(self, ids: list[str], as_of: datetime | None = None) -> list[MarketObservation]:
+        """The same as calling `effective` on each id, with the status and identity lookups batched per 500 records."""
+        out: list[MarketObservation] = []
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            qm = ",".join("?" * len(chunk))
+            cutoff = " AND recorded_at<=?" if as_of is not None else ""
+            extra = (_ts(as_of),) if as_of is not None else ()
+            stat = {r[0]: (r[1], r[2]) for r in self.db.execute(
+                f"SELECT obs_id, status, reason FROM observation_status WHERE obs_id IN ({qm}){cutoff} ORDER BY rowid",
+                (*chunk, *extra))}
+            ident = {r[0]: r[1] for r in self.db.execute(
+                f"SELECT obs_id, printing_id FROM observation_identity WHERE obs_id IN ({qm}){cutoff} ORDER BY rowid",
+                (*chunk, *extra))}
+            for oid in chunk:
+                o = self.original(oid)
+                if oid in stat:
+                    o = MarketObservation(**{**o.__dict__, "status": stat[oid][0], "status_reason": stat[oid][1]})
+                if oid in ident:
+                    o = MarketObservation(**{**o.__dict__, "printing_candidates": (ident[oid],)})
+                out.append(o)
+        return out
 
     def observations_for(self, printing_id: str, *, as_of: datetime) -> list[MarketObservation]:
         """Observations captured by `as_of` that name this printing, with status as known then."""
         ids = [r[0] for r in self.db.execute(
             "SELECT o.id FROM observation o JOIN observation_printing p ON p.obs_id=o.id"
             " WHERE p.printing_id=? AND o.capture_time<=? ORDER BY o.event_time", (printing_id, _ts(as_of)))]
-        return [self.effective(i, as_of) for i in ids]
+        return self.effective_many(ids, as_of)
 
     # -- snapshots -----------------------------------------------------------------------------
     def save_snapshot(self, *, listing_ref: str, payload: dict, printing_ids: list[str],

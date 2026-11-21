@@ -21,7 +21,7 @@ from .models import IdentityStatus, MarketObservation
 from .verify import assess, filter_comps
 
 # Bump when the rules change, so the engine re-analyzes listings it would otherwise skip as unchanged.
-ANALYSIS_VERSION = "2026-11-12.1"
+ANALYSIS_VERSION = "2026-11-21.1"   # seller code + agreeing exact name resolves; photo check arbitrates
 MAX_SCENARIOS = 40
 UNDERPRICED_SHARE = 0.8
 MIN_PRICED_SHARE = 0.5        # below this, a priced minority of the possibilities does not speak for the listing
@@ -39,6 +39,9 @@ class Valuation:
     estimate: pricing.PriceEstimate | None
     competing: int = 0
     competing_ids: frozenset = frozenset()
+    condition: str | None = None       # the condition this valuation was restated to
+    same_condition: int = 0            # comps already in that condition, used unchanged
+    adjusted: int = 0                  # comps in another or unknown condition, restated
 
 
 class PriceBook:
@@ -56,24 +59,38 @@ class PriceBook:
         table = self.fx.table([(currency, self.home)], [at])
         return table.convert(amount, currency, self.home, at)
 
-    def value(self, printing_id: str, grade_company: str | None = None, grade: str | None = None) -> Valuation:
-        k = (printing_id, grade_company, grade)
+    def value(self, printing_id: str, grade_company: str | None = None, grade: str | None = None,
+              condition: str | None = None) -> Valuation:
+        """Sold-only value of one exact printing / grade. `condition` restates raw sales to the copy being priced:
+        same-condition sales are used unchanged when there are enough of them; otherwise the rest are adjusted by the
+        condition ladder and the valuation says so. Graded slabs ignore condition."""
+        from . import conditions
+        condition = conditions.normalize(condition) if not grade_company else None
+        k = (printing_id, grade_company, grade, condition)
         if k in self.cache:
             return self.cache[k]
         pool = self.store.observations_for(printing_id, as_of=self.now)
         comps, _ = select_comps(pool, printing_id, grade_company=grade_company, grade=grade, as_of=self.now)
         comps, _ = filter_comps(comps, pool, self.now)
+        same = [c for c in comps if condition and conditions.normalize(c.observed_condition) == condition]
+        if condition and len(same) >= pricing.MIN_SALES:
+            comps = same
         trust = assess(pool, self.now)
         sales = []
         for c in comps:
             try:
-                sales.append(pricing.Sale(c.event_time, float(self.to_home(c.original_amount, c.currency, c.event_time)),
-                                          trust[c.id].trust if c.id in trust else 1.0))
+                price = float(self.to_home(c.original_amount, c.currency, c.event_time))
             except StaleRateError as x:
                 self.notes.append(f"no FX for {c.id}: {x}")
+                continue
+            if condition:
+                price = conditions.adjust(price, conditions.normalize(c.observed_condition), condition)
+            sales.append(pricing.Sale(c.event_time, price, trust[c.id].trust if c.id in trust else 1.0))
         est = pricing.estimate(sales, self.now, bias=self.bias)
         ids = self._competing(pool, est) if est else frozenset()
-        v = Valuation(printing_id, sales, comps, est, len(ids), ids)
+        same_used = sum(1 for c in comps if condition and conditions.normalize(c.observed_condition) == condition)
+        v = Valuation(printing_id, sales, comps, est, len(ids), ids, condition, same_used,
+                      len(comps) - same_used if condition else 0)
         self.cache[k] = v
         return v
 
@@ -158,6 +175,8 @@ def costs_for(profile: dict, market: str, shipping_home: Decimal = Decimal(0)) -
 
 
 def _label(p) -> str:
+    if p.id.startswith("pk:"):                        # Pokémon: "151 199/165 · Special Illustration Rare · Holo"
+        return " · ".join(x for x in (f"{p.product_name or ''} {p.set_code or ''}".strip(), p.rarity, p.edition) if x)
     bits = [p.set_code or "no code", p.rarity]
     if p.edition:
         bits.append(p.edition)
@@ -203,7 +222,7 @@ def evaluate_listing(raw: RawListing, an: ListingAnalysis, book: PriceBook, cata
     by_id, weights = {}, {}
     base_w = an.weights or {}
     for c in an.identity.candidates:
-        variants = edition_variants(c, catalog) if catalog is not None else [c]
+        variants = edition_variants(c, catalog) if (catalog is not None and getattr(catalog, "game", "ygo") == "ygo") else [c]
         for v in variants:
             by_id[v.id] = v
             # The seller's edition claim tilts the weights but is not proof: 2/3 to the claimed edition.
@@ -220,9 +239,11 @@ def evaluate_listing(raw: RawListing, an: ListingAnalysis, book: PriceBook, cata
     japanese = (getattr(an.parsed, "language", None) == "ja" or raw.market == "JP" or "japan" in low_all
                 or any("\u3040" <= ch <= "\u30ff" for ch in raw.title))
     scenarios: list[Scenario] = []
+    restated = 0
     for pid in ranked:
         p = by_id[pid]
-        v = book.value(pid, raw.grade_company, raw.grade)
+        v = book.value(pid, raw.grade_company, raw.grade, raw.condition)
+        restated += v.adjusted
         sc = Scenario(pid, _label(p), weights.get(pid, 1 / max(1, len(by_id))), "none", n_sales=len(v.sales))
         if v.estimate:
             rv = pricing.risk_view(v.sales, v.estimate, ask_home, acq, ex, target_return=tgt, capital_cost_monthly=cap,
@@ -235,8 +256,19 @@ def evaluate_listing(raw: RawListing, an: ListingAnalysis, book: PriceBook, cata
             sc.profit_low = float(ex.net(Decimal(str(round(v.estimate.low, 2))))) - all_in - carry
             sc.profit_mid = float(ex.net(Decimal(str(round(v.estimate.mid, 2))))) - all_in - carry
             sc.max_buy, sc.p_loss, sc.risk_adjusted, sc.months_to_sell = (float(rv.max_buy) if rv.max_buy else None), rv.p_loss, rv.risk_adjusted_profit, rv.months_held
+        elif getattr(catalog, "game", "ygo") == "pkm" and len(scenarios) < 5 and not graded:
+            # Pokémon: the TCGplayer market price for this exact version, a guide only (never a sale, never a max buy).
+            g = catalog.guide(pid)
+            if g:
+                try:
+                    usd = book.to_home(Decimal(str(g[0])), "USD", now)
+                    sc.basis, sc.resale_mid, sc.resale_low = "reference", float(usd), float(usd) * 0.6
+                    sc.profit_mid = float(ex.net(usd)) - all_in
+                    sc.profit_low = float(ex.net(usd * Decimal("0.6"))) - all_in
+                except StaleRateError:
+                    pass
         elif (book.reference and p.set_code and p.region.value == "EN_TCG" and len(scenarios) < 5 and not graded
-              and not japanese):
+              and not japanese and getattr(catalog, "game", "ygo") == "ygo"):
             # A guide price is for an ungraded English card: never for a slab or a Japanese listing.
             ref = book.reference.price(p.set_code, now)
             if ref and ref[1].lower() == p.rarity.lower():
@@ -248,6 +280,11 @@ def evaluate_listing(raw: RawListing, an: ListingAnalysis, book: PriceBook, cata
                 except StaleRateError:
                     pass
         scenarios.append(sc)
+
+    if restated:
+        from .conditions import label as condition_label
+        reasons.append(f"Some comparables were sold in another condition; their prices were restated to "
+                       f"{condition_label(raw.condition)} using the condition ladder.")
 
     # Money figures come from sold evidence only. A guide price is a lead (below), never an expected profit.
     priced = [s for s in scenarios if s.profit_mid is not None and s.basis == "sales"]
@@ -264,7 +301,7 @@ def evaluate_listing(raw: RawListing, an: ListingAnalysis, book: PriceBook, cata
         evpi = (sum(s.weight * max(0.0, s.profit_mid) for s in priced) - max(0.0, sum(s.weight * s.profit_mid for s in priced))) / all_w
 
     # -- what kind of edge is this? -------------------------------------------------------------------------------
-    sold_backed = [s for s in priced if s.basis == "sales"]
+    sold_backed = priced   # already sales-basis only
     total_w = sum(s.weight for s in scenarios) or 1.0
     cheap_w = sum(s.weight for s in sold_backed if s.max_buy is not None and float(ask_home) <= s.max_buy) / total_w
     if cheap_w >= UNDERPRICED_SHARE:
@@ -274,7 +311,7 @@ def evaluate_listing(raw: RawListing, an: ListingAnalysis, book: PriceBook, cata
         # Cheap only if it is one particular print: a bet on identity, which the check below can settle.
         kinds.append("RIGHT_PRINT_ONLY")
         reasons.append(f"Under max buy only if it is the right print ({cheap_w:.0%} of the probability). Confirm before buying.")
-    if an.has("CODE_NAME_MISMATCH", "RARITY_NOT_ON_CODE", "PHOTO_CONTRADICTS_SELLER"):
+    if an.has("CODE_NAME_MISMATCH", "RARITY_NOT_ON_CODE", "PHOTO_CONTRADICTS_SELLER", "ASPECT_CONFLICT"):
         kinds.append("MISIDENTIFIED")
     if an.has("RARITY_UNSTATED", "PHOTO_ADDS_CODE") and best is not None and best > 0:
         kinds.append("HIDDEN_VARIANT")
@@ -287,7 +324,8 @@ def evaluate_listing(raw: RawListing, an: ListingAnalysis, book: PriceBook, cata
 
     lot_rows, gr = [], None
     if an.parsed.is_lot:
-        lot_rows = lot_contents(f"{raw.title}\n{raw.description}", catalog)
+        # Itemizing a lot's card list needs the Yu-Gi-Oh! catalog's name matching; a Pokémon lot stays a lot.
+        lot_rows = lot_contents(f"{raw.title}\n{raw.description}", catalog) if getattr(catalog, "game", "ygo") == "ygo" else []
         total = 0.0
         net_total = 0.0
         for row in lot_rows:

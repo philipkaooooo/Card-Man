@@ -1,0 +1,80 @@
+{
+ "productId": 21792.0,
+ "productLineId": 2.0,
+ "productLineName": "YuGiOh",
+ "productName": "Blue-Eyes White Dragon",
+ "setName": "The Legend of Blue Eyes White Dragon",
+ "setCode": "LOB",
+ "rarityName": "Ultra Rare",
+ "sealed": false,
+ "marketPrice": 119.14,
+ "lowestPrice": 15.0,
+ "medianPrice": 131.74,
+ "customAttributes": {
+  "number": "LOB-001",
+  "releaseDate": "2002-03-08T00:00:00Z",
+  "rarityDbName": "Ultra Rare"
+ },
+ "skus": [
+  {
+   "sku": 263353,
+   "condition": "Near Mint",
+   "variant": "Unlimited",
+   "language": "English"
+  },
+  {
+   "sku": 575146,
+   "condition": "Lightly Played",
+   "variant": "Unlimited",
+   "language": "English"
+  },
+  {
+   "sku": 583360,
+   "condition": "Moderately Played",
+   "variant": "Unlimited",
+   "language": "English"
+  },
+  {
+   "sku": 566932,
+   "condition": "Heavily Played",
+   "variant": "Unlimited",
+   "language": "English"
+  },
+  {
+   "sku": 558718,
+   "condition": "Damaged",
+   "variant": "Unlimited",
+   "language": "English"
+  },
+  {
+   "sku": 274233,
+   "condition": "Near Mint",
+   "variant": "1st Edition",
+   "language": "English"
+  },
+  {
+   "sku": 542290,
+   "condition": "Lightly Played",
+   "variant": "1st Edition",
+   "language": "English"
+  },
+  {
+   "sku": 550504,
+   "condition": "Moderately Played",
+   "variant": "1st Edition",
+   "language": "English"
+  },
+  {
+   "sku": 534076,
+   "condition": "Heavily Played",
+   "variant": "1st Edition",
+   "language": "English"
+  },
+  {
+   "sku": 525862,
+   "condition": "Damaged",
+   "variant": "1st Edition",
+   "language": "English"
+  }
+ ]
+}

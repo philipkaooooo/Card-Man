@@ -1,0 +1,16 @@
+{
+  "_note": "Versions the Pokémon TCG API does not split. The 1999 Base Set (base1) exists as 1st Edition, Shadowless and Unlimited; the API lists it as one price, which is the Unlimited card.",
+  "replace_versions": {
+    "base1": {"holo": ["1st Edition Holo", "Shadowless", "Unlimited Holo"], "plain": ["1st Edition", "Shadowless", "Unlimited"]}
+  },
+  "guide_as": {
+    "base1": {"holofoil": "Unlimited Holo", "normal": "Unlimited"}
+  },
+  "set_aliases": {
+    "base set": "base1", "base set 1": "base1", "1999 base": "base1", "base set 2": "base4", "base 2": "base4",
+    "team rocket": "base5", "legendary collection": "base6", "gym heroes": "gym1", "gym challenge": "gym2",
+    "neo genesis": "neo1", "neo discovery": "neo2", "neo revelation": "neo3", "neo destiny": "neo4",
+    "scarlet violet 151": "sv3pt5", "sv151": "sv3pt5", "pokemon 151": "sv3pt5", "evolving skies": "swsh7", "hidden fates": "sm115",
+    "crown zenith": "swsh12pt5", "celebrations": "cel25", "shining fates": "swsh45"
+  }
+}

@@ -1,0 +1,338 @@
+{
+ "count": 7,
+ "result": [
+  {
+   "skuId": "583360",
+   "variant": "Unlimited",
+   "condition": "Moderately Played",
+   "language": "English",
+   "totalTransactionCount": "9",
+   "buckets": [
+    {
+     "bucketStartDate": "2026-11-18",
+     "quantitySold": "2",
+     "transactionCount": "2",
+     "lowSalePrice": "43.43",
+     "highSalePrice": "49.19",
+     "marketPrice": "43.53"
+    },
+    {
+     "bucketStartDate": "2026-11-15",
+     "quantitySold": "3",
+     "transactionCount": "3",
+     "lowSalePrice": "39.65",
+     "highSalePrice": "43.65",
+     "marketPrice": "43.5"
+    },
+    {
+     "bucketStartDate": "2026-11-06",
+     "quantitySold": "1",
+     "transactionCount": "1",
+     "lowSalePrice": "39.9",
+     "highSalePrice": "39.9",
+     "marketPrice": "44.03"
+    },
+    {
+     "bucketStartDate": "2026-11-03",
+     "quantitySold": "1",
+     "transactionCount": "1",
+     "lowSalePrice": "39.86",
+     "highSalePrice": "39.86",
+     "marketPrice": "44.36"
+    },
+    {
+     "bucketStartDate": "2026-10-16",
+     "quantitySold": "1",
+     "transactionCount": "1",
+     "lowSalePrice": "49.2",
+     "highSalePrice": "49.2",
+     "marketPrice": "43.65"
+    },
+    {
+     "bucketStartDate": "2026-10-07",
+     "quantitySold": "1",
+     "transactionCount": "1",
+     "lowSalePrice": "50.65",
+     "highSalePrice": "50.65",
+     "marketPrice": "45.14"
+    }
+   ]
+  },
+  {
+   "skuId": "575146",
+   "variant": "Unlimited",
+   "condition": "Lightly Played",
+   "language": "English",
+   "totalTransactionCount": "20",
+   "buckets": [
+    {
+     "bucketStartDate": "2026-11-18",
+     "quantitySold": "1",
+     "transactionCount": "1",
+     "lowSalePrice": "58.71",
+     "highSalePrice": "58.71",
+     "marketPrice": "56.82"
+    },
+    {
+     "bucketStartDate": "2026-11-15",
+     "quantitySold": "4",
+     "transactionCount": "4",
+     "lowSalePrice": "60",
+     "highSalePrice": "62",
+     "marketPrice": "58.65"
+    },
+    {
+     "bucketStartDate": "2026-11-09",
+     "quantitySold": "1",
+     "transactionCount": "1",
+     "lowSalePrice": "60",
+     "highSalePrice": "60",
+     "marketPrice": "60.73"
+    },
+    {
+     "bucketStartDate": "2026-11-03",
+     "quantitySold": "4",
+     "transactionCount": "3",
+     "lowSalePrice": "60.99",
+     "highSalePrice": "68.9",
+     "marketPrice": "60.76"
+    },
+    {
+     "bucketStartDate": "2026-10-25",
+     "quantitySold": "1",
+     "transactionCount": "1",
+     "lowSalePrice": "44.81",
+     "highSalePrice": "44.81",
+     "marketPrice": "61.86"
+    },
+    {
+     "bucketStartDate": "2026-10-22",
+     "quantitySold": "1",
+     "transactionCount": "1",
+     "lowSalePrice": "52.99",
+     "highSalePrice": "52.99",
+     "marketPrice": "63.94"
+    },
+    {
+     "bucketStartDate": "2026-10-13",
+     "quantitySold": "2",
+     "transactionCount": "2",
+     "lowSalePrice": "46.29",
+     "highSalePrice": "46.32",
+     "marketPrice": "62.73"
+    },
+    {
+     "bucketStartDate": "2026-10-07",
+     "quantitySold": "2",
+     "transactionCount": "2",
+     "lowSalePrice": "46.31",
+     "highSalePrice": "46.32",
+     "marketPrice": "66.21"
+    },
+    {
+     "bucketStartDate": "2026-10-04",
+     "quantitySold": "1",
+     "transactionCount": "1",
+     "lowSalePrice": "44.33",
+     "highSalePrice": "44.33",
+     "marketPrice": "67.3"
+    },
+    {
+     "bucketStartDate": "2026-10-01",
+     "quantitySold": "2",
+     "transactionCount": "2",
+     "lowSalePrice": "35",
+     "highSalePrice": "50",
+     "marketPrice": "68.26"
+    },
+    {
+     "bucketStartDate": "2026-09-28",
+     "quantitySold": "1",
+     "transactionCount": "1",
+     "lowSalePrice": "37.01",
+     "highSalePrice": "37.01",
+     "marketPrice": "71.68"
+    },
+    {
+     "bucketStartDate": "2026-08-23",
+     "quantitySold": "1",
+     "transactionCount": "1",
+     "lowSalePrice": "68",
+     "highSalePrice": "68",
+     "marketPrice": "74.71"
+    }
+   ]
+  },
+  {
+   "skuId": "263353",
+   "variant": "Unlimited",
+   "condition": "Near Mint",
+   "language": "English",
+   "totalTransactionCount": "10",
+   "buckets": [
+    {
+     "bucketStartDate": "2026-11-14",
+     "quantitySold": "1",
+     "transactionCount": "1",
+     "lowSalePrice": "119.99",
+     "highSalePrice": "119.99",
+     "marketPrice": "119.11"
+    },
+    {
+     "bucketStartDate": "2026-11-11",
+     "quantitySold": "2",
+     "transactionCount": "2",
+     "lowSalePrice": "122.98",
+     "highSalePrice": "136.68",
+     "marketPrice": "118.83"
+    },
+    {
+     "bucketStartDate": "2026-10-24",
+     "quantitySold": "1",
+     "transactionCount": "1",
+     "lowSalePrice": "122.99",
+     "highSalePrice": "122.99",
+     "marketPrice": "125.94"
+    },
+    {
+     "bucketStartDate": "2026-10-12",
+     "quantitySold": "1",
+     "transactionCount": "1",
+     "lowSalePrice": "115",
+     "highSalePrice": "115",
+     "marketPrice": "126.15"
+    },
+    {
+     "bucketStartDate": "2026-10-06",
+     "quantitySold": "1",
+     "transactionCount": "1",
+     "lowSalePrice": "139.28",
+     "highSalePrice": "139.28",
+     "marketPrice": "126.28"
+    },
+    {
+     "bucketStartDate": "2026-10-03",
+     "quantitySold": "1",
+     "transactionCount": "1",
+     "lowSalePrice": "123.8",
+     "highSalePrice": "123.8",
+     "marketPrice": "124.32"
+    },
+    {
+     "bucketStartDate": "2026-09-03",
+     "quantitySold": "2",
+     "transactionCount": "2",
+     "lowSalePrice": "108.95",
+     "highSalePrice": "109.99",
+     "marketPrice": "128.57"
+    },
+    {
+     "bucketStartDate": "2026-08-28",
+     "quantitySold": "1",
+     "transactionCount": "1",
+     "lowSalePrice": "108.98",
+     "highSalePrice": "108.98",
+     "marketPrice": "127.93"
+    }
+   ]
+  },
+  {
+   "skuId": "558718",
+   "variant": "Unlimited",
+   "condition": "Damaged",
+   "language": "English",
+   "totalTransactionCount": "10",
+   "buckets": [
+    {
+     "bucketStartDate": "2026-11-18",
+     "quantitySold": "1",
+     "transactionCount": "1",
+     "lowSalePrice": "26.6",
+     "highSalePrice": "26.6",
+     "marketPrice": "19.95"
+    },
+    {
+     "bucketStartDate": "2026-11-15",
+     "quantitySold": "1",
+     "transactionCount": "1",
+     "lowSalePrice": "19.67",
+     "highSalePrice": "19.67",
+     "marketPrice": "19.77"
+    },
+    {
+     "bucketStartDate": "2026-11-09",
+     "quantitySold": "2",
+     "transactionCount": "2",
+     "lowSalePrice": "19.96",
+     "highSalePrice": "19.97",
+     "marketPrice": "19.43"
+    },
+    {
+     "bucketStartDate": "2026-10-16",
+     "quantitySold": "1",
+     "transactionCount": "1",
+     "lowSalePrice": "19.73",
+     "highSalePrice": "19.73",
+     "marketPrice": "19.37"
+    },
+    {
+     "bucketStartDate": "2026-10-04",
+     "quantitySold": "6",
+     "transactionCount": "5",
+     "lowSalePrice": "19",
+     "highSalePrice": "20",
+     "marketPrice": "19.3"
+    }
+   ]
+  },
+  {
+   "skuId": "566932",
+   "variant": "Unlimited",
+   "condition": "Heavily Played",
+   "language": "English",
+   "totalTransactionCount": "3",
+   "buckets": [
+    {
+     "bucketStartDate": "2026-10-17",
+     "quantitySold": "1",
+     "transactionCount": "1",
+     "lowSalePrice": "25",
+     "highSalePrice": "25",
+     "marketPrice": "29.2"
+    },
+    {
+     "bucketStartDate": "2026-10-11",
+     "quantitySold": "1",
+     "transactionCount": "1",
+     "lowSalePrice": "26",
+     "highSalePrice": "26",
+     "marketPrice": "28.35"
+    },
+    {
+     "bucketStartDate": "2026-09-29",
+     "quantitySold": "1",
+     "transactionCount": "1",
+     "lowSalePrice": "27.5",
+     "highSalePrice": "27.5",
+     "marketPrice": "27.87"
+    }
+   ]
+  },
+  {
+   "skuId": "274233",
+   "variant": "1st Edition",
+   "condition": "Near Mint",
+   "language": "English",
+   "totalTransactionCount": "0",
+   "buckets": []
+  },
+  {
+   "skuId": "542290",
+   "variant": "1st Edition",
+   "condition": "Lightly Played",
+   "language": "English",
+   "totalTransactionCount": "0",
+   "buckets": []
+  }
+ ]
+}
