@@ -229,11 +229,11 @@ def web(tmp_path, cat, monkeypatch):
 
 def test_switch_routes_and_pages_for_pokemon(web):
     s, url, h, body = web("/pkm/")
-    assert s == 200 and 'class="on">Pokémon<' in body and 'href="/pkm/opportunities"' in body and "199/165" in body
+    assert s == 200 and 'class="on" title="Pokémon"' in body and 'href="/pkm/opportunities"' in body and "199/165" in body
     # Home is the hunt: title, search, newest postings. Only Pokémon postings are counted here.
     assert "And The Hunt Begins..." in body and "New listings" in body and "Blue-Eyes White Dragon LOB-EN001 buy" not in body
     s, url, h, body = web("/")
-    assert 'class="on">Yu-Gi-Oh!<' in body and "Charizard ex 199/165 SIR 151" not in body                    # and only Yu-Gi-Oh! here
+    assert 'class="on" title="Yu-Gi-Oh!"' in body and "Charizard ex 199/165 SIR 151" not in body                    # and only Yu-Gi-Oh! here
     s, url, h, body = web("/game?g=pkm&back=/opportunities", follow=False)
     assert s == 303 and h["Location"] == "/pkm/opportunities" and "game=pkm" in h["Set-Cookie"]
     s, url, h, body = web("/game?g=ygo&back=/pkm/search%3Fq%3Dx", follow=False)
@@ -253,7 +253,7 @@ def test_switch_routes_and_pages_for_pokemon(web):
     s, url, h, body = web("/pkm/opportunities?v=every")
     assert "Charizard ex 199/165 SIR 151" in body and "Blue-Eyes" not in body
     s, url, h, body = web("/opp/ebay_browse%3AEBAY_US%3Apk1")
-    assert s == 200 and 'class="on">Pokémon<' in body and "/pkm/card/sv3pt5-199" in body
+    assert s == 200 and 'class="on" title="Pokémon"' in body and "/pkm/card/sv3pt5-199" in body
 
 
 def test_pokemon_pages_speak_plainly(web):

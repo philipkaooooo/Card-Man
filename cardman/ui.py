@@ -219,6 +219,23 @@ box-shadow:0 4px 14px rgba(0,0,0,.12)}
 .tip .tv{color:var(--fg);font-weight:600;font-size:13px}
 header .curs{display:inline-flex;border:1px solid var(--axis);border-radius:6px;overflow:hidden}
 header .curs a{padding:0 8px;font-size:12px}header .curs a.on{background:var(--fg);color:var(--surface)}
+header .tg{display:inline-flex;gap:4px;flex:none;margin-left:auto}
+header .tg a{display:inline-flex;align-items:center;justify-content:center;width:31px;height:31px;border-radius:9px;color:var(--fg2);
+text-decoration:none;border:1px solid transparent;transition:background .15s,color .15s}
+header .tg a:hover{background:var(--soft);color:var(--fg)}
+header .tg a.on{color:var(--fg);background:var(--surface);border-color:var(--axis);box-shadow:var(--shadow)}
+header .curmenu{position:relative;flex:none;margin-left:6px}
+header .curmenu>summary{display:inline-flex;align-items:center;gap:6px;height:31px;padding:0 11px;border:1px solid var(--axis);
+border-radius:9px;background:var(--surface);color:var(--fg);font-size:12.5px;font-weight:650;cursor:pointer;list-style:none}
+header .curmenu>summary::-webkit-details-marker{display:none}
+header .curmenu>summary svg{opacity:.65}
+header .curmenu[open]>summary{border-color:var(--accent)}
+header .curmenu>div{position:absolute;right:0;top:calc(100% + 8px);display:flex;flex-direction:column;min-width:96px;padding:6px;
+background:color-mix(in srgb,var(--surface) 92%,transparent);backdrop-filter:blur(14px) saturate(1.4);border:1px solid var(--line);
+border-radius:12px;box-shadow:0 16px 40px rgba(0,0,0,.22);z-index:60}
+header .curmenu>div a{padding:7px 10px;border-radius:8px;font-size:13px;font-weight:600;color:var(--fg2);text-decoration:none}
+header .curmenu>div a:hover{background:var(--soft);color:var(--fg)}
+header .curmenu>div a.on{color:var(--fg);background:var(--soft)}
 .call{display:inline-flex;align-items:center;gap:6px;font-weight:700;font-size:13px;padding:2px 8px 2px 4px;
 border-radius:999px;border:1px solid var(--axis);white-space:nowrap}
 .call .ci{display:inline-flex;width:18px;height:18px;border-radius:50%;align-items:center;justify-content:center;
@@ -379,14 +396,25 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
                       f'<span class="caret" aria-hidden="true">▾</span></a><div class="nsub">{items}</div></div>')
         else:
             links += f'<a href="{h}"{ON if k == where else ""}>{e(t)}</a>'
-    curs = ('<span class="curs" role="group" aria-label="Display currency">' + "".join(
-        f'<a href="/currency?{urlencode({"c": c, "back": path})}" class="{"on" if c == cur else ""}">{c}</a>'
-        for c in CURRENCIES) + '</span>')
+    ICO_EYE = ('<svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path fill="currentColor" '
+               'd="M12 5.2c5.1 0 9.3 3.6 10 6.8-.7 3.2-4.9 6.8-10 6.8S2.7 15.2 2 12c.7-3.2 4.9-6.8 10-6.8Zm0 2.6a4.2 4.2 0 1 0 0 8.4 4.2 4.2 0 0 0 0-8.4Zm0 2.1a2.1 2.1 0 1 1 0 4.2 2.1 2.1 0 0 1 0-4.2Z"/></svg>')
+    ICO_BALL = ('<svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><circle cx="12" cy="12" r="8.6" fill="none" '
+                'stroke="currentColor" stroke-width="1.9"/><path d="M3.4 12h5.2m6.8 0h5.2" stroke="currentColor" stroke-width="1.9"/>'
+                '<circle cx="12" cy="12" r="2.5" fill="none" stroke="currentColor" stroke-width="1.9"/></svg>')
+    ICO_COIN = ('<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><circle cx="12" cy="12" r="8.6" fill="none" '
+                'stroke="currentColor" stroke-width="1.9"/><circle cx="12" cy="12" r="4.3" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>')
+    curs = ('<details class="curmenu" title="Display currency"><summary>' + ICO_COIN + e(cur)
+            + '</summary><div>' + "".join(
+        '<a href="/currency?{}" class="{}">{}</a>'.format(
+            urlencode({"c": c, "back": path}), "on" if c == cur else "", c)
+        for c in CURRENCIES) + "</div></details>")
     hsearch = "" if nav == "home" else f'<div class="hsearch">{header_search(q, game)}</div>'
     from .games import NAME, scope_links
-    games = ('<span class="curs games" role="group" aria-label="Game">' + "".join(
-        f'<a href="/game?{urlencode({"g": g, "back": path})}" class="{"on" if g == game else ""}">{e(NAME[g])}</a>' for g in ("ygo", "pkm"))
-        + '</span>')
+    games = '<span class="tg" role="group" aria-label="Game">' + "".join(
+        '<a href="/game?{}" class="{}" title="{}" aria-label="{}"{}>{}</a>'.format(
+            urlencode({"g": g, "back": path}), "on" if g == game else "", e(NAME[g]), e(NAME[g]),
+            ' aria-current="page"' if g == game else "", ICO_EYE if g == "ygo" else ICO_BALL)
+        for g in ("ygo", "pkm")) + "</span>"
     flash = (f'<div class="note ok">{e(msg)}</div>' if msg else "") + (f'<div class="note bad">{e(err)}</div>' if err else "")
     crumb = f'<a class="crumb-back" href="{e(back[1])}">← {e(back[0])}</a>' if back else ""
     tz = datetime.now().astimezone().strftime("UTC%z")
@@ -1949,7 +1977,7 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                                                                      game="pkm", qs=qs), qs)
                 if parts == ["market"]:
                     from .ui_market import view_market
-                    return self._page("market", "Market", view_market(st, now, self._cur(), _engine_home(st), qs, game="pkm"), qs)
+                    return self._page("market", "Market", view_market(st, now, self._cur(), _engine_home(st), qs, game="pkm", pkm=idx.cat), qs)
                 if parts == ["opportunities"]:
                     from .ui_listing import view_list
                     if not _engine_ready(st):
@@ -2134,7 +2162,7 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                                                                      bookmark=bookmarklet(port, capture_key()), searches=[]), qs)
                 elif parts == ["market"]:
                     from .ui_market import view_market
-                    self._page("market", "Market", view_market(st, now, self._cur(), _engine_home(st), qs, game="ygo"), qs)
+                    self._page("market", "Market", view_market(st, now, self._cur(), _engine_home(st), qs, game="ygo", cards=cards), qs)
                 elif parts == ["opportunities"]:
                     if not _engine_ready(st):
                         self._page("opportunities", "Listings", view_opportunities(st, now, token, self._cur(), "open"), qs)

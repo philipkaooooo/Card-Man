@@ -190,7 +190,7 @@ def test_one_header_with_six_places_and_cards_holding_its_subpages(app2):
                                                          ">Card Pile<", ">Characters<"))
     assert 'class="nwrap"' in nav and 'class="nsub"' in nav            # Cards opens on hover
     assert 'aria-current="page">Settings' in nav                      # Deals lives under Settings now
-    assert h.index('class="logo"') < h.index("<nav") < h.index('class="curs"')
+    assert h.index('class="logo"') < h.index("<nav") < h.index('class="curmenu"')
     assert "← Settings" in h
     s = app2.get("/settings")
     for path in ("/deals", "/scan", "/evidence", "/results", "/opportunities/engine", "/costs"):

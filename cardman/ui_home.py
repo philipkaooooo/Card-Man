@@ -306,7 +306,14 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", a
     letters = "".join(f'<span style="--i:{i}">{c if c != " " else "&nbsp;"}</span>' for i, c in enumerate(_HUNT))
     out = [f'<section class="hero hunt"><h1 class="huntitle" aria-label="{e(_HUNT)}">{letters}</h1>' + _search_box(big=True, game=game) + "</section>"]
     out.append(_just_posted(st, now, game, M, qs or {}, "/pkm/" if game == "pkm" else "/"))
-    return '<style>main.page{max-width:min(95vw,1500px)}</style>' + "".join(out)
+    wash = ('<style>main.page{max-width:min(95vw,1500px)}'
+            'body{background:radial-gradient(85% 55% at 12% -6%,rgba(47,191,113,.11),transparent 60%),'
+            'radial-gradient(60% 42% at 96% 2%,rgba(230,162,60,.09),transparent 55%),'
+            'radial-gradient(75% 55% at 82% 104%,rgba(224,82,82,.07),transparent 60%),'
+            'radial-gradient(45% 32% at 50% 30%,rgba(212,175,106,.05),transparent 72%),var(--bg);'
+            'background-attachment:fixed}'
+            'header.top{background:color-mix(in srgb,var(--surface) 66%,transparent)}</style>')
+    return wash + "".join(out)
 
 
 def view_search(idx, q: str, st=None, M=None) -> str:
