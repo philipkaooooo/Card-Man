@@ -217,17 +217,19 @@ def _hun_head(base: str, v: str, t: str, counts: dict) -> str:
     fresh = "".join('<a{} href="{}?v={}&t={}">{}</a>'.format(
         ' class="on"' if t == code else "", base, v, code, lab) for code, lab in (
         ("1h", "Last hour"), ("24h", "Last 24 hours"), ("all", "Any time")))
-    return ('<div class="hun-head"><div><p class="hun-kick">Freshest asks on the market, ranked by the read</p>'
-            '<h2 class="hun-h">New listings</h2></div><div class="hun-stats">' + cells + "</div></div>"
+    stats = '<div class="hun-rail"><div class="hun-stats">' + cells + "</div></div>"
+    head = ('<div class="hun-head"><div><p class="hun-kick">Freshest asks on the market, ranked by the read</p>'
+            '<h2 class="hun-h">New listings</h2></div></div>'
             '<div class="hun-tools"><span class="hun-fresh">' + fresh + "</span>"
             '<span class="hun-shown small">12 tiles, best signals first</span>'
-            '<a class="hun-all" href="/opportunities">All listings \u2192</a></div>')
+            '<a class="hun-all" href="/opportunities">All listings →</a></div>')
+    return stats, head
 
 
 def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, base: str = "/") -> str:
     """The newest things actually posted, wherever they were posted: one tile per fresh listing, laser-coded."""
     if "listing" not in _tables(st):
-        return ""
+        return "", ""
     f = f or {}
     v, t = _q1(f, "v", "all"), _q1(f, "t", "all")
     have = _tables(st)
@@ -304,7 +306,8 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
                                    if v != "all" or t != "all" else
                                    'Nothing posted yet. The collector runs every few minutes; you can also '
                                    '<a href="/import">import saved pages</a> from any marketplace, Facebook Marketplace included.') + "</p>")
-    return ('<section class="hunzone">' + _hun_head(base, v, t, counts) + grid +
+    stats, head = _hun_head(base, v, t, counts)
+    return stats, ('<section class="hunzone">' + head + grid +
             '<p class="hun-note small">Signal is the read on the price: green under what to pay, amber worth a '
             'second look, red above it; unrated has no sales history yet. Most asks sit above what a card really '
             'sells for, so red is the common read and green is rare on purpose.</p></section>')
@@ -316,7 +319,8 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", a
     M = Money(st, home, cur, now)
     letters = "".join(f'<span style="--i:{i}">{c if c != " " else "&nbsp;"}</span>' for i, c in enumerate(_HUNT))
     out = [f'<section class="hero hunt"><h1 class="huntitle" aria-label="{e(_HUNT)}">{letters}</h1>' + _search_box(big=True, game=game) + "</section>"]
-    out.append(_just_posted(st, now, game, M, qs or {}, "/pkm/" if game == "pkm" else "/"))
+    stats, feed = _just_posted(st, now, game, M, qs or {}, "/pkm/" if game == "pkm" else "/")
+    out.append(feed)
     wash = ('<style>main.page{max-width:min(95vw,1500px)}'
             'body{background:var(--bg)}'
             'body::before{content:"";position:fixed;inset:-32%;z-index:-1;pointer-events:none;will-change:transform;background:'
@@ -330,7 +334,7 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", a
             '100%{transform:translate3d(3%,-2%,0) rotate(-2.5deg) scale(1.04)}}'
             '@media(prefers-reduced-motion:reduce){body::before{animation:none}}'
             'header.top{background:color-mix(in srgb,var(--surface) 62%,transparent)}</style>')
-    return wash + "".join(out)
+    return wash + stats + "".join(out)
 
 
 def view_search(idx, q: str, st=None, M=None) -> str:
@@ -1163,6 +1167,7 @@ background:radial-gradient(110% 140% at 6% 0%,rgba(47,191,113,.07),transparent 5
 radial-gradient(90% 130% at 100% 6%,rgba(230,162,60,.06),transparent 50%),
 radial-gradient(120% 150% at 88% 100%,rgba(224,82,82,.05),transparent 55%),var(--surface);
 box-shadow:var(--shadow-hi)}
+.hun-rail{display:flex;justify-content:center;padding:20px 14px 0}
 .hun-head{display:flex;align-items:flex-end;justify-content:space-between;gap:22px;flex-wrap:wrap;margin:0 0 18px}
 .hun-kick{margin:0 0 6px;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
 .hun-h{font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;font-weight:800;font-size:clamp(30px,3.6vw,46px);
@@ -1182,7 +1187,7 @@ border-radius:14px;background:var(--surface);text-decoration:none;transition:bor
 .hun-shown{color:var(--muted)}
 .hun-all{margin-left:auto;font-size:14px;font-weight:600}
 .hun-note{color:var(--muted);margin:24px 2px 0;line-height:1.5;max-width:88ch}
-section.hero.hunt{padding:64px 12px 10px}
+section.hero.hunt{padding:26px 12px 10px}
 .huntitle{font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;font-style:italic;font-weight:700;
 font-size:clamp(34px,7vw,64px);letter-spacing:.01em;margin:0 0 30px;cursor:default}
 .huntitle span{display:inline-block;white-space:pre;transition:transform .35s cubic-bezier(.2,1.8,.4,1),color .35s;transition-delay:calc(var(--i)*30ms)}
