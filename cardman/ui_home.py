@@ -202,11 +202,27 @@ def _mkt_icon(source: str) -> str:
         tint, e(label), e(label), e(glyph)))
 
 
-def _q1(f: dict, key: str, default: str) -> str:
+def _q1(f: dict, key: str, default: str, allow: tuple = ("all", "good", "avg", "bad", "none", "1h", "24h")) -> str:
     x = f.get(key)
     if isinstance(x, list):
         x = x[0] if x else ""
-    return x if isinstance(x, str) and x in ("all", "good", "avg", "bad", "none", "1h", "24h") else default
+    return x if isinstance(x, str) and x in allow else default
+
+
+def _drop_end_sets(st, game: str) -> dict:
+    """Live asks that dropped price in 24h or end within 6h, this game: the chip counts ride here, not the page."""
+    out = {"drop": 0, "end": 0}
+    try:
+        for code, cond in (("drop", "l.key IN (SELECT DISTINCT key FROM listing_event WHERE kind='PRICE_CHANGE' "
+                                    "AND julianday(at)>=julianday('now','-1 day'))"),
+                           ("end", "l.ends_at IS NOT NULL AND julianday(l.ends_at)>julianday('now') "
+                                   "AND julianday(l.ends_at)<=julianday('now','+6 hours')")):
+            out[code] = st.db.execute(
+                "SELECT COUNT(*) FROM listing l WHERE l.ended_at IS NULL AND l.kind IN ('ask','bid','auction') AND "
+                "COALESCE(json_extract(l.data_json,'$.game'),'ygo')=? AND " + cond, (game,)).fetchone()[0]
+    except Exception:
+        pass
+    return out
 
 
 def _engine_line(st, now: datetime, base: str, token: str = "") -> str:
@@ -242,18 +258,19 @@ def _engine_line(st, now: datetime, base: str, token: str = "") -> str:
     return scan, '<span class="hun-live {}" id="hun-live"><i></i>{}</span>'.format(cls, e(txt))
 
 
-def _hun_head(base: str, v: str, t: str, counts: dict, scan: str = "", live: str = "") -> str:
+def _hun_head(base: str, v: str, t: str, counts: dict, scan: str = "", live: str = "", chips: str = "", x: str = "") -> str:
     sig = (("all", "All", "hsn"), ("good", "Good", "hsg"), ("avg", "Average", "hsa"), ("bad", "Bad", "hsb"),
            ("none", "Unrated", "hsn"))
-    cells = "".join('<a class="{}{}" href="{}?v={}&t={}"><small>{}</small><b>{}</b></a>'.format(
-        cls, " on" if v == code else "", base, code, t, lab, counts[code]) for code, lab, cls in sig)
-    fresh = "".join('<a{} href="{}?v={}&t={}">{}</a>'.format(
-        ' class="on"' if t == code else "", base, v, code, lab) for code, lab in (
+    xs = "&x=" + x if x in ("drop", "end") else ""
+    cells = "".join('<a class="{}{}" href="{}?v={}&t={}{}"><small>{}</small><b>{}</b></a>'.format(
+        cls, " on" if v == code else "", base, code, t, xs, lab, counts[code]) for code, lab, cls in sig)
+    fresh = "".join('<a{} href="{}?v={}&t={}{}">{}</a>'.format(
+        ' class="on"' if t == code else "", base, v, code, xs, lab) for code, lab in (
         ("1h", "Last hour"), ("24h", "Last 24 hours"), ("all", "Any time")))
     stats = '<div class="hun-rail"><div class="hun-stats">' + cells + "</div></div>"
     head = ('<div class="hun-head"><div><p class="hun-kick">Freshest asks on the market, ranked by the read</p>'
             '<h2 class="hun-h">New listings</h2></div></div>'
-            '<div class="hun-tools"><span class="hun-fresh">' + fresh + "</span>" + scan + live +
+            '<div class="hun-tools"><span class="hun-fresh">' + fresh + "</span>" + chips + scan + live +
             '<a class="hun-all" href="/opportunities">All listings →</a></div>')
     return stats, head
 
@@ -263,17 +280,24 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
     if "listing" not in _tables(st):
         return "", ""
     f = f or {}
-    v, t = _q1(f, "v", "all"), _q1(f, "t", "all")
+    v, t, x = _q1(f, "v", "all"), _q1(f, "t", "all"), _q1(f, "x", "", ("drop", "end"))
+    if x not in ("drop", "end"):
+        x = ""
     have = _tables(st)
     sel = "l.key, l.source, l.title, l.url, l.price, l.currency, l.first_seen, l.data_json, "
     sel += "o.payload_json, o.status" if "opportunity" in have else "NULL, NULL"
     sel += ", l.listing_id, d.images_json" if "listing_detail" in have else ", NULL, NULL"
     joins = ("LEFT JOIN opportunity o ON o.key=l.key " if "opportunity" in have else "")
     joins += "LEFT JOIN listing_detail d ON d.item_id=l.listing_id" if "listing_detail" in have else ""
+    order = {"drop": "ORDER BY (SELECT MAX(e.at) FROM listing_event e WHERE e.key=l.key AND e.kind='PRICE_CHANGE') DESC, l.first_seen DESC",
+             "end": "ORDER BY l.ends_at ASC"}.get(x, "ORDER BY l.first_seen DESC")
+    only = {"drop": "AND l.key IN (SELECT DISTINCT key FROM listing_event WHERE kind='PRICE_CHANGE' "
+                    "AND julianday(at)>=julianday('now','-1 day'))",
+            "end": "AND l.key IN (SELECT key FROM listing WHERE ends_at IS NOT NULL "
+                   "AND julianday(ends_at)>julianday('now') AND julianday(ends_at)<=julianday('now','+6 hours'))"}.get(x, "")
     rows = st.db.execute(
         f"SELECT {sel} FROM listing l {joins} "
-        "WHERE l.ended_at IS NULL AND l.kind IN ('ask','bid','auction') "
-        "ORDER BY l.first_seen DESC LIMIT 400").fetchall()
+        "WHERE l.ended_at IS NULL AND l.kind IN ('ask','bid','auction') " + only + " " + order + " LIMIT 400").fetchall()
     from .ui_listing import lphoto, verdict
     cut = now - _WINDOW[t] if t in _WINDOW else None
     if cut is not None:   # anchor the window on the freshest listing, not the wall clock: a collector that last
@@ -350,7 +374,13 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
                                    'Nothing posted yet. The collector runs every few minutes; you can also '
                                    '<a href="/import">import saved pages</a> from any marketplace, Facebook Marketplace included.') + "</p>")
     scan, live = _engine_line(st, now, base, token)
-    stats, head = _hun_head(base, v, t, counts, scan, live)
+    D = _drop_end_sets(st, game)
+    chips = '<span class="hun-fresh">' + "".join(
+        '<a class="{}" href="{}?v={}&t={}{}" title="{}">{} <b>{}</b></a>'.format(
+            (("on" if x == code else "") + (" zero" if not D[code] else "")).strip(), base, v, t, "&x=" + code, tip, lab, D[code]) for code, lab, tip in (
+        ("drop", "Price drops", "asking less than before, last 24 hours"),
+        ("end", "Ending soon", "auctions and offers that close within six hours"))) + "</span>"
+    stats, head = _hun_head(base, v, t, counts, scan, live, chips, x)
     return stats, ('<section class="hunzone">' + head + grid +
             '<p class="hun-note small">Signal is the read on the price: green under what to pay, amber worth a '
             'second look, red above it; unrated has no sales history yet. Most asks sit above what a card really '
@@ -1228,6 +1258,8 @@ border-radius:14px;background:var(--surface);text-decoration:none;transition:bor
 .hun-fresh{display:inline-flex;border:1px solid var(--axis);border-radius:999px;overflow:hidden;background:var(--surface)}
 .hun-fresh a{padding:6px 15px;font-size:13px;color:var(--fg2);text-decoration:none}
 .hun-fresh a.on{background:var(--fg);color:var(--surface)}
+.hun-fresh a b{font-variant-numeric:tabular-nums;font-weight:750}
+.hun-fresh a.zero{opacity:.45}
 .hun-shown{color:var(--muted)}
 .hun-scan{display:inline-flex;align-items:center;gap:7px;padding:6px 14px 7px;font:inherit;font-size:13px;font-weight:650;color:var(--fg2);
 border:1px solid var(--axis);border-radius:999px;background:var(--surface);cursor:pointer;transition:color .15s,border-color .15s,transform .12s}
