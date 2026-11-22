@@ -25,6 +25,7 @@ from decimal import Decimal
 
 from .evidence import dedup
 from .fx import FxTable, StaleRateError
+from .listing_parser import _GRADE_RE
 from .models import COMP_ELIGIBLE
 from .verify import EXCLUDING, assess
 
@@ -211,7 +212,7 @@ def update_ask_daily(st, now: datetime, home: str = "TWD") -> int:
     if not {"card_listing", "listing"} <= have:
         return 0
     rows = st.db.execute(
-        "SELECT c.printing_id, l.price, l.currency, l.first_seen, l.last_seen, l.ended_at, l.data_json FROM card_listing c "
+        "SELECT c.printing_id, l.price, l.currency, l.first_seen, l.last_seen, l.ended_at, l.data_json, l.title FROM card_listing c "
         "JOIN listing l ON l.key=c.key WHERE c.card_prob>=? AND c.printing_prob>=? AND c.lot=0 AND l.kind='ask' AND c.status<>'REJECTED'",
         (ASK_CARD_PROB, ASK_PRINTING_PROB)).fetchall()
     if not rows:
@@ -226,7 +227,7 @@ def update_ask_daily(st, now: datetime, home: str = "TWD") -> int:
     for d in days:
         per: dict[tuple, list[float]] = {}
         at = datetime(d.year, d.month, d.day, 12, tzinfo=UTC)
-        for pid, price, cur, fs, ls, ended, dj in rows:
+        for pid, price, cur, fs, ls, ended, dj, title in rows:
             if not fs or fs[:10] > d.isoformat() or (ls and ls[:10] < d.isoformat()) or (ended and ended[:10] < d.isoformat()):
                 continue
             try:
@@ -234,7 +235,14 @@ def update_ask_daily(st, now: datetime, home: str = "TWD") -> int:
             except (StaleRateError, Exception):
                 continue
             data = json.loads(dj or "{}")
-            per.setdefault((pid, f'{data.get("grade_company") or ""}|{data.get("grade") or ""}'), []).append(v)
+            gc, gr = data.get("grade_company"), data.get("grade")
+            if not gc:
+                m = _GRADE_RE.search(title or "")
+                if m:
+                    gc, gr = m.group(1).upper().replace("BECKETT", "BGS"), m.group(2)
+                elif "grad" in (data.get("condition") or "").lower():
+                    continue          # a slab with no readable grade: never counted as a raw copy
+            per.setdefault((pid, f'{gc or ""}|{gr or ""}'), []).append(v)
         for (pid, g), vals in per.items():
             out.append((pid, g, d.isoformat(), min(vals), statistics.median(vals), len(vals), home))
     with st.db:

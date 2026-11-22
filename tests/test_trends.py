@@ -51,6 +51,24 @@ def test_live_asks_stay_a_separate_series(tmp_path):
     assert r["median"] == 100.0
 
 
+def test_only_the_newest_snapshot_is_live_and_a_stale_one_is_not(tmp_path):
+    st = Store(tmp_path / "e.sqlite")
+    for i in range(3):
+        add(st, i, 100, i + 1)
+    st.db.executescript(ASK_SCHEMA)
+    old, new = (NOW - timedelta(days=5)).date().isoformat(), NOW.date().isoformat()
+    with st.db:
+        st.db.execute("INSERT INTO ask_daily VALUES (?,?,?,?,?,?,?)", (P, "|", old, 90.0, 95.0, 3, "TWD"))
+        st.db.execute("INSERT INTO ask_daily VALUES (?,?,?,?,?,?,?)", (P, "|", new, 210.0, 220.0, 2, "TWD"))
+    trends.refresh(st, NOW, "TWD")
+    r = trends.board(st, game="ygo", limit=1)[0]
+    assert r["ask_low"] == 210.0 and r["ask_day"] == new          # yesterday's dead listing is not today's price
+    with st.db:
+        st.db.execute("DELETE FROM ask_daily WHERE day=?", (new,))
+    trends.refresh(st, NOW, "TWD")
+    assert trends.board(st, game="ygo", limit=1)[0]["ask_median"] is None   # nothing seen in the last three days
+
+
 def test_no_sales_no_row(tmp_path):
     st = Store(tmp_path / "e.sqlite")
     assert trends.refresh(st, NOW, "TWD") == 0

@@ -112,6 +112,27 @@ def test_ask_daily_keeps_one_row_per_printing_per_day_and_past_days_stay(tmp_pat
     assert got == {"2026-11-10": 20.0, "2026-11-11": 20.0, "2026-11-12": 1.0}    # only today is rewritten
 
 
+def test_ask_snapshot_keeps_slabs_out_of_the_raw_series(tmp_path):
+    from cardman.card_market import ensure_index
+    from tests.test_card_market import _store
+    st = _store(tmp_path, [("a", "ebay_browse", [("p:A@1", 1.0)], 300, {})])
+    st.db.execute("ALTER TABLE listing ADD COLUMN first_seen TEXT")
+    st.db.execute("ALTER TABLE listing ADD COLUMN last_seen TEXT")
+    with st.db:
+        st.db.execute("UPDATE listing SET price='300', currency='TWD', first_seen='2026-11-10T00:00:00+00:00', "
+                      "last_seen='2026-11-12T00:00:00+00:00', title='POKEMON MIMIKYU EX TWM 214 PSA 10 GEM MINT', "
+                      "data_json='{\"condition\": \"Graded\"}'")
+    ensure_index(st)
+    h.update_ask_daily(st, NOW, "TWD")
+    got = {(r[0], r[1]) for r in st.db.execute("SELECT gkey, median FROM ask_daily")}
+    assert got == {("PSA|10", 300.0)}                          # the slab, never the raw copies
+    with st.db:
+        st.db.execute("DELETE FROM ask_daily")
+        st.db.execute("UPDATE listing SET title='MIMIKYU EX TWM 214 HOLO', data_json='{\"condition\": \"Graded\"}'")
+    h.update_ask_daily(st, NOW, "TWD")
+    assert st.db.execute("SELECT count(*) FROM ask_daily").fetchone()[0] == 0    # a slab with no readable grade is not an ask
+
+
 def test_chart_endpoint_on_fixtures(tmp_path, monkeypatch):
     import threading
     import urllib.request

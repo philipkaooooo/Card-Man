@@ -208,6 +208,10 @@ def record_units(engine, key: str, item_id: str, before: int, after: int, price:
         an = pkm_analyze(title, engine.pkm, description=desc, verified=verified)
     else:
         an = analyze(title, engine.catalog, description=desc, verified=verified)
+    from .intel import BLOCK
+    parsed0 = getattr(an, "parsed", None)
+    if any(f.severity == BLOCK for f in an.findings) or getattr(parsed0, "is_lot", False):
+        return 0          # a fan-art, proxy, lot or sealed listing never becomes a sale of this card
     cands = tuple(p.id for p in an.identity.candidates[:200])
     from . import conditions
     parsed = getattr(an, "parsed", None)

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import argparse
 import statistics
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from .history import card_sales, plain_trend, summarize, Converter
 
@@ -53,14 +53,17 @@ def label_for(pid: str) -> str:
 
 
 def _asks(st, now: datetime) -> dict[tuple[str, str], dict]:
-    """The most recent ask snapshot per printing and grade, not older than a week."""
+    """The newest daily ask snapshot, and only that day: a listing counts as live now only if the snapshot still
+    carries it. A dead listing last seen six days ago is not a price anyone can pay today."""
     have = {r[0] for r in st.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     if "ask_daily" not in have:
         return {}
-    cutoff = (now.date() - timedelta(days=7)).isoformat()
+    day = st.db.execute("SELECT MAX(day) FROM ask_daily").fetchone()[0]
+    if not day or (now.date() - date.fromisoformat(day)).days > 3:
+        return {}
     out: dict[tuple[str, str], dict] = {}
-    for pid, g, day, low, med, n in st.db.execute(
-            "SELECT printing_id, gkey, day, low, median, n FROM ask_daily WHERE day>=? ORDER BY day", (cutoff,)):
+    for pid, g, low, med, n in st.db.execute(
+            "SELECT printing_id, gkey, low, median, n FROM ask_daily WHERE day=?", (day,)):
         out[(pid, g or "|")] = {"day": day, "low": low, "median": med, "n": n}
     return out
 
