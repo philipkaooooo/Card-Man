@@ -191,9 +191,15 @@ _CLS_OF = {"BUY": "good", "CHECK": "avg", "WATCH": "avg", "PASS": "bad"}
 _WINDOW = {"1h": timedelta(hours=1), "24h": timedelta(hours=24)}
 
 
-def _source_label(source: str) -> str:
+_MKT_ICON = {"ebay_browse": ("e", "#0654ba", "eBay"), "inbox": ("\u2193", "#6b7280", "Imported"),
+             "facebook": ("f", "#1877f2", "Facebook Marketplace")}
+
+
+def _mkt_icon(source: str) -> str:
     base = (source or "").split(":")[0]
-    return {"ebay_browse": "eBay", "inbox": "Imported", "facebook": "Facebook Marketplace"}.get(base, base.replace("_", " ").title())
+    glyph, tint, label = _MKT_ICON.get(base, (base[:1].upper() or "?", "#8a8f98", base.replace("_", " ").title() or "Market"))
+    return ('<span class="mkt" style="background:{}" title="{}" aria-label="{}" role="img">{}</span>'.format(
+        tint, e(label), e(label), e(glyph)))
 
 
 def _q1(f: dict, key: str, default: str) -> str:
@@ -203,20 +209,19 @@ def _q1(f: dict, key: str, default: str) -> str:
     return x if isinstance(x, str) and x in ("all", "good", "avg", "bad", "none", "1h", "24h") else default
 
 
-def _hun_side(base: str, v: str, t: str) -> str:
-    sig = (("all", "none", "All"), ("good", "good", "Good"), ("avg", "avg", "Average"), ("bad", "bad", "Bad"), ("none", "none", "Unrated"))
-    fresh = (("1h", "Last hour"), ("24h", "Last 24 hours"), ("all", "Any time"))
-    links = "".join(
-        '<a{} href="{}?v={}&t={}"><span class="dot {}"></span>{}</a>'.format(
-            ' class="on"' if v == code else "", base, code, t, dot, label)
-        for code, dot, label in sig)
-    times = "".join(
-        '<a{} href="{}?v={}&t={}">{}</a>'.format(' class="on"' if t == code else "", base, v, code, label)
-        for code, label in fresh)
-    return ('<aside class="hunside"><h3>Signal</h3>' + links + '<h3>Fresh</h3>' + times +
-            '<p class="hun-why small">Signal is the read on the price: green under what to pay, amber worth a '
-            'second look, red above it. Unrated listings have no sales history yet. '
-            'Most asks sit above what a card really sells for, so red is the common read and green is rare on purpose.</p></aside>')
+def _hun_head(base: str, v: str, t: str, counts: dict) -> str:
+    sig = (("all", "All", "hsn"), ("good", "Good", "hsg"), ("avg", "Average", "hsa"), ("bad", "Bad", "hsb"),
+           ("none", "Unrated", "hsn"))
+    cells = "".join('<a class="{}{}" href="{}?v={}&t={}"><small>{}</small><b>{}</b></a>'.format(
+        cls, " on" if v == code else "", base, code, t, lab, counts[code]) for code, lab, cls in sig)
+    fresh = "".join('<a{} href="{}?v={}&t={}">{}</a>'.format(
+        ' class="on"' if t == code else "", base, v, code, lab) for code, lab in (
+        ("1h", "Last hour"), ("24h", "Last 24 hours"), ("all", "Any time")))
+    return ('<div class="hun-head"><div><p class="hun-kick">Freshest asks on the market, ranked by the read</p>'
+            '<h2 class="hun-h">New listings</h2></div><div class="hun-stats">' + cells + "</div></div>"
+            '<div class="hun-tools"><span class="hun-fresh">' + fresh + "</span>"
+            '<span class="hun-shown small">12 tiles, best signals first</span>'
+            '<a class="hun-all" href="/opportunities">All listings \u2192</a></div>')
 
 
 def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, base: str = "/") -> str:
@@ -237,6 +242,7 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
         "ORDER BY l.first_seen DESC LIMIT 400").fetchall()
     from .ui_listing import lphoto, verdict
     cut = now - _WINDOW[t] if t in _WINDOW else None
+    counts = {"all": 0, "good": 0, "avg": 0, "bad": 0, "none": 0}
     entries = []
     for key, source, title, url, price, currency, seen, dj, payload, status, iid, imgs in rows:
         try:
@@ -263,18 +269,22 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
                     code = "none"      # a red laser has to be a measured red, not an absence of evidence
             except Exception:
                 code = "none"
-        if v != "all" and code != v:
-            continue
+        counts["all"] += 1
+        counts[code] += 1
         price_txt = charts.fmt(Decimal(str(price)), currency) if price not in (None, "") else "—"
         when = _ago(seen, now)
+        if v != "all" and code != v:
+            continue
         own = len(json.loads(imgs or "[]")) if imgs else 0
         art = lphoto(iid, 0, "m", title or "", cls="hun-img") if own else img(_listing_art(d), "large", title or "", cls="card hun-img")
         entries.append(({"good": 0, "avg": 1, "bad": 2}.get(code, 3), seen or "",
-                        f'<a class="hun" href="{e(url)}" data-key="{e(key)}" data-signal="{e(code)}">'
-                        f'<span class="laser l-{e(code)}"></span>{art}'
-                        f'<span class="hun-b"><span class="hun-name">{e((title or "")[:90])}</span>'
-                        f'<span class="hun-price">{e(price_txt)}</span>'
-                        f'<span class="hun-meta">{e(_source_label(source))}{" · " + e(when) if when else ""}</span></span></a>'))
+                        '<a class="hun" href="{}" data-key="{}" data-signal="{}">{}'
+                        '<span class="hun-b"><span class="hun-name">{}</span>'
+                        '<span class="hun-row"><span class="hun-price">{}</span>'
+                        '<span class="hun-meta">{}{}</span></span></span>'
+                        '<span class="laser l-{}"></span></a>'.format(
+                            e(url), e(key), e(code), art, e((title or "")[:90]), e(price_txt),
+                            _mkt_icon(source), (" " + e(when)) if when else "", e(code))))
     entries.sort(key=lambda x: x[1], reverse=True)
     entries.sort(key=lambda x: x[0])
     tiles = [h for _r, _s, h in entries[:12]]
@@ -283,10 +293,10 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
                                    if v != "all" or t != "all" else
                                    'Nothing posted yet. The collector runs every few minutes; you can also '
                                    '<a href="/import">import saved pages</a> from any marketplace, Facebook Marketplace included.') + "</p>")
-    return ('<section class="hunzone">' + _hun_side(base, v, t) +
-            '<div class="hunmain"><div class="hun-head"><h2 class="hun-h">New listings</h2>'
-            f'<span class="hun-count">{len(tiles)} newest · best signals first</span>'
-            '<a class="hun-all" href="/opportunities">All listings →</a></div>' + grid + "</div></section>")
+    return ('<section class="hunzone">' + _hun_head(base, v, t, counts) + grid +
+            '<p class="hun-note small">Signal is the read on the price: green under what to pay, amber worth a '
+            'second look, red above it; unrated has no sales history yet. Most asks sit above what a card really '
+            'sells for, so red is the common read and green is rare on purpose.</p></section>')
 
 
 def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", assumed_costs: bool = True, EM=None, game: str = "ygo",
@@ -296,7 +306,7 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", a
     letters = "".join(f'<span style="--i:{i}">{c if c != " " else "&nbsp;"}</span>' for i, c in enumerate(_HUNT))
     out = [f'<section class="hero hunt"><h1 class="huntitle" aria-label="{e(_HUNT)}">{letters}</h1>' + _search_box(big=True, game=game) + "</section>"]
     out.append(_just_posted(st, now, game, M, qs or {}, "/pkm/" if game == "pkm" else "/"))
-    return "".join(out)
+    return '<style>main.page{max-width:min(95vw,1500px)}</style>' + "".join(out)
 
 
 def view_search(idx, q: str, st=None, M=None) -> str:
@@ -1119,26 +1129,32 @@ font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;font-we
 :root[data-theme="vault"] form.search button{background:var(--accent);border-color:var(--accent);color:#15130f}
 :root[data-theme="vault"] .tile-l,:root[data-theme="vault"] .ctile{border-color:#2f2a21;background:linear-gradient(180deg,#18150f,#13110d)}
 :root[data-theme="vault"] .tl-price{color:var(--accent)}
-.hunzone{max-width:none;margin:56px 0 64px;padding:0 28px;display:flex;gap:26px;align-items:flex-start}
-.hunside{flex:0 0 176px;position:sticky;top:96px;display:flex;flex-direction:column;gap:2px;font-size:13px}
-.hunside h3{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:14px 0 4px}
-.hunside h3:first-child{margin-top:0}
-.hunside a{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:8px;color:var(--fg2);text-decoration:none}
-.hunside a:hover{background:var(--soft)}
-.hunside a.on{background:var(--soft);color:var(--fg);font-weight:600}
-.hun-why{color:var(--muted);margin:12px 2px 0;line-height:1.45}
-.dot{width:9px;height:9px;border-radius:50%;flex:none}
-.dot.good{background:#2fbf71;box-shadow:0 0 6px #2fbf7190}.dot.avg{background:#e6a23c;box-shadow:0 0 6px #e6a23c90}
-.dot.bad{background:#e05252;box-shadow:0 0 6px #e0525290}.dot.none{background:var(--line)}
-.hunmain{flex:1 1 auto;min-width:0}
-.hun-head{display:flex;align-items:flex-end;gap:18px;margin:0 0 26px}
-.hun-h{font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;font-weight:800;font-size:clamp(38px,7vw,76px);
-line-height:.95;letter-spacing:-.02em;text-transform:uppercase;margin:0;color:var(--fg)}
-.hun-h::after{content:"";display:block;height:6px;width:150px;margin-top:12px;border-radius:3px;
-background:linear-gradient(90deg,#2fbf71,#e6a23c,#e05252)}
-.hun-count{font-size:13px;color:var(--muted);padding-bottom:8px}
-.hun-all{margin-left:auto;font-size:14px;padding-bottom:8px}
-section.hero.hunt{padding:84px 12px 14px}
+.hunzone{position:relative;margin:56px 0 72px;padding:clamp(20px,3vw,42px) clamp(18px,3vw,46px);
+border:1px solid var(--line);border-radius:26px;overflow:hidden;
+background:radial-gradient(110% 140% at 6% 0%,rgba(47,191,113,.07),transparent 55%),
+radial-gradient(90% 130% at 100% 6%,rgba(230,162,60,.06),transparent 50%),
+radial-gradient(120% 150% at 88% 100%,rgba(224,82,82,.05),transparent 55%),var(--surface);
+box-shadow:var(--shadow-hi)}
+.hun-head{display:flex;align-items:flex-end;justify-content:space-between;gap:22px;flex-wrap:wrap;margin:0 0 18px}
+.hun-kick{margin:0 0 8px;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.hun-h{font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;font-weight:900;font-size:clamp(40px,6vw,72px);
+line-height:.92;letter-spacing:-.045em;text-transform:uppercase;margin:0;color:var(--fg)}
+.hun-stats{display:flex;flex-wrap:wrap;gap:8px;padding-bottom:6px}
+.hun-stats a{display:flex;flex-direction:column;align-items:center;min-width:76px;padding:8px 13px 9px;border:1px solid var(--line);
+border-radius:14px;background:var(--surface);text-decoration:none;transition:border-color .15s,transform .15s}
+.hun-stats a:hover{transform:translateY(-2px)}
+.hun-stats a.hsg{color:#2fbf71}.hun-stats a.hsa{color:#e6a23c}.hun-stats a.hsb{color:#e05252}.hun-stats a.hsn{color:var(--fg2)}
+.hun-stats a.on{border-color:currentColor;box-shadow:inset 0 0 0 1px currentColor}
+.hun-stats small{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin-bottom:2px}
+.hun-stats b{font-size:21px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.1}
+.hun-tools{display:flex;align-items:center;gap:16px;margin:0 0 22px;flex-wrap:wrap}
+.hun-fresh{display:inline-flex;border:1px solid var(--axis);border-radius:999px;overflow:hidden;background:var(--surface)}
+.hun-fresh a{padding:6px 15px;font-size:13px;color:var(--fg2);text-decoration:none}
+.hun-fresh a.on{background:var(--fg);color:var(--surface)}
+.hun-shown{color:var(--muted)}
+.hun-all{margin-left:auto;font-size:14px;font-weight:600}
+.hun-note{color:var(--muted);margin:24px 2px 0;line-height:1.5;max-width:88ch}
+section.hero.hunt{padding:64px 12px 10px}
 .huntitle{font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;font-style:italic;font-weight:700;
 font-size:clamp(34px,7vw,64px);letter-spacing:.01em;margin:0 0 30px;cursor:default}
 .huntitle span{display:inline-block;white-space:pre;transition:transform .35s cubic-bezier(.2,1.8,.4,1),color .35s;transition-delay:calc(var(--i)*30ms)}
@@ -1157,7 +1173,10 @@ a.hun span.card.hun-img,a.hun img.card.hun-img{object-fit:contain;padding:10px;b
 .hun-b{display:flex;flex-direction:column;gap:5px;padding:12px 14px 14px}
 .hun-name{font-size:14px;font-weight:600;color:var(--fg);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:2.7em}
 .hun-price{font-size:19px;font-weight:700;color:var(--accent)}
-.hun-meta{font-size:12px;color:var(--muted)}
+.hun-row{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.hun-meta{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);white-space:nowrap}
+.mkt{display:inline-flex;align-items:center;justify-content:center;width:19px;height:19px;border-radius:50%;flex:none;
+font:700 11px/1 "Helvetica Neue",Arial,sans-serif;color:#fff}
 """
 
 HOME_JS = r"""
