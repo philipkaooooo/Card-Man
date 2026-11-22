@@ -1976,7 +1976,7 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     except Exception:
                         assumed = True
                     EM = EngineMoney(st, _engine_home(st), self._cur(), now) if _engine_ready(st) else None
-                    return self._page("home", "Pokémon", view_home(st, idx, now, self._cur(), self._theme(), assumed_costs=assumed, EM=EM,
+                    return self._page("home", "Pokémon", view_home(st, idx, now, self._cur(), self._theme(), assumed_costs=assumed, EM=EM, token=token,
                                                                      game="pkm", qs=qs), qs)
                 if parts == ["market"]:
                     from .ui_market import view_market
@@ -2158,7 +2158,7 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     except Exception:
                         assumed = True
                     EM = EngineMoney(st, _engine_home(st), self._cur(), now) if _engine_ready(st) else None
-                    self._page("home", "Home", view_home(st, cards, now, self._cur(), self._theme(), assumed_costs=assumed, EM=EM, qs=qs), qs)
+                    self._page("home", "Home", view_home(st, cards, now, self._cur(), self._theme(), assumed_costs=assumed, EM=EM, qs=qs, token=token), qs)
                 elif parts == ["pile"]:
                     from .pile import view as view_pile
                     self._page("pile", "Card Pile", view_pile(st, EngineMoney(st, _engine_home(st), self._cur(), now), now, token), qs)

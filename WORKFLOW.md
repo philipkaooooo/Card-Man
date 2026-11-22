@@ -16,7 +16,7 @@ caused the two-Characters-UIs and disk-full incidents.
 | job | command | port |
 |---|---|---|
 | review UI (the app preview) | `python -m cardman.ui --store data/store/evidence.sqlite --port 8755 --engine-every 0` | 8755 |
-| engine loop | `python -m cardman.engine run --store data/store/evidence.sqlite --interval 900` | — |
+| engine loop | `python -m cardman.engine run --store data/store/evidence.sqlite --interval 600` | — |
 
 - Exactly one engine loop. The UI never ticks (`--engine-every 0`) so it can answer
   pages while the engine writes.

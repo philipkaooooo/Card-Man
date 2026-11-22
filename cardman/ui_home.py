@@ -209,7 +209,40 @@ def _q1(f: dict, key: str, default: str) -> str:
     return x if isinstance(x, str) and x in ("all", "good", "avg", "bad", "none", "1h", "24h") else default
 
 
-def _hun_head(base: str, v: str, t: str, counts: dict) -> str:
+def _engine_line(st, now: datetime, base: str, token: str = "") -> str:
+    """One live line in the tools row: how long ago the engine last took a pass and what it found."""
+    try:
+        row = st.db.execute("SELECT at, data_json FROM engine_run ORDER BY at DESC LIMIT 1").fetchone()
+    except Exception:
+        row = None
+    ago = _ago(row[0], now) if row else ""
+    new = 0
+    if row:
+        try:
+            new = int(json.loads(row[1]).get("new_listings") or 0)
+        except Exception:
+            new = 0
+    txt = ("last check " + ago) if ago else "engine idle"
+    if new and ago:
+        txt += " · +{} new".format(new)
+    sec = None
+    if row:
+        try:
+            t = datetime.fromisoformat(row[0])
+            if (t.tzinfo is None) != (now.tzinfo is None):
+                t = t.replace(tzinfo=now.tzinfo)
+            sec = (now - t).total_seconds()
+        except (ValueError, TypeError):
+            sec = None
+    cls = "ok" if sec is not None and sec < 1200 else ("slow" if sec is not None and sec < 86400 else "off")
+    scan = ('<button class="hun-scan" id="hun-scan" type="button" data-back="' + e(base) + '" data-t="' + e(token) + '" '
+            'title="run a collector pass now"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+            'stroke-linecap="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/>'
+            '<circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/></svg><span>Scan now</span></button>')
+    return scan, '<span class="hun-live {}" id="hun-live"><i></i>{}</span>'.format(cls, e(txt))
+
+
+def _hun_head(base: str, v: str, t: str, counts: dict, scan: str = "", live: str = "") -> str:
     sig = (("all", "All", "hsn"), ("good", "Good", "hsg"), ("avg", "Average", "hsa"), ("bad", "Bad", "hsb"),
            ("none", "Unrated", "hsn"))
     cells = "".join('<a class="{}{}" href="{}?v={}&t={}"><small>{}</small><b>{}</b></a>'.format(
@@ -220,13 +253,12 @@ def _hun_head(base: str, v: str, t: str, counts: dict) -> str:
     stats = '<div class="hun-rail"><div class="hun-stats">' + cells + "</div></div>"
     head = ('<div class="hun-head"><div><p class="hun-kick">Freshest asks on the market, ranked by the read</p>'
             '<h2 class="hun-h">New listings</h2></div></div>'
-            '<div class="hun-tools"><span class="hun-fresh">' + fresh + "</span>"
-            '<span class="hun-shown small">12 tiles, best signals first</span>'
+            '<div class="hun-tools"><span class="hun-fresh">' + fresh + "</span>" + scan + live +
             '<a class="hun-all" href="/opportunities">All listings →</a></div>')
     return stats, head
 
 
-def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, base: str = "/") -> str:
+def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, base: str = "/", token: str = "") -> str:
     """The newest things actually posted, wherever they were posted: one tile per fresh listing, laser-coded."""
     if "listing" not in _tables(st):
         return "", ""
@@ -306,7 +338,8 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
                                    if v != "all" or t != "all" else
                                    'Nothing posted yet. The collector runs every few minutes; you can also '
                                    '<a href="/import">import saved pages</a> from any marketplace, Facebook Marketplace included.') + "</p>")
-    stats, head = _hun_head(base, v, t, counts)
+    scan, live = _engine_line(st, now, base, token)
+    stats, head = _hun_head(base, v, t, counts, scan, live)
     return stats, ('<section class="hunzone">' + head + grid +
             '<p class="hun-note small">Signal is the read on the price: green under what to pay, amber worth a '
             'second look, red above it; unrated has no sales history yet. Most asks sit above what a card really '
@@ -314,12 +347,12 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
 
 
 def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", assumed_costs: bool = True, EM=None, game: str = "ygo",
-              qs: dict | None = None) -> str:
+              qs: dict | None = None, token: str = "") -> str:
     """The hunt: the title, the search, and the newest postings. Every decision view lives on its own page."""
     M = Money(st, home, cur, now)
     letters = "".join(f'<span style="--i:{i}">{c if c != " " else "&nbsp;"}</span>' for i, c in enumerate(_HUNT))
     out = [f'<section class="hero hunt"><h1 class="huntitle" aria-label="{e(_HUNT)}">{letters}</h1>' + _search_box(big=True, game=game) + "</section>"]
-    stats, feed = _just_posted(st, now, game, M, qs or {}, "/pkm/" if game == "pkm" else "/")
+    stats, feed = _just_posted(st, now, game, M, qs or {}, "/pkm/" if game == "pkm" else "/", token)
     out.append(feed)
     wash = ('<style>main.page{max-width:min(95vw,1500px)}'
             'body{background:var(--bg)}'
@@ -1185,6 +1218,35 @@ border-radius:14px;background:var(--surface);text-decoration:none;transition:bor
 .hun-fresh a{padding:6px 15px;font-size:13px;color:var(--fg2);text-decoration:none}
 .hun-fresh a.on{background:var(--fg);color:var(--surface)}
 .hun-shown{color:var(--muted)}
+.hun-scan{display:inline-flex;align-items:center;gap:7px;padding:6px 14px 7px;font:inherit;font-size:13px;font-weight:650;color:var(--fg2);
+border:1px solid var(--axis);border-radius:999px;background:var(--surface);cursor:pointer;transition:color .15s,border-color .15s,transform .12s}
+.hun-scan:hover{color:var(--fg);border-color:var(--fg2)}
+.hun-scan:active{transform:scale(.96)}
+.hun-scan svg{width:14px;height:14px}
+.hun-scan.busy{color:var(--muted)}
+.hun-scan.busy svg{animation:hunspin 1.1s linear infinite}
+@keyframes hunspin{to{transform:rotate(360deg)}}
+.hun-live{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+.hun-live i{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
+.hun-live.ok i{background:#2fbf71;animation:hunpulse 2.6s ease-in-out infinite}
+.hun-live.slow i{background:#e6a23c}
+@keyframes hunpulse{0%,100%{box-shadow:0 0 0 0 rgba(47,191,113,.35)}50%{box-shadow:0 0 0 6px rgba(47,191,113,0)}}
+.hunzone{transition:opacity .25s}
+.hunzone.checking{opacity:.5;pointer-events:none}
+.hungrid>.hun{animation:hunin .5s cubic-bezier(.2,.7,.3,1) backwards}
+.hungrid>.hun:nth-child(2){animation-delay:40ms}
+.hungrid>.hun:nth-child(3){animation-delay:80ms}
+.hungrid>.hun:nth-child(4){animation-delay:120ms}
+.hungrid>.hun:nth-child(5){animation-delay:160ms}
+.hungrid>.hun:nth-child(6){animation-delay:200ms}
+.hungrid>.hun:nth-child(7){animation-delay:240ms}
+.hungrid>.hun:nth-child(8){animation-delay:280ms}
+.hungrid>.hun:nth-child(9){animation-delay:320ms}
+.hungrid>.hun:nth-child(10){animation-delay:360ms}
+.hungrid>.hun:nth-child(11){animation-delay:400ms}
+.hungrid>.hun:nth-child(12){animation-delay:440ms}
+@keyframes hunin{from{opacity:0;transform:translateY(12px)}}
+@media(prefers-reduced-motion:reduce){.hungrid>.hun,.hun-scan.busy svg,.hun-live.ok i{animation:none}.hunzone{transition:none}}
 .hun-all{margin-left:auto;font-size:14px;font-weight:600}
 .hun-note{color:var(--muted);margin:24px 2px 0;line-height:1.5;max-width:88ch}
 section.hero.hunt{padding:26px 12px 10px}
@@ -1235,6 +1297,25 @@ inp.addEventListener('keydown',function(ev){if(box.hidden)return;if(ev.key==='Ar
 else if(ev.key==='ArrowUp'){ev.preventDefault();mark(Math.max(sel-1,-1))}else if(ev.key==='Enter'&&sel>=0){ev.preventDefault();location.href=items[sel].href}
 else if(ev.key==='Escape'){box.hidden=true}});
 document.addEventListener('click',function(ev){if(!f.contains(ev.target))box.hidden=true})})})();
+(function(){if(!document.querySelector('.hunzone'))return;var running=false;
+function st(){return fetch('/engine/status').then(function(r){return r.json()}).catch(function(){return null})}
+function setBusy(b){running=b;var btn=document.querySelector('.hun-scan'),z=document.querySelector('.hunzone');
+if(btn){btn.classList.toggle('busy',b);var s=btn.querySelector('span');if(s)s.textContent=b?'Checking…':'Scan now'}
+if(z)z.classList.toggle('checking',b)}
+function swap(){return fetch(location.pathname+location.search).then(function(r){return r.text()}).then(function(html){
+var d=new DOMParser().parseFromString(html,'text/html');
+['.hun-rail','.hunzone'].forEach(function(sel){var n=d.querySelector(sel),o=document.querySelector(sel);if(n&&o)o.replaceWith(n)})})}
+function waitDone(before){return new Promise(function(res){var t0=Date.now();(function poll(){st().then(function(s){
+if((s&&!s.scanning&&(!before||s.at!==before.at))||Date.now()-t0>300000)return res();setTimeout(poll,4000)})})()})}
+async function run(auto){if(running)return;setBusy(true);try{var before=await st();
+if(auto&&before&&before.age_s!==null&&before.age_s<480){await swap();return}
+var b=document.querySelector('.hun-scan')||{dataset:{}};var fd=new FormData();fd.append('back',b.dataset.back||'/');fd.append('t',b.dataset.t||'');
+try{await fetch('/engine/tick',{method:'POST',body:fd})}catch(e){}
+await waitDone(before);await swap()}finally{setBusy(false)}}
+document.addEventListener('click',function(ev){var b=ev.target.closest&&ev.target.closest('.hun-scan');if(b)run(false)});
+st().then(function(s){if(s&&s.scanning){setBusy(true);waitDone(null).then(swap).then(function(){setBusy(false)})}});
+(function t10(){setTimeout(function(){if(document.visibilityState==='visible')run(true);t10()},600000)})();
+})();
 """
 
 

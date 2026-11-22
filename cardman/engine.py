@@ -627,23 +627,35 @@ def main(argv: list[str] | None = None) -> None:
                     actor="cli", now=datetime.now(timezone.utc))
         return
     import fcntl                          # one pass at a time across the loop, the Check button, and a manual run
-    holder = open(Path(str(a.store) + ".engine.lock"), "a+")
-    try:
-        fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
+    lockfile = Path(str(a.store) + ".engine.lock")
+
+    def acquire():
+        h = open(lockfile, "a+")
+        try:
+            fcntl.flock(h, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            h.close()
+            return None
+        return h
+
+    holder = acquire()
+    if holder is None:
         print(json.dumps({"skipped": "another engine is running"}))
         return
     eng = Engine(a.store)
     eng._skip_daily_catalog = False          # the long-running engine keeps the master card list fresh
-    while True:
-        if a.cmd == "run":
-            with eng.db:
-                eng.db.execute("INSERT OR REPLACE INTO engine_meta VALUES ('loop_heartbeat', ?)", (datetime.now(timezone.utc).isoformat(),))
-                eng.db.execute("INSERT OR REPLACE INTO engine_meta VALUES ('loop_interval_min', ?)", (f"{a.interval / 60:g}",))
+    if a.cmd != "run":
         print(json.dumps(asdict(eng.tick()), indent=1, ensure_ascii=False), flush=True)
-        if a.cmd != "run":
-            return
+        return
+    while True:
+        with eng.db:
+            eng.db.execute("INSERT OR REPLACE INTO engine_meta VALUES ('loop_heartbeat', ?)", (datetime.now(timezone.utc).isoformat(),))
+            eng.db.execute("INSERT OR REPLACE INTO engine_meta VALUES ('loop_interval_min', ?)", (f"{a.interval / 60:g}",))
+        print(json.dumps(asdict(eng.tick()), indent=1, ensure_ascii=False), flush=True)
+        holder.close()                       # the lock spans a pass, not the sleep, so the Check button can cut in
         time.sleep(a.interval)
+        while (holder := acquire()) is None:
+            time.sleep(5)
 
 
 if __name__ == "__main__":
