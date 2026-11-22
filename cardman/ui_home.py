@@ -260,15 +260,23 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
                     continue
             except (ValueError, TypeError):
                 pass
-        code = "none"
+        code, sub, chip = "none", "", ""
         if M is not None and payload:
             try:
                 vv = verdict(d, status or "OPEN", M)
                 code = _CLS_OF.get(vv.code, "none")
                 if code == "bad" and not (vv.top or {}).get("basis"):
                     code = "none"      # a red laser has to be a measured red, not an absence of evidence
+                tp = vv.top or {}
+                bits = [" \u00b7 ".join((tp.get("label") or "").split(" \u00b7 ")[:2])]
+                bits.append("Lot" if "LOT" in (d.get("kinds") or []) else (d.get("grade") or "").upper())
+                sub = " \u00b7 ".join(b for b in bits if b)
+                ai, mb = d.get("all_in_home"), tp.get("max_buy")
+                if code in ("good", "avg") and ai and mb and mb > ai:
+                    pct = (mb - ai) / ai * 100
+                    chip = '<span class="hun-deal d-{}" title="worth up to {:.0f}% over the ask">+{:.0f}%</span>'.format(code, pct, pct)
             except Exception:
-                code = "none"
+                code, sub, chip = "none", "", ""
         counts["all"] += 1
         counts[code] += 1
         price_txt = charts.fmt(Decimal(str(price)), currency) if price not in (None, "") else "—"
@@ -279,12 +287,15 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
         art = lphoto(iid, 0, "m", title or "", cls="hun-img") if own else img(_listing_art(d), "large", title or "", cls="card hun-img")
         entries.append(({"good": 0, "avg": 1, "bad": 2}.get(code, 3), seen or "",
                         '<a class="hun" href="{}" data-key="{}" data-signal="{}">{}'
-                        '<span class="hun-b"><span class="hun-name">{}</span>'
-                        '<span class="hun-row"><span class="hun-price">{}</span>'
-                        '<span class="hun-meta">{}{}</span></span></span>'
+                        '<span class="hun-b"><span class="hun-name">{}</span>{}'
+                        '<span class="hun-row"><span class="hun-price">{}{}</span>'
+                        '<span class="hun-meta">{}{}{}</span></span></span>'
                         '<span class="laser l-{}"></span></a>'.format(
-                            e(url), e(key), e(code), art, e((title or "")[:90]), e(price_txt),
-                            _mkt_icon(source), (" " + e(when)) if when else "", e(code))))
+                            e(url), e(key), e(code), art, e((title or "")[:90]),
+                            '<span class="hun-sub">' + e(sub) + "</span>" if sub else "",
+                            e(price_txt), chip, _mkt_icon(source),
+                            (" " + e(when)) if when else "", (" \u00b7 {} pics".format(own) if own > 1 else ""),
+                            e(code))))
     entries.sort(key=lambda x: x[1], reverse=True)
     entries.sort(key=lambda x: x[0])
     tiles = [h for _r, _s, h in entries[:12]]
@@ -1153,9 +1164,9 @@ radial-gradient(90% 130% at 100% 6%,rgba(230,162,60,.06),transparent 50%),
 radial-gradient(120% 150% at 88% 100%,rgba(224,82,82,.05),transparent 55%),var(--surface);
 box-shadow:var(--shadow-hi)}
 .hun-head{display:flex;align-items:flex-end;justify-content:space-between;gap:22px;flex-wrap:wrap;margin:0 0 18px}
-.hun-kick{margin:0 0 8px;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
-.hun-h{font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;font-weight:900;font-size:clamp(40px,6vw,72px);
-line-height:.92;letter-spacing:-.045em;text-transform:uppercase;margin:0;color:var(--fg)}
+.hun-kick{margin:0 0 6px;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+.hun-h{font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;font-weight:800;font-size:clamp(30px,3.6vw,46px);
+line-height:1;letter-spacing:-.015em;text-transform:uppercase;margin:0;color:var(--fg)}
 .hun-stats{display:flex;flex-wrap:wrap;gap:8px;padding-bottom:6px}
 .hun-stats a{display:flex;flex-direction:column;align-items:center;min-width:76px;padding:8px 13px 9px;border:1px solid var(--line);
 border-radius:14px;background:var(--surface);text-decoration:none;transition:border-color .15s,transform .15s}
@@ -1180,16 +1191,20 @@ font-size:clamp(34px,7vw,64px);letter-spacing:.01em;margin:0 0 30px;cursor:defau
 a.hun{position:relative;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);border-radius:16px;
 overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06);text-decoration:none;color:inherit;transition:transform .15s,box-shadow .15s}
 a.hun:hover{transform:translateY(-4px);box-shadow:0 12px 28px rgba(0,0,0,.18)}
-.laser{height:4px;width:100%;flex:none}
+.laser{height:3px;width:100%;flex:none}
 .l-good{background:linear-gradient(90deg,#2fbf71,#5ad79a);box-shadow:0 0 10px #2fbf7180}
-.l-avg{background:linear-gradient(90deg,#e6a23c,#f0c078);box-shadow:0 0 10px #e6a23c80}
-.l-bad{background:linear-gradient(90deg,#e05252,#f08080);box-shadow:0 0 10px #e0525280}
+.l-avg{background:linear-gradient(90deg,#e6a23c,#f0c078)}
+.l-bad{background:linear-gradient(90deg,#e05252,#f08080)}
 .l-none{background:var(--line)}
 a.hun img.hun-img,a.hun span.hun-img{width:100%;height:230px;object-fit:cover;border-radius:0;background:var(--bg)}
 a.hun span.card.hun-img,a.hun img.card.hun-img{object-fit:contain;padding:10px;box-sizing:border-box}
 .hun-b{display:flex;flex-direction:column;gap:5px;padding:12px 14px 14px}
 .hun-name{font-size:14px;font-weight:600;color:var(--fg);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:2.7em}
 .hun-price{font-size:19px;font-weight:700;color:var(--accent)}
+.hun-sub{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hun-deal{display:inline-block;margin-left:8px;padding:1px 8px;border-radius:999px;font-size:11.5px;font-weight:750;vertical-align:2px}
+.hun-deal.d-good{color:#1c8a4d;background:rgba(47,191,113,.16)}
+.hun-deal.d-avg{color:#a4701d;background:rgba(230,162,60,.18)}
 .hun-row{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
 .hun-meta{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);white-space:nowrap}
 .mkt{display:inline-flex;align-items:center;justify-content:center;width:19px;height:19px;border-radius:50%;flex:none;
