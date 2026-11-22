@@ -11,7 +11,7 @@ from urllib.parse import urlencode
 
 from . import trends
 from .games import card_href
-from .ui_home import Money, e, passcode_of, _tables
+from .ui_home import Money, e, img, passcode_of, _tables
 
 ON_TAB = ' class="on" aria-current="page"'
 
@@ -39,14 +39,26 @@ ul.mini li:last-child{border-bottom:0}.up{color:var(--teal-deep);font-weight:600
 .mkstat{margin-left:auto;color:var(--muted)}.mkstat b{color:var(--fg);font-variant-numeric:tabular-nums}
 .mlist{list-style:none;margin:0 0 10px;padding:0;display:grid;gap:10px}
 .mrow{display:grid;grid-template-columns:minmax(0,1.6fr) 150px minmax(0,1fr) 230px;gap:18px;align-items:center;
-background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 16px;transition:box-shadow .2s}
+background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--line);border-radius:14px;padding:10px 16px 10px 13px;
+transition:box-shadow .2s,border-color .2s}
 .mrow:hover{box-shadow:var(--shadow)}
-.mmain{min-width:0}
-.mname{font-weight:700;font-size:17px;color:var(--fg);text-decoration:none;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mrow.up{border-left-color:var(--teal)}.mrow.down{border-left-color:#c4553b}
+.mmain{min-width:0;display:flex;gap:12px;align-items:center}
+.mthumb{flex:none;width:52px;height:73px;border-radius:7px;overflow:hidden;background:var(--soft);display:block;
+border:1px solid var(--line);box-shadow:0 2px 6px rgba(15,30,45,.14)}
+.mthumb img{width:100%;height:100%;object-fit:cover;display:block;transition:transform .25s ease}
+.mrow:hover .mthumb img{transform:scale(1.06)}
+.mthumb.ph{background:repeating-linear-gradient(135deg,var(--soft) 0 6px,var(--surface) 6px 12px);border:0;box-shadow:none}
+.mid{min-width:0}
+.mname{font-weight:700;font-size:16.5px;color:var(--fg);text-decoration:none;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 a.mname:hover{color:var(--teal-deep)}
-.mcode{display:block;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mmeta{display:flex;gap:6px;align-items:center;min-width:0;margin-top:3px}
+.mcode{min-width:0;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mgrade{flex:none;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:.03em;
+background:color-mix(in srgb,var(--teal) 13%,transparent);color:var(--teal-deep)}
+.mgrade.raw{background:var(--soft);color:var(--fg2);font-weight:600}
 .msell b{font-size:19px;font-weight:800;font-variant-numeric:tabular-nums;display:block;color:var(--fg)}
-.msell small{font-size:10.5px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase}
+.msell small{display:none;font-size:10.5px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase}
 .mtick .mchip{display:inline-block;font-size:12.5px;font-weight:600;border-radius:999px;padding:3px 10px}
 .mchip.up{background:color-mix(in srgb,var(--teal) 14%,transparent);color:var(--teal-deep)}
 .mchip.down{background:color-mix(in srgb,#c4553b 14%,transparent);color:#a2452f}
@@ -63,7 +75,7 @@ a.mname:hover{color:var(--teal-deep)}
 .abar.ask.over i span{background:#c4553b}
 .ask-gap{font-size:12px;color:var(--muted);margin-top:4px}
 @media(max-width:900px){.mrow{grid-template-columns:minmax(0,1fr) 150px;gap:8px 16px}
-.mtick{grid-column:1/-1}.mask{grid-column:1/-1}}
+.mtick{grid-column:1/-1}.mask{grid-column:1/-1}.msell small{display:block}}
 """
 
 
@@ -173,12 +185,17 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
     body = []
     for r in rows:
         pid, gkey = r["printing_id"], r["gkey"] or "|"
-        pc = passcode_of(pid)
+        if pid.startswith("pk:"):
+            key = "pkm-" + pid.split(":")[2] if len(pid.split(":")) > 2 else None
+        else:
+            key = passcode_of(pid)
         nm = name_of(pid) or r["label"].split(" · ")[0]
-        nm_html = (f'<a class="mname" href="{e(card_href(pc))}">{e(nm)}</a>' if pc
+        nm_html = (f'<a class="mname" href="{e(card_href(key))}">{e(nm)}</a>' if key
                    else f'<span class="mname">{e(nm)}</span>')
+        thumb = (f'<a class="mthumb" href="{e(card_href(key))}" tabindex="-1" aria-hidden="true">{img(key, "small", nm, "")}</a>'
+                 if key else '<span class="mthumb ph" aria-hidden="true"></span>')
         grade = _grade(gkey)
-        code = " · ".join(x for x in (r["label"], grade) if x)
+        pill = f'<span class="mgrade{" raw" if not grade else ""}">{e(grade or "Raw")}</span>'
         lab = r["trend_label"] or r["move_label"]
         cls = "up" if lab == "rising" else "down" if lab == "falling" else "hold" if lab == "steady" else "none"
         chip = r["plain"] or "Too new to call"
@@ -211,7 +228,8 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
         else:
             bars = '<div class="ask-gap">No copy is listed right now, so the sold price stands alone.</div>'
         body.append(
-            f'<li class="mrow"><div class="mmain">{nm_html}<span class="mcode">{e(code)}</span></div>'
+            f'<li class="mrow {cls}"><div class="mmain">{thumb}'
+            f'<span class="mid">{nm_html}<span class="mmeta"><span class="mcode">{e(r["label"])}</span>{pill}</span></span></div>'
             f'<div class="msell"><b title="Middle of this version\'s real sales: {r["n_sales"]} sold between '
             f'{M(r["low"])} and {M(r["high"])}">{M(sold)}</b><small>Sells for</small></div>'
             f'<div class="mtick"><span class="mchip {cls}" title="{why}">{e(chip)}</span>{ch90}'
