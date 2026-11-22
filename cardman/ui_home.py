@@ -307,12 +307,18 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", a
     out = [f'<section class="hero hunt"><h1 class="huntitle" aria-label="{e(_HUNT)}">{letters}</h1>' + _search_box(big=True, game=game) + "</section>"]
     out.append(_just_posted(st, now, game, M, qs or {}, "/pkm/" if game == "pkm" else "/"))
     wash = ('<style>main.page{max-width:min(95vw,1500px)}'
-            'body{background:radial-gradient(85% 55% at 12% -6%,rgba(47,191,113,.11),transparent 60%),'
-            'radial-gradient(60% 42% at 96% 2%,rgba(230,162,60,.09),transparent 55%),'
-            'radial-gradient(75% 55% at 82% 104%,rgba(224,82,82,.07),transparent 60%),'
-            'radial-gradient(45% 32% at 50% 30%,rgba(212,175,106,.05),transparent 72%),var(--bg);'
-            'background-attachment:fixed}'
-            'header.top{background:color-mix(in srgb,var(--surface) 66%,transparent)}</style>')
+            'body{background:var(--bg)}'
+            'body::before{content:"";position:fixed;inset:-32%;z-index:-1;pointer-events:none;will-change:transform;background:'
+            'radial-gradient(38% 32% at 22% 12%,rgba(47,191,113,.13),transparent 65%),'
+            'radial-gradient(32% 28% at 80% 8%,rgba(230,162,60,.11),transparent 60%),'
+            'radial-gradient(40% 34% at 70% 92%,rgba(224,82,82,.09),transparent 65%),'
+            'radial-gradient(30% 26% at 10% 80%,rgba(212,175,106,.09),transparent 60%);'
+            'animation:hunwash 46s ease-in-out infinite alternate}'
+            '@keyframes hunwash{0%{transform:translate3d(0,0,0) rotate(0deg) scale(1)}'
+            '50%{transform:translate3d(-3.5%,2.5%,0) rotate(3deg) scale(1.08)}'
+            '100%{transform:translate3d(3%,-2%,0) rotate(-2.5deg) scale(1.04)}}'
+            '@media(prefers-reduced-motion:reduce){body::before{animation:none}}'
+            'header.top{background:color-mix(in srgb,var(--surface) 62%,transparent)}</style>')
     return wash + "".join(out)
 
 
@@ -983,7 +989,11 @@ def view_character(st, idx, species: str, token: str, now: datetime, cur: str, h
 
 HOME_CSS = """
 header .hsearch{flex:1;max-width:520px}
-form.search{position:relative;display:flex;gap:0;margin:0}
+form.search{position:relative;display:flex;gap:0;margin:0;isolation:isolate;border-radius:999px}
+form.search::before{content:"";position:absolute;inset:-1.5px;z-index:-1;border-radius:999px;opacity:.5;transition:opacity .3s;
+background:linear-gradient(115deg,transparent 12%,rgba(140,190,255,.55) 32%,rgba(255,255,255,.85) 48%,rgba(212,175,106,.6) 64%,transparent 86%),var(--axis)}
+form.search:hover::before{opacity:.8}
+form.search:focus-within::before{opacity:1;box-shadow:0 8px 28px rgba(90,140,200,.18)}
 form.search input{flex:1;min-width:0;border-radius:999px 0 0 999px;padding:8px 14px;border-right:0}
 form.search button{border-radius:0 999px 999px 0;padding:8px 16px;background:var(--fg);color:var(--surface);border-color:var(--fg);font-weight:600}
 form.search.big input{font-size:17px;padding:15px 22px}form.search.big button{font-size:16px;padding:0 26px}

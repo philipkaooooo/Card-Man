@@ -220,12 +220,12 @@ box-shadow:0 4px 14px rgba(0,0,0,.12)}
 header .curs{display:inline-flex;border:1px solid var(--axis);border-radius:6px;overflow:hidden}
 header .curs a{padding:0 8px;font-size:12px}header .curs a.on{background:var(--fg);color:var(--surface)}
 header .tg{display:inline-flex;gap:4px;flex:none;margin-left:auto}
-header .tg a{display:inline-flex;align-items:center;justify-content:center;width:31px;height:31px;border-radius:9px;color:var(--fg2);
+header .tg a{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:9px;color:var(--fg2);
 text-decoration:none;border:1px solid transparent;transition:background .15s,color .15s}
 header .tg a:hover{background:var(--soft);color:var(--fg)}
 header .tg a.on{color:var(--fg);background:var(--surface);border-color:var(--axis);box-shadow:var(--shadow)}
 header .curmenu{position:relative;flex:none;margin-left:6px}
-header .curmenu>summary{display:inline-flex;align-items:center;gap:6px;height:31px;padding:0 11px;border:1px solid var(--axis);
+header .curmenu>summary{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 12px;border:1px solid var(--axis);
 border-radius:9px;background:var(--surface);color:var(--fg);font-size:12.5px;font-weight:650;cursor:pointer;list-style:none}
 header .curmenu>summary::-webkit-details-marker{display:none}
 header .curmenu>summary svg{opacity:.65}
@@ -353,16 +353,16 @@ SHELL_CSS = """
 body{display:flex;flex-direction:column;min-height:100vh}
 header.top{position:sticky;top:0;z-index:30;background:color-mix(in srgb,var(--surface) 86%,transparent);backdrop-filter:saturate(1.5) blur(12px);
 border-bottom:1px solid var(--line);box-shadow:0 1px 0 rgba(15,30,45,.03),0 10px 30px rgba(15,30,45,.05);
-padding:0 20px;display:flex;align-items:center;gap:18px;height:58px}
-header.top .logo{font-weight:800;font-size:17px;color:var(--fg);text-decoration:none;letter-spacing:-.01em}
-nav.main{display:flex;gap:2px;align-items:center}nav.main a{color:var(--fg2);text-decoration:none;padding:7px 12px;border-radius:8px;
-font-weight:550;font-size:14px;white-space:nowrap}nav.main a:hover{background:var(--surface);color:var(--fg);box-shadow:var(--shadow)}
+padding:0 22px;display:flex;align-items:center;gap:20px;height:64px}
+header.top .logo{font-weight:800;font-size:18px;color:var(--fg);text-decoration:none;letter-spacing:-.01em}
+nav.main{display:flex;gap:5px;align-items:center}nav.main a{color:var(--fg2);text-decoration:none;padding:9px 15px;border-radius:11px;
+font-weight:650;font-size:15px;letter-spacing:-.01em;white-space:nowrap}nav.main a:hover{background:var(--surface);color:var(--fg);box-shadow:var(--shadow)}
 nav.main a.on{color:var(--fg);background:var(--surface);box-shadow:var(--shadow),inset 0 -2px 0 var(--accent)}
 nav.main .nwrap{position:relative}
 nav.main .caret{display:inline-block;margin-left:5px;font-size:9px;color:var(--muted);transform:translateY(-1px)}
 nav.main .nsub{position:absolute;top:100%;left:0;min-width:190px;display:none;flex-direction:column;gap:1px;padding:6px;
 background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow-hi);z-index:40}
-nav.main .nsub a{padding:8px 10px;border-radius:8px;box-shadow:none}
+nav.main .nsub a{padding:9px 12px;border-radius:9px;box-shadow:none;font-size:14.5px}
 nav.main .nsub a:hover{background:var(--soft);box-shadow:none}
 nav.main .nsub a.on{background:var(--soft);box-shadow:none}
 nav.main .nwrap:hover .nsub,nav.main .nwrap:focus-within .nsub{display:flex}
