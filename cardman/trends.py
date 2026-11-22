@@ -132,7 +132,8 @@ def refresh(st, now: datetime | None = None, home: str = "TWD") -> int:
         gkey = f"{gc}|{gr}"
         ask = asks.get((pid, gkey))
         med = statistics.median(prices)
-        spread = (ask["median"] / med - 1) * 100 if ask and ask["median"] and med else None
+        ask_now = (ask["low"] if ask.get("low") is not None else ask["median"]) if ask else None
+        spread = (ask_now / med - 1) * 100 if ask_now and med else None
         rows.append((
             pid, gkey, "pkm" if pid.startswith("pk:") else "ygo", label_for(pid),
             len(points), s["n_30"], points[-1][0].isoformat(), points[0][0].isoformat(), len(points) / (span_days / 30.44),

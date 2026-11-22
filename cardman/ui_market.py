@@ -13,17 +13,23 @@ from . import trends
 from .games import card_href
 from .ui_home import Money, e, passcode_of, _tables
 
+ON_TAB = ' class="on" aria-current="page"'
+
 MARKET_CSS = """
+.mk-games{display:inline-flex;gap:4px;padding:4px;margin:0 0 12px;background:var(--soft);border-radius:999px}
+.mk-games a{padding:7px 16px;border-radius:999px;text-decoration:none;font-weight:700;font-size:14px;color:var(--fg2)}
+.mk-games a:hover{color:var(--fg)}
+.mk-games a.on{background:var(--surface);color:var(--fg);box-shadow:var(--shadow)}
+.mhead{display:grid;grid-template-columns:minmax(0,1.6fr) 150px minmax(0,1fr) 230px;gap:18px;padding:0 16px 6px;
+font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+.mhead span{cursor:help;border-bottom:1px dotted color-mix(in srgb,var(--muted) 45%,transparent);justify-self:start}
+@media(max-width:900px){.mhead{display:none}}
 .move-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:6px 0 14px}
 .move-grid h3{margin:0 0 4px;font-size:13px;color:var(--fg2);text-transform:uppercase;letter-spacing:.04em}
 ul.mini{list-style:none;margin:0;padding:0}ul.mini li{padding:3px 0;font-size:13px;border-bottom:1px solid var(--line)}
 ul.mini li:last-child{border-bottom:0}.up{color:var(--teal-deep);font-weight:600}.down{color:#b3261e;font-weight:600}
 @media(max-width:760px){.move-grid{grid-template-columns:1fr}}
 .mk-sub{max-width:72ch;font-size:15px;color:var(--fg2);margin:0 0 12px}
-.mk-how{margin:0 0 16px;border:1px solid var(--line);border-radius:12px;background:var(--surface);padding:0}
-.mk-how summary{cursor:pointer;padding:10px 14px;font-weight:600;font-size:14px;color:var(--fg)}
-.mk-how ul{margin:0;padding:0 18px 14px 32px;font-size:13.5px;color:var(--fg2);line-height:1.5}
-.mk-how li{margin:4px 0}.mk-how b{color:var(--fg)}
 .mk-pulse{display:flex;height:14px;border-radius:999px;overflow:hidden;background:var(--soft);margin:2px 0 8px;max-width:720px}
 .mk-pulse span{display:block;height:100%;min-width:2px}
 .p-up{background:var(--teal)}.p-down{background:#c4553b}.p-hold{background:#c9c2b4}.p-none{background:#e6e0d4}
@@ -138,22 +144,15 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
                  f'<span><i class="p-down"></i>{s["falling"]:,} slipping</span>'
                  f'<span><i class="p-hold"></i>{s["steady"]:,} holding</span>'
                  f'<span><i class="p-none"></i>{s["no_trend"]:,} too new to call</span>'
-                 f'<span class="mkstat"><b>{s["n_30"]:,}</b> sales in the last 30 days</span></div>')
-    head = (f'<h1>The {e(name)} market</h1>'
+                 f'<span class="mkstat"><b>{s["with_asks"]:,}</b> listed now · <b>{s["n_30"]:,}</b> sales in the last 30 days</span></div>')
+    tabs = ('<div class="mk-games" role="tablist" aria-label="Game">'
+            + "".join(f'<a role="tab"{ON_TAB if g == game else ""} href="/game?{e(urlencode({"g": g, "back": "/market"}))}">'
+                      f'{e(lab)}</a>' for g, lab in (("ygo", "Yu-Gi-Oh!"), ("pkm", "Pokémon")))
+            + '</div>')
+    head = (f'<h1>The {e(name)} market</h1>' + tabs +
             f'<p class="mk-sub">Every card here has sold at least once. The big number is what copies <b>sold for</b> — the '
-            f'middle of the real sales, not a seller\'s hope. Ask bars on the right are the cheapest live listings, '
-            f'kept separate from anything sold.</p>'
-            + pulse +
-            '<details class="mk-how"><summary>How to read a row</summary><ul class="mk-legend">'
-            '<li><b>Sells for</b> — the middle of this version\'s real sales. Half of the copies went for less, half for more.</li>'
-            '<li><b>Climbing / slipping</b> — which way recent sales moved; the chip says how far and over what window.</li>'
-            '<li><b>Asking</b> — the lowest price a copy is listed at right now, separate from anything sold.</li>'
-            '<li><b>Above / below the sold price</b> — the ask bar against the sold bar. Red means sellers want more than '
-            'buyers paid; teal means the ask sits at or under what copies actually sell for.</li>'
-            '<li><b>Sales count and last sold</b> — how thick the evidence is. One sale is an anecdote; thirty are a market.</li>'
-            '<li><b>A gap of three times or more</b> — treat it as a different variant on sale, not a bargain or a rip-off. '
-            'Open the card before believing it.</li>'
-            '</ul></details>')
+            f'middle of the real sales, not a seller\'s hope. Ask bars are the cheapest live listing, kept separate.</p>'
+            + pulse)
     chips = _chips({**qs, "sort": sort, "min": str(min_sales)}, {
         "label": [("all", "Everything"), ("rising", "Climbing"), ("falling", "Slipping"), ("steady", "Holding"),
                   ("none", "Too new to call")],
@@ -163,6 +162,13 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
     if not rows:
         return (head + chips + '<p class="empty">Nothing matches those filters yet. A version shows up once real sales of '
                 'that exact printing and grade are stored.</p>')
+    cols = ('<div class="mhead">'
+            '<span>Card</span>'
+            '<span title="The middle of this version\'s real sales: half the copies sold for less, half for more.">Sells for</span>'
+            '<span title="Which way recent sales moved, and how many sales back the call.">Moved</span>'
+            '<span title="Cheapest live listing against the sold price. A gap of three times or more usually means a '
+            'different variant is on sale - open the card before believing it.">Sold vs asking</span>'
+            '</div>')
     name_of = _name_of(cards, pkm)
     body = []
     for r in rows:
@@ -194,6 +200,8 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
                       f"Asking {abs(gap):.0f}% above the sold price" if over and gap is not None else
                       f"Asking {abs(gap):.0f}% below the sold price" if gap is not None else
                       "Asking price against the sold price")
+            if r["ask_n"] and r["ask_day"]:
+                gaptxt += f' · {r["ask_n"]} listed {_short_day(r["ask_day"])}'
             bars = (f'<div class="abars">'
                     f'<div class="abar sold"><em>Sold</em><i><span style="width:{soldv / top * 100:.0f}%"></span></i>'
                     f'<em>{M(sold)}</em></div>'
@@ -204,18 +212,17 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
             bars = '<div class="ask-gap">No copy is listed right now, so the sold price stands alone.</div>'
         body.append(
             f'<li class="mrow"><div class="mmain">{nm_html}<span class="mcode">{e(code)}</span></div>'
-            f'<div class="msell"><b>{M(sold)}</b><small>Sells for</small></div>'
+            f'<div class="msell"><b title="Middle of this version\'s real sales: {r["n_sales"]} sold between '
+            f'{M(r["low"])} and {M(r["high"])}">{M(sold)}</b><small>Sells for</small></div>'
             f'<div class="mtick"><span class="mchip {cls}" title="{why}">{e(chip)}</span>{ch90}'
             f'<small>{r["n_sales"]} sale{"s" if r["n_sales"] != 1 else ""} · last sold {_short_day(r["last_sale"])}'
             + (f' · {r["n_30"]} in the last 30 days' if r["n_30"] else "") + '</small></div>'
             f'<div class="mask">{bars}</div></li>')
     shown = (f'<p class="muted small">Showing {len(rows)} of {s["series"]:,} versions'
              + (", the top 200 for this sort" if len(rows) >= 200 else "") + '.</p>')
-    note = ('<p class="muted small">Sold prices are in your display currency, converted at each sale\'s own date. '
-            'Trend: while a version holds less than three months of dated sales, the chip compares the middle of the last '
-            '7 days of sales with the 7 before it, when both sides have at least 3 sales; otherwise it stays quiet. '
-            'Asking prices are the cheapest live listing in the daily snapshot and never feed the sold number.</p>')
-    return head + chips + f'<ul class="mlist">{"".join(body)}</ul>' + shown + note
+    note = ('<p class="muted small">Prices in your display currency, each sale converted at its own date. The ask bar is '
+            'the cheapest copy in the newest nightly snapshot and never moves the sold number.</p>')
+    return head + chips + cols + f'<ul class="mlist">{"".join(body)}</ul>' + shown + note
 
 
 def movement_strip(st, game: str, M: Money) -> str:

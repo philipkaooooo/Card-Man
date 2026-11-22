@@ -388,8 +388,11 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     from .zone import CHAR_CSS
     theme = theme if theme in THEMES else "market"
     where = NAV_OF.get(nav, "")
+    swap = ({"/": "/pkm/", "/market": "/pkm/market", "/opportunities": "/pkm/opportunities",
+             "/search": "/pkm/search"} if game == "pkm" else {})
     links = ""
     for k, t, h in NAV:
+        h = swap.get(h, h)
         if k in SUBS:
             items = "".join(f'<a href="{sh}"{ON if sk == where else ""}>{e(st)}</a>' for sk, st, sh in SUBS[k])
             links += (f'<div class="nwrap"><a href="{h}"{ON if k == where else ""}>{e(t)}'
@@ -1894,7 +1897,7 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
             if not back.startswith("/") or back.startswith("//"):
                 back = "/"
             base = (back[4:] if back.startswith("/pkm") else back) or "/"
-            same = base.split("?")[0] in ("/", "/opportunities", "/search")
+            same = base.split("?")[0] in ("/", "/opportunities", "/search", "/market")
             target = base if same else "/"
             to = ("/pkm" + target) if g == "pkm" else target
             self.send_response(303)
@@ -2006,8 +2009,42 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                 self.game, parts = "pkm", parts[1:]
             if parts == ["game"]:
                 return self._switch_game(qs)
+            if parts == ["engine", "status"]:
+                import fcntl as _fc
+                scanning, lockh = True, None
+                try:
+                    lockh = open(Path(str(store_path) + ".engine.lock"), "a+")
+                    _fc.flock(lockh, _fc.LOCK_EX | _fc.LOCK_NB)
+                    scanning = False
+                except OSError:
+                    pass
+                out = {"scanning": scanning, "at": None, "age_s": None, "new": 0}
+                try:
+                    import sqlite3 as _sq3
+                    db = _sq3.connect("file://{}?mode=ro".format(_quote(str(Path(store_path).resolve()))), uri=True)
+                    row = db.execute("SELECT at, data_json FROM engine_run ORDER BY at DESC LIMIT 1").fetchone()
+                    db.close()
+                    if row:
+                        out["at"] = row[0]
+                        try:
+                            out["new"] = int(json.loads(row[1]).get("new_listings") or 0)
+                        except Exception:
+                            pass
+                        try:
+                            t = datetime.fromisoformat(row[0])
+                            out["age_s"] = max(0, int((datetime.now(t.tzinfo) - t).total_seconds()))
+                        except ValueError:
+                            pass
+                except Exception:
+                    pass
+                if lockh is not None:
+                    _fc.flock(lockh, _fc.LOCK_UN)
+                    lockh.close()
+                return self._send(200, json.dumps(out).encode(), "application/json")
             if not parts and self.game == "ygo" and self._cookie("game") == "pkm" and "g" not in qs and not u.query:
                 return self._go("/pkm/")
+            if self.game == "ygo" and parts == ["market"] and self._cookie("game") == "pkm":
+                return self._go("/pkm/market" + (("?" + u.query) if u.query else ""))
             if self.game == "pkm" and pcards() is None and parts[:1] in (["search"], ["card"], ["character"], ["characters"]):
                 from .catalog_boot import read_status
                 stt = read_status()
@@ -2302,7 +2339,12 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                                          cwd=str(Path(__file__).resolve().parent.parent),
                                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                          start_new_session=True)
-                        self._redirect("/opportunities", msg="Check started. It runs in its own process, so the board stays live.")
+                        back = form.get("back") or ""
+                        if isinstance(back, list):
+                            back = back[0] if back else ""
+                        if not (str(back).startswith("/") and not str(back).startswith("//")):
+                            back = "/opportunities"
+                        self._redirect(str(back), msg="Check started. It runs in its own process, so the board stays live.")
                     except Exception as x:
                         self._redirect("/opportunities", err=f"Check failed to start: {type(x).__name__}: {x}")
                 elif len(parts) == 3 and parts[0] == "opp" and parts[2] == "confirm":
