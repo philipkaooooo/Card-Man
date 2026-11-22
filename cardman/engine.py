@@ -515,24 +515,40 @@ class Engine:
             self.store.__dict__.pop("_original_memo", None)
         except Exception as x:   # stays queued online and is retried next pass
             rep.errors.append(f"eBay deletions: {type(x).__name__}")
-        new: list[RawListing] = []
+        cal = self.ledger.calibration(now)      # the book exists before the first batch, so streamed listings get priced on arrival
+        book = PriceBook(self.store, self.fx, self.profile, now, bias=cal.resale_bias, reference=self.reference)
+        from .games import guess_game
+
+        def ingest(raws):
+            """One batch, end to end: remember, evidence, opportunity. The board shows it in seconds."""
+            fresh = []
+            for r in raws:
+                if r.source not in ("ebay_browse:EBAY_US",) and not r.source.startswith("ebay_browse") and r.game == "ygo":
+                    r.game = guess_game(f"{r.title} {r.description}", self.pkm)     # imported pages: either game
+                # An unchanged asking price seen again is not a new fact: recording it every pass only bloated the store.
+                if self.remember(r, now, rep) != "same" or r.kind not in ("ask", "bid", "auction"):
+                    self._take_evidence(r, now, rep)
+                fresh.append(r.key)
+            for k in fresh:
+                try:
+                    self.analyze_listing(k, book, now, rep)
+                except Exception as x:
+                    rep.errors.append(f"{k}: {type(x).__name__}: {x}")
+
         for route in (self.inbox, self.ebay):
             rep.routes.append(asdict(route.status()))
             try:
-                got, errs = route.poll(now)
-                new += got
-                rep.errors += errs
+                if route is self.ebay:
+                    _, errs = route.poll(now, on_batch=ingest)
+                    rep.errors += errs
+                else:
+                    got, errs = route.poll(now)
+                    ingest(got)
+                    rep.errors += errs
             except Exception as x:   # one route failing must not stop the others, or read as "no supply"
                 rep.errors.append(f"{route.name}: {x}")
         if self.reference:
             rep.routes.append(asdict(self.reference.status()))
-        from .games import guess_game
-        for r in new:
-            if r.source not in ("ebay_browse:EBAY_US",) and not r.source.startswith("ebay_browse") and r.game == "ygo":
-                r.game = guess_game(f"{r.title} {r.description}", self.pkm)     # imported pages: either game
-            # An unchanged asking price seen again is not a new fact: recording it every pass only bloated the store.
-            if self.remember(r, now, rep) != "same" or r.kind not in ("ask", "bid", "auction"):
-                self._take_evidence(r, now, rep)
         if self.ebay.status().on:
             # Sales seen through eBay's own API: sold counts that rose on tracked fixed-price listings.
             from .ebay_sold_watch import check as check_sold_counts
@@ -540,8 +556,6 @@ class Engine:
                 rep.ebay_sold = asdict(check_sold_counts(self, now, budget=int(self.profile.get("ebay_sold_checks_per_pass", 120))))
             except Exception as x:
                 rep.errors.append(f"eBay sold counts: {type(x).__name__}: {x}")
-        cal = self.ledger.calibration(now)
-        book = PriceBook(self.store, self.fx, self.profile, now, bias=cal.resale_bias, reference=self.reference)
         cutoff = (now - GONE_AFTER).isoformat()
         keys = [k for (k,) in self.db.execute("SELECT key FROM listing WHERE ended_at IS NULL AND last_seen>=? AND (ends_at IS NULL OR ends_at>?)",
                                               (cutoff, now.isoformat()))]

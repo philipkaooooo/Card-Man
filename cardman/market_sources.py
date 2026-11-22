@@ -322,7 +322,9 @@ class EbayAdapter:
             return RouteStatus(self.name, False, "keys present, no searches configured", self.capability)
         return RouteStatus(self.name, True, f"{len(self.queries)} search(es)", self.capability)
 
-    def poll(self, now: datetime) -> tuple[list[RawListing], list[str]]:
+    def poll(self, now: datetime, on_batch=None) -> tuple[list[RawListing], list[str]]:
+        """on_batch(raws), when given, runs after every query: the board sees each search's listings while the next
+        one is still in flight, instead of everything at the end of the pass."""
         if not self.status().on:
             return [], []
         from .ebay_browse import EbayBrowse, SourceUnavailable
@@ -335,15 +337,22 @@ class EbayAdapter:
             except SourceUnavailable as x:
                 errors.append(f"ebay '{q}': {x}")
                 continue
+            batch = []
             for o in res.observations:
                 if o.id in seen:      # the same item matched an earlier search this pass
                     continue
                 seen.add(o.id)
-                out.append(RawListing(source=o.source, listing_id=o.listing_id or o.id, title=res.titles.get(o.id) or q,
-                                      price=o.original_amount, currency=o.currency,
-                                      kind="bid" if o.evidence_type == EvidenceType.OBSERVED_BID else "ask", url=o.source_url,
-                                      shipping=o.shipping_amount, seller=o.seller_ref, condition=o.observed_condition, raw_ref=o.raw_ref,
-                                      game=game, photo_urls=tuple(res.photos.get(o.id) or ())))
+                batch.append(RawListing(source=o.source, listing_id=o.listing_id or o.id, title=res.titles.get(o.id) or q,
+                                        price=o.original_amount, currency=o.currency,
+                                        kind="bid" if o.evidence_type == EvidenceType.OBSERVED_BID else "ask", url=o.source_url,
+                                        shipping=o.shipping_amount, seller=o.seller_ref, condition=o.observed_condition, raw_ref=o.raw_ref,
+                                        game=game, photo_urls=tuple(res.photos.get(o.id) or ())))
+            out += batch
+            if on_batch is not None:
+                try:
+                    on_batch(batch)
+                except Exception as x:   # a sink failure must not cost the collection
+                    errors.append(f"ebay batch '{q}': {type(x).__name__}: {x}")
         return out, errors
 
 

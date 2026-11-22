@@ -2018,11 +2018,14 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     scanning = False
                 except OSError:
                     pass
-                out = {"scanning": scanning, "at": None, "age_s": None, "new": 0}
+                out = {"scanning": scanning, "at": None, "age_s": None, "new": 0, "fresh_at": None}
                 try:
                     import sqlite3 as _sq3
                     db = _sq3.connect("file://{}?mode=ro".format(_quote(str(Path(store_path).resolve()))), uri=True)
                     row = db.execute("SELECT at, data_json FROM engine_run ORDER BY at DESC LIMIT 1").fetchone()
+                    fr = db.execute("SELECT MAX(first_seen) FROM listing").fetchone()
+                    if fr and fr[0]:
+                        out["fresh_at"] = fr[0]
                     db.close()
                     if row:
                         out["at"] = row[0]

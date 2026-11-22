@@ -276,6 +276,17 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
         "ORDER BY l.first_seen DESC LIMIT 400").fetchall()
     from .ui_listing import lphoto, verdict
     cut = now - _WINDOW[t] if t in _WINDOW else None
+    if cut is not None:   # anchor the window on the freshest listing, not the wall clock: a collector that last
+        tmax = st.db.execute("SELECT MAX(first_seen) FROM listing").fetchone()[0]   # landed a batch an hour ago
+        if tmax:                                                          # still has a live "last hour"
+            try:
+                tt = datetime.fromisoformat(tmax)
+                if (tt.tzinfo is None) != (now.tzinfo is None):
+                    tt = tt.replace(tzinfo=now.tzinfo)
+                if tt > cut:
+                    cut = tt - _WINDOW[t]
+            except (ValueError, TypeError):
+                pass
     counts = {"all": 0, "good": 0, "avg": 0, "bad": 0, "none": 0}
     entries = []
     for key, source, title, url, price, currency, seen, dj, payload, status, iid, imgs in rows:
@@ -1232,7 +1243,8 @@ border:1px solid var(--axis);border-radius:999px;background:var(--surface);curso
 .hun-live.slow i{background:#e6a23c}
 @keyframes hunpulse{0%,100%{box-shadow:0 0 0 0 rgba(47,191,113,.35)}50%{box-shadow:0 0 0 6px rgba(47,191,113,0)}}
 .hunzone{transition:opacity .25s}
-.hunzone.checking{opacity:.5;pointer-events:none}
+.hunzone.armed .hungrid{animation:hunarmed 2.4s ease-in-out infinite}
+@keyframes hunarmed{50%{opacity:.72}}
 .hungrid>.hun{animation:hunin .5s cubic-bezier(.2,.7,.3,1) backwards}
 .hungrid>.hun:nth-child(2){animation-delay:40ms}
 .hungrid>.hun:nth-child(3){animation-delay:80ms}
@@ -1299,21 +1311,22 @@ else if(ev.key==='Escape'){box.hidden=true}});
 document.addEventListener('click',function(ev){if(!f.contains(ev.target))box.hidden=true})})})();
 (function(){if(!document.querySelector('.hunzone'))return;var running=false;
 function st(){return fetch('/engine/status').then(function(r){return r.json()}).catch(function(){return null})}
-function setBusy(b){running=b;var btn=document.querySelector('.hun-scan'),z=document.querySelector('.hunzone');
-if(btn){btn.classList.toggle('busy',b);var s=btn.querySelector('span');if(s)s.textContent=b?'Checking…':'Scan now'}
-if(z)z.classList.toggle('checking',b)}
+function sync(){var btn=document.querySelector('.hun-scan'),z=document.querySelector('.hunzone');
+if(btn){btn.classList.toggle('busy',running);var s=btn.querySelector('span');if(s)s.textContent=running?'Streaming…':'Scan now'}
+if(z)z.classList.toggle('armed',running)}
 function swap(){return fetch(location.pathname+location.search).then(function(r){return r.text()}).then(function(html){
 var d=new DOMParser().parseFromString(html,'text/html');
-['.hun-rail','.hunzone'].forEach(function(sel){var n=d.querySelector(sel),o=document.querySelector(sel);if(n&&o)o.replaceWith(n)})})}
-function waitDone(before){return new Promise(function(res){var t0=Date.now();(function poll(){st().then(function(s){
-if((s&&!s.scanning&&(!before||s.at!==before.at))||Date.now()-t0>300000)return res();setTimeout(poll,4000)})})()})}
-async function run(auto){if(running)return;setBusy(true);try{var before=await st();
-if(auto&&before&&before.age_s!==null&&before.age_s<480){await swap();return}
+['.hun-rail','.hunzone'].forEach(function(sel){var n=d.querySelector(sel),o=document.querySelector(sel);if(n&&o)o.replaceWith(n)});sync()})}
+function livePoll(){var seen=null,t0=Date.now();var iv=setInterval(function(){st().then(function(s){if(!s)return;
+if(s.fresh_at&&s.fresh_at!==seen){seen=s.fresh_at;swap()}
+if((!s.scanning&&(seen||Date.now()-t0>60000))||Date.now()-t0>330000){clearInterval(iv);running=false;swap()}})},12000)}
+async function run(auto){if(running)return;running=true;sync();try{var before=await st();
+if(auto&&before&&before.age_s!==null&&before.age_s<480){await swap();running=false;sync();return}
 var b=document.querySelector('.hun-scan')||{dataset:{}};var fd=new FormData();fd.append('back',b.dataset.back||'/');fd.append('t',b.dataset.t||'');
 try{await fetch('/engine/tick',{method:'POST',body:fd})}catch(e){}
-await waitDone(before);await swap()}finally{setBusy(false)}}
+livePoll()}catch(e){running=false;sync()}}
 document.addEventListener('click',function(ev){var b=ev.target.closest&&ev.target.closest('.hun-scan');if(b)run(false)});
-st().then(function(s){if(s&&s.scanning){setBusy(true);waitDone(null).then(swap).then(function(){setBusy(false)})}});
+st().then(function(s){if(s&&s.scanning){running=true;sync();livePoll()}});
 (function t10(){setTimeout(function(){if(document.visibilityState==='visible')run(true);t10()},600000)})();
 })();
 """
