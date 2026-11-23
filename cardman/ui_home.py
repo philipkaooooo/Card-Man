@@ -308,6 +308,27 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
     rows = st.db.execute(
         f"SELECT {sel} FROM listing l {joins} "
         "WHERE l.ended_at IS NULL AND l.kind IN ('ask','bid','auction') " + only + " " + order + " LIMIT 400").fetchall()
+    spark_map = {}
+    if M is not None:
+        try:
+            from .history import sparks as _mk_sparks
+            for pid, svg in _mk_sparks(st, now, M.home).items():
+                for k in {pid, pid.rsplit("@", 1)[-1].split("|")[0], pid.split("@")[0]}:
+                    spark_map.setdefault(k, svg)
+        except Exception:
+            spark_map = {}
+    pcm = {}
+    if "pc_card" in have:
+        for pid, grades in st.db.execute("SELECT printing_id, grades FROM pc_card WHERE status='ok' AND grades IS NOT NULL"):
+            try:
+                row = {}
+                for gkey, u in (json.loads(grades) or {}).items():
+                    if isinstance(u, dict) and u.get("p"):
+                        row[gkey] = (float(u["p"]), u.get("c"), u.get("vol") or "")
+                if row:
+                    pcm[pid] = row
+            except Exception:
+                pass
     from .ui_listing import lphoto, verdict
     cut = now - _WINDOW[t] if t in _WINDOW else None
     if cut is not None:   # anchor the window on the freshest listing, not the wall clock: a collector that last
@@ -356,6 +377,27 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
                     chip = '<span class="hun-deal d-{}" title="worth up to {:.0f}% over the ask">+{:.0f}%</span>'.format(code, pct, pct)
             except Exception:
                 code, sub, chip = "none", "", ""
+        pid = d.get("printing_id") or ""
+        spk = spark_map.get(pid) or spark_map.get(pid.split("@")[0]) or ""
+        pcrow = ""
+        gkey = _pc_grade(d.get("grade"))
+        pcvals = pcm.get(pid) or {}
+        if gkey in pcvals and M is not None:
+            try:
+                p_usd, c_usd, vol = pcvals[gkey]
+                bits = ["PC " + ("" if gkey == "Ungraded" else gkey + " ") + charts.fmt(p_usd, "USD")]
+                if c_usd:
+                    bits.append("{:+,.2f}".format(c_usd))
+                ask = d.get("all_in_home")
+                rate = M.fx.convert(Decimal(str(p_usd)), "USD", M.home, now) if (M.fx is not None and ask) else None
+                if rate:
+                    dv = (float(ask) - float(rate)) / float(rate) * 100
+                    if abs(dv) >= 3:
+                        bits.append('<b class="{}">ask {:+.0f}% vs PC</b>'.format("pclo" if dv < 0 else "pchi", dv))
+                pcrow = ('<span class="hun-pc" title="PriceCharting sold-market comp, same grade">' + " \u00b7 ".join(bits) +
+                         (" \u00b7 " + e(vol.replace(" per ", "/")) if vol else "") + "</span>")
+            except Exception:
+                pcrow = ""
         counts["all"] += 1
         counts[code] += 1
         price_txt = charts.fmt(Decimal(str(price)), currency) if price not in (None, "") else "—"
@@ -364,16 +406,20 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
             continue
         own = len(json.loads(imgs or "[]")) if imgs else 0
         art = lphoto(iid, 0, "m", title or "", cls="hun-img") if own else img(_listing_art(d), "large", title or "", cls="card hun-img")
-        entries.append(({"good": 0, "avg": 1, "bad": 2}.get(code, 3), seen or "",
+        rank = {"good": 0, "avg": 1, "bad": 2}.get(code, 3)
+        if gkey in pcvals:      # a cross-market comp beats a bare internal read for board space
+            rank = min(rank, 0.8) if code == "none" else rank - 0.4
+        entries.append((rank, seen or "",
                         '<a class="hun" href="{}" data-key="{}" data-signal="{}">{}'
                         '<span class="hun-b"><span class="hun-name">{}</span>{}'
                         '<span class="hun-row"><span class="hun-price">{}{}</span>'
-                        '<span class="hun-meta">{}{}{}</span></span></span>'
+                        '<span class="hun-meta">{}{}{}</span></span>{}{}</span>'
                         '<span class="laser l-{}"></span></a>'.format(
                             e(url), e(key), e(code), art, e((title or "")[:90]),
                             '<span class="hun-sub">' + e(sub) + "</span>" if sub else "",
                             e(price_txt), chip, _mkt_icon(source),
                             (" " + e(when)) if when else "", (" \u00b7 {} pics".format(own) if own > 1 else ""),
+                            pcrow, ('<span class="hun-spark">' + spk + "</span>") if spk else "",
                             e(code))))
     entries.sort(key=lambda x: x[1], reverse=True)
     entries.sort(key=lambda x: x[0])
@@ -397,12 +443,83 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
             'sells for, so red is the common read and green is rare on purpose.</p></section>')
 
 
+_PC_GRADE = {"7": "Grade 7", "8": "Grade 8", "9": "Grade 9", "9.5": "Grade 9.5", "10": "PSA 10"}
+
+
+def _pc_grade(grade) -> str:
+    """Which PriceCharting column a listing's grade maps onto; ungraded is the default shelf."""
+    m = re.search(r"(\d+(?:\.\d+)?)", str(grade or "").lower())
+    return _PC_GRADE.get(m.group(1), "Ungraded") if m else "Ungraded"
+
+
+def _pulse(st, now: datetime, game: str, M=None) -> str:
+    """The board's vital signs, above the board: what landed, what moved, what closes, how asks sit against PriceCharting."""
+    have = _tables(st)
+    if "listing" not in have:
+        return ""
+    jg = "COALESCE(json_extract(data_json,'$.game'),'ygo')"
+    gf = " AND " + jg + "=?"
+    try:
+        new24 = st.db.execute("SELECT COUNT(*) FROM listing WHERE ended_at IS NULL AND julianday(first_seen)>=julianday('now','-1 day')" + gf,
+                              (game,)).fetchone()[0]
+        days = dict(st.db.execute("SELECT date(first_seen), COUNT(*) FROM listing WHERE julianday(first_seen)>=julianday('now','-7 day')" + gf
+                                  + " GROUP BY 1", (game,)).fetchall())
+        drops24 = st.db.execute("SELECT COUNT(*) FROM listing_event WHERE kind='PRICE_CHANGE' AND julianday(at)>=julianday('now','-1 day') "
+                                "AND key IN (SELECT key FROM listing WHERE 1=1" + gf + ")", (game,)).fetchone()[0]
+        end6 = st.db.execute("SELECT COUNT(*) FROM listing WHERE ends_at IS NOT NULL AND julianday(ends_at)>julianday('now') "
+                             "AND julianday(ends_at)<=julianday('now','+6 hours')" + gf, (game,)).fetchone()[0]
+    except Exception:
+        return ""
+    vals = [days.get((now - timedelta(days=i)).date().isoformat(), 0) for i in range(6, -1, -1)]
+    mx = max(vals + [1])
+    W, H = 77, 22
+    bars = "".join('<rect x="{}" y="{:.1f}" width="8" height="{:.1f}" rx="2" {}></rect>'.format(
+        i * 11 + 1, H - max(2.0, (H - 2) * v / mx), max(2.0, (H - 2) * v / mx),
+        'fill="var(--accent)"' if i == 6 else 'fill="var(--muted)" opacity=".55"') for i, v in enumerate(vals))
+    spark7 = ('<svg viewBox="0 0 {} {}" width="{}" height="{}" role="img" aria-label="asks posted per day, last 7 days">{}</svg>'
+              .format(W, H, W, H, bars))
+    upc = matched = 0
+    if "pc_card" in have and "opportunity" in have and M is not None:
+        try:
+            for pj, grades in st.db.execute(
+                    "SELECT o.payload_json, p.grades FROM opportunity o "
+                    "JOIN pc_card p ON p.printing_id=json_extract(o.payload_json,'$.printing_id') "
+                    "WHERE p.status='ok' AND json_extract(o.payload_json,'$.game')=? AND julianday(o.updated_at)>=julianday('now','-2 day')",
+                    (game,)):
+                try:
+                    dd = json.loads(pj) or {}
+                    u = (json.loads(grades) or {}).get(_pc_grade(dd.get("grade"))) or {}
+                    ask = dd.get("all_in_home")
+                    if not u.get("p") or not ask or M.fx is None:
+                        continue
+                    rate = M.fx.convert(Decimal(str(u["p"])), "USD", M.home, now)
+                    if not rate:
+                        continue
+                    matched += 1
+                    if float(ask) < float(rate):
+                        upc += 1
+                except Exception:
+                    continue
+        except Exception:
+            pass
+    pcf = st.db.execute("SELECT MAX(fetched) FROM pc_card WHERE status='ok'").fetchone()[0] if "pc_card" in have else None
+    under = "{}/{}".format(upc, matched) if matched else "\u2014"
+    items = ((f"{new24:,}", "asks posted \u00b7 24h", spark7),
+             (str(drops24), "price drops \u00b7 24h", ""),
+             (str(end6), "closing \u2264 6h", ""),
+             (under, "asks under PC comp", ""),
+             ("PC " + (_ago(pcf, now) if pcf else "never"), "sweep freshness", ""))
+    return ('<section class="pulse" aria-label="market pulse">' + "".join(
+        '<div class="pulse-i"><span><b>{}</b><small>{}</small></span>{}</div>'.format(e(a), e(b), c) for a, b, c in items) + "</section>")
+
+
 def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", assumed_costs: bool = True, EM=None, game: str = "ygo",
               qs: dict | None = None, token: str = "") -> str:
     """The hunt: the title, the search, and the newest postings. Every decision view lives on its own page."""
     M = Money(st, home, cur, now)
     letters = "".join(f'<span style="--i:{i}">{c if c != " " else "&nbsp;"}</span>' for i, c in enumerate(_HUNT))
     out = [f'<section class="hero hunt"><h1 class="huntitle" aria-label="{e(_HUNT)}">{letters}</h1>' + _search_box(big=True, game=game) + "</section>"]
+    out.append(_pulse(st, now, game, M))
     feed = _just_posted(st, now, game, M, qs or {}, "/pkm/" if game == "pkm" else "/", token)
     out.append(feed)
     wash = ('<style>main.page{max-width:min(95vw,1500px)}'
@@ -550,12 +667,12 @@ def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalo
 
     picker = _version_picker(passcode, all_v, chosen, seen, listed)
     price = _price_line(v, value.get(chosen), listed.get(chosen, []), hist, M, guide=guide)
+    price_row = f'<div class="prow">{price}{_trend_box(st, chosen, cur, now, M)}</div>'
     ja = c.get("name_ja")
     limits = c.get("limits") or {}
     details = [("Card number", c["passcode"]), ("Konami ID", c.get("konami_id"))] + [
         (f"Tournament status ({k.upper()})", lim) for k, lim in limits.items() if k in ("tcg", "ocg")]
     pend = f'<div class="pend"><small>Pendulum effect</small>{_para(c.get("pend_en"))}</div>' if c.get("pend_en") else ""
-    from .ui_chart import section
     from .ui_pc import section as pc_section
     if pkm:
         from .character import slug as _slug, species_of
@@ -566,9 +683,7 @@ def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalo
                f'<p class="cja">{e(c.get("set_name"))} · {e(c.get("number"))}/{e(c.get("printed_total"))} · {e(c.get("rarity") or "")}</p>')
         return (
             f'<div class="cardpage"><div class="cp-img">{img(passcode, "", c.get("name_en") or "", cls="card big")}</div>'
-            f'<div class="cp-info">{top}' + picker + price + _pkm_details(c) + '</div></div>'
-            + section(passcode, hist, chosen).replace(
-                '</section>', f'<p class="small"><a href="/settings?card={e(passcode)}#past">Fill in past prices for this card</a></p></section>', 1)
+            f'<div class="cp-info">{top}' + picker + price_row + _pkm_details(c) + '</div></div>'
             + pc_section(st, chosen, cur, now)
             + _market_section(passcode, market, chosen, by_id, M, now, f)
             + _sold_panel(st, all_v, chosen, M)
@@ -579,13 +694,11 @@ def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalo
         f'<div class="cp-info"><p class="crumb">{e(c.get("card_type") or "")}{" · " + e(c["type_line"]) if c.get("type_line") else ""}</p>'
         f'<h1 class="cname">{e(c.get("name_en") or ja)}</h1>'
         + (f'<p class="cja">{e(ja)}{" <span>(" + e(c["reading"]) + ")</span>" if c.get("reading") and c.get("reading") != ja else ""}</p>' if ja else "")
-        + picker + price
+        + picker + price_row
         + f'<div class="stats">{_stats(c)}</div><div class="ctext">{_para(c.get("text_en"))}</div>{pend}'
         + (f'<details><summary>Japanese text</summary><div class="ctext">{_para(c.get("text_ja"))}</div></details>' if c.get("text_ja") else "")
         + '<details><summary>Card details</summary><dl class="ids">' + "".join(f"<dt>{e(k)}</dt><dd>{e(x)}</dd>" for k, x in details if x)
         + '</dl></details></div></div>'
-        + section(passcode, hist, chosen).replace('</section>', f'<p class="small"><a href="/settings?card={e(passcode)}#past">Fill in past '
-                                                   'prices for this card</a></p></section>', 1)
         + pc_section(st, chosen, cur, now)
         + _market_section(passcode, market, chosen, by_id, M, now, f)
         + _sold_panel(st, all_v, chosen, M)
@@ -638,6 +751,74 @@ def _version_picker(passcode, all_v, chosen, seen, listed) -> str:
             + f'<optgroup label="All other versions">{"".join(opt(v) for v in sorted(rest, key=_vlabel))}</optgroup>')
     return (f'<form class="vpick" method="get" action="{e(card_href(passcode))}"><label>Version <select name="v">{body}</select></label>'
             '<button>Show</button></form>')
+
+
+def _trend_box(st, printing_id: str | None, cur: str, now: datetime, M) -> str:
+    """The trend beside the price: our newest sales against the ones before them, PriceCharting's 12-month series
+    where ours are too few, and the same series drawn small. Enough to act on, nothing to explain."""
+    if not printing_id:
+        return ""
+    from . import pc
+    row = None
+    try:
+        names = [d[0] for d in st.db.execute("SELECT * FROM price_trend LIMIT 0").description]
+        r = st.db.execute("SELECT * FROM price_trend WHERE printing_id=? AND gkey='|'", (printing_id,)).fetchone()
+        row = dict(zip(names, r)) if r else None
+    except Exception:
+        row = None
+    pcr = None
+    try:
+        pcr = pc.rows_for(st, [printing_id]).get(printing_id)
+    except Exception:
+        pcr = None
+    gs = pc.grade_series(pcr, "|")
+    def usd_to_cur(usd: float) -> float | None:
+        try:
+            return float(FxTable(st.fx_rates()).convert(Decimal(str(usd)), "USD", cur, now))
+        except Exception:
+            return None
+    pts = []
+    if gs:
+        pts = [(int(t), usd_to_cur(v)) for t, v in gs[1] if v and float(v) > 0]
+        pts = [(t, v) for t, v in pts if v]
+    pc_chg = None
+    if len(pts) >= 4 and pts[0][1]:
+        pc_chg = (pts[-1][1] / pts[0][1] - 1) * 100
+    own = row.get("move_recent") if row else None
+    if own is not None:
+        lab, pct = row.get("move_recent_label"), own
+        ev = f'newest {row.get("move_n") or 0} vs {row.get("move_past") or 0} before'
+        why = (f'The middle of the newest {row.get("move_n") or 0} sales against the middle of the '
+               f'{row.get("move_past") or 0} before them: {own:+.0f}%.')
+    elif pc_chg is not None:
+        lab = "rising" if pc_chg >= 5 else "falling" if pc_chg <= -5 else "steady"
+        pct, ev = pc_chg, "12 months, PriceCharting"
+        why = f'Too few of our own sales to split. PriceCharting\'s weekly sold series moved {pc_chg:+.0f}% in a year.'
+    else:
+        lab = pct = None
+        ev = f'{row.get("n_sales") if row else 0} sales, no series'
+        why = "Nothing to compare yet: too few sales here and no PriceCharting series for this grade."
+    word = {"rising": "Climbing", "falling": "Slipping", "steady": "Holding"}.get(lab, "Thin")
+    cls = lab or "none"
+    pct_txt = "no call" if lab is None else ("flat" if abs(pct) < 1 else f"{pct:+.0f}%")
+    spark = ""
+    if len(pts) >= 2:
+        w, h, pad = 132, 40, 3
+        lo, hi = min(v for _t, v in pts), max(v for _t, v in pts)
+        span = hi - lo or 1.0
+        step = (w - 2 * pad) / (len(pts) - 1)
+        xy = " ".join(f"{pad + i * step:.1f},{h - pad - (h - 2 * pad) * ((v - lo) / span):.1f}" for i, (_t, v) in enumerate(pts))
+        y = h - pad - (h - 2 * pad) * ((pts[-1][1] - lo) / span)
+        stroke = "var(--teal)" if (pc_chg or 0) >= 0 else "#c4553b"
+        cap = ("12 mo " + (f"{pc_chg:+.0f}% · " if pc_chg is not None else "") + M(pts[-1][1]))
+        spark = (f'<a class="tb-pc" href="#pcsheet" title="PriceCharting weekly sold prices for this grade, 12 months. '
+                 f'Last point {M(pts[-1][1])}.">'
+                 f'<svg viewBox="0 0 {w} {h}" aria-hidden="true"><polyline points="{xy}" style="stroke:{stroke}"/>'
+                 f'<circle cx="{w - pad:.1f}" cy="{y:.1f}" r="2.6" style="fill:{stroke}"/></svg>'
+                 f'<small>{e(cap)}</small></a>')
+    return (f'<div class="trendbox"><div class="tb-main"><small class="cl">Trend</small>'
+            f'<b class="tb-dir {cls}" title="{e(why)}"><i aria-hidden="true"></i>{word}<span>{e(pct_txt)}</span></b>'
+            f'<small class="tb-ev">{e(ev)}</small></div>{spark}</div>')
 
 
 def _price_line(v, val, here, hist, M, guide=None) -> str:
@@ -1232,6 +1413,26 @@ img.mthumb{width:44px;height:58px;object-fit:cover;border-radius:6px;background:
 .stats{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 14px}.stat{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:6px 12px;min-width:70px}
 .stat small{display:block;color:var(--muted);font-size:11px}.stat b{font-size:16px}
 .pricebox{border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:12px 14px;margin:0 0 14px;max-width:420px}
+.prow{display:flex;gap:12px;align-items:stretch;flex-wrap:wrap;margin:0 0 14px}
+.prow .pricebox{flex:1 1 300px;max-width:none;margin:0}
+.trendbox{flex:1 1 280px;max-width:440px;display:flex;gap:14px;align-items:center;justify-content:space-between;
+border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:12px 14px}
+.trendbox .cl{display:block;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.tb-main{min-width:0}
+.tb-dir{display:flex;align-items:center;gap:8px;font-size:22px;line-height:1.15;margin:3px 0 2px;white-space:nowrap}
+.tb-dir i{flex:none;width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent}
+.tb-dir span{font-size:15px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--fg2)}
+.tb-dir.rising{color:var(--teal-deep)}.tb-dir.falling{color:#a2452f}.tb-dir.steady,.tb-dir.none{color:var(--fg2)}
+.tb-dir.rising i{border-bottom:9px solid var(--teal)}
+.tb-dir.falling i{border-top:9px solid #c4553b}
+.tb-dir.steady i{width:10px;height:3px;border:0;background:var(--fg2);border-radius:2px}
+.tb-dir.none i{width:9px;height:9px;border:1.5px solid var(--muted);border-radius:50%}
+.tb-ev{display:block;font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tb-pc{flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:2px;text-decoration:none;color:inherit}
+.tb-pc svg{display:block;width:132px;height:40px;overflow:visible}
+.tb-pc polyline{fill:none;stroke-width:1.8;stroke-linejoin:round;stroke-linecap:round}
+.tb-pc small{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.tb-pc:hover small{color:var(--fg2)}
 .pricebox small{display:block;color:var(--muted);font-size:12px}.pricebox b{font-size:26px;display:block}.pricebox span{font-size:12px;color:var(--fg2)}
 .pricebox.none b{font-size:18px;color:var(--fg2)}
 .ctext{max-width:72ch}.ctext p{margin:0 0 8px}.pend{border-left:3px solid var(--accent);padding-left:10px;margin:0 0 10px}
@@ -1277,7 +1478,9 @@ border-radius:14px;background:var(--surface);text-decoration:none;transition:bor
 font:inherit;font-size:11.5px;font-weight:750;letter-spacing:.12em;text-transform:uppercase;color:var(--fg2);transition:color .15s,transform .12s}
 .hun-scan:hover{color:var(--accent)}
 .hun-scan:active{transform:scale(.97)}
-.hun-wiz{width:84px;height:84px;object-fit:contain;flex:none;filter:drop-shadow(0 6px 14px rgba(0,0,0,.25))}
+.hun-wiz{width:clamp(100px,10vw,138px);height:clamp(150px,15vw,206px);object-fit:contain;flex:none;
+filter:drop-shadow(0 7px 16px rgba(0,0,0,.28));transition:transform .18s var(--ease)}
+.hun-scan:hover .hun-wiz{transform:translateY(-3px) rotate(-1.5deg)}
 .hun-scan.busy{color:var(--accent)}
 .hun-scan.busy .hun-wiz{filter:drop-shadow(0 0 18px rgba(47,191,113,.5))}
 .hun-status{display:flex;flex-direction:column;gap:2px;line-height:1.3}
@@ -1340,6 +1543,17 @@ a.hun span.card.hun-img,a.hun img.card.hun-img{object-fit:contain;padding:10px;b
 .hun-meta{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);white-space:nowrap}
 .mkt{display:inline-flex;align-items:center;justify-content:center;width:19px;height:19px;border-radius:50%;flex:none;
 font:700 11px/1 "Helvetica Neue",Arial,sans-serif;color:#fff}
+.pulse{display:flex;flex-wrap:wrap;gap:12px;margin:8px 0 22px}
+.pulse-i{display:flex;align-items:center;justify-content:space-between;gap:14px;flex:1 1 160px;min-width:150px;background:var(--surface);
+border:1.5px solid color-mix(in srgb,var(--fg2) 40%,transparent);border-radius:12px 8px 13px 9px/8px 13px 9px 12px;
+box-shadow:2px 3px 0 rgba(0,0,0,.07);padding:10px 14px}
+.pulse-i b{display:block;font-size:21px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.15}
+.pulse-i small{display:block;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+.pulse-i svg{flex:none}
+.hun-spark{display:block;margin-top:7px;line-height:0}
+.hun-spark .spark{width:100%;height:30px}
+.hun-pc{display:block;font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hun-pc b.pclo{color:#2fbf71;font-weight:750}.hun-pc b.pchi{color:var(--fg2);font-weight:600}
 """
 
 HOME_JS = r"""
@@ -1376,11 +1590,14 @@ m.textContent=seg.length?seg.join(' \u00b7 '):(running?'working':'run a scan any
 if(lv)lv.className='hun-live '+(running?'ok':(age==null?'off':(ok?'ok':(age<86400?'slow':'off'))))}
 function sync(){var btn=document.querySelector('.hun-scan');
 if(btn){btn.classList.toggle('busy',running);var s=btn.querySelector('span');if(s)s.textContent=running?'Scanning\u2026':'Scan now';
-var im=btn.querySelector('img');if(im)im.src=running?'/static/hunt.gif?r='+((Date.now()/1000)|0):'/static/hunt-still.png'}paint()}
+var im=btn.querySelector('img');if(im)im.src=running?'/static/hunt.gif?r='+((Date.now()/1000)|0):'/static/hunt-still.png'
+if(!btn._hz){btn._hz=1;btn.addEventListener('mouseenter',function(){var q=btn.querySelector('img');
+if(q&&!running)q.src='/static/hunt.gif?r='+((Date.now()/1000)|0)});
+btn.addEventListener('mouseleave',function(){var q=btn.querySelector('img');if(q&&!running)q.src='/static/hunt-still.png'})}}paint()}
 function swap(){var had={};document.querySelectorAll('.hun[data-key]').forEach(function(n){had[n.getAttribute('data-key')]=1});
 return fetch(location.pathname+location.search).then(function(r){return r.text()}).then(function(html){
 var d=new DOMParser().parseFromString(html,'text/html');
-var n=d.querySelector('.hunzone'),o=document.querySelector('.hunzone');if(n&&o)o.replaceWith(n);
+['.pulse','.hunzone'].forEach(function(sl){var n=d.querySelector(sl),o=document.querySelector(sl);if(n&&o)o.replaceWith(n)});
 var land=0;document.querySelectorAll('.hun[data-key]').forEach(function(t){if(!had[t.getAttribute('data-key')]){land++;t.classList.add('landed');
 setTimeout(function(){t.classList.remove('landed')},1700)}});
 if(land)landed+=land;sync()})}
