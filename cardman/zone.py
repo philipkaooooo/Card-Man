@@ -61,6 +61,13 @@ def book() -> _Book:
     return _Book(json.loads(SPECIES.read_text()) if SPECIES.exists() else [])
 
 
+def _link(label: str) -> str:
+    """The /pkm/character/ slug for a display label. Sex glyphs become -f/-m; apostrophes and dots drop."""
+    from .character import slug
+    t = label.lower().replace("♀", "-f").replace("♂", "-m").replace("’", "")
+    return slug(t.replace("'", "").replace(".", ""))
+
+
 def _gen(dex: int) -> int:
     for i, edge in enumerate(_GEN_EDGES):
         if dex <= edge:
@@ -84,7 +91,7 @@ def entries(cat) -> list[dict]:
     out = []
     for dex, (cids, names) in sorted(merged.items()):
         label = who.by_dex.get(dex) or sorted(names)[0]
-        out.append({"dex": dex, "name": label, "slug": slug(label), "cids": sorted(cids)})
+        out.append({"dex": dex, "name": label, "slug": _link(label), "cids": sorted(cids)})
     return out
 
 

@@ -44,6 +44,13 @@ def test_entries_merge_every_spelling_under_one_dex_number(cat):
     assert {"base1-4", "sv3pt5-199", "sv3pt5-6", "sv4pt5-234", "sma-SV49"} <= set(char["cids"])
 
 
+def test_every_tile_link_resolves_to_its_character(cat):
+    from cardman.character import find_species
+    es = [e for e in entries(cat) if e["dex"] <= 151]
+    assert len({e["slug"] for e in es}) == len(es)
+    assert all(find_species(cat, e["slug"]) for e in es)
+
+
 def test_macro_counts_one_product_per_card_and_the_history_honestly(cat, tmp_path):
     st = _store(tmp_path)
     by_dex = {e["dex"]: e["cids"] for e in entries(cat)}
