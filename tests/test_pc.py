@@ -134,9 +134,41 @@ def test_board_shows_the_year_line_and_the_grading_play(tmp_path):
     h = view_market(st, NOW, "TWD", "TWD", {}, game="ygo")
     assert "1 yr · PC" in h and 'class="mpc mpcl down"' in h
     assert "Ungraded · -21%" in h                          # 3.00 -> 2.38 is a fall
-    assert "Raw → PSA 10, after $25 grading" in h
-    # 141.25 USD * 32 = 4520 TWD; after the 25 dollar fee ~36x a 100 TWD raw typical
-    assert "36.2×" in h and "NT$" in h
+    # no live ask: the strip names the most the raw card may cost, after grading, shipping and fees
+    assert "Buy raw → grade → sell PSA 10" in h
+    assert "no ask under" in h and "max raw" in h and "all-in" in h
+
+
+def test_grading_strip_buys_at_the_live_ask_and_counts_its_costs(tmp_path):
+    from cardman.history import ASK_SCHEMA
+    from cardman.ui_market import view_market
+    st = Store(tmp_path / "e.sqlite")
+    add_sales(st, P, (100, 100, 100), (2, 5, 9))
+    st.add_fx(FxRate("USD", "TWD", D("32"), NOW - timedelta(hours=1), "test"), now=NOW)
+    st.db.executescript(ASK_SCHEMA)
+    with st.db:
+        st.db.execute("INSERT INTO ask_daily VALUES (?,?,?,?,?,?,?)",
+                      (P, "|", NOW.date().isoformat(), 300.0, 300.0, 1, "TWD"))
+    trends.refresh(st, NOW, "TWD")
+    row = pc.parse_product(payload("https://www.pricecharting.com/game/yugioh-legend-of-blue-eyes/blue-eyes"))
+    store_row(st, P, row, game="ygo")
+    h = view_market(st, NOW, "TWD", "TWD", {}, game="ygo")
+    assert "buy now" in h and "no ask under" not in h
+    # 4520 PSA 10 - 16.75% fees - 300 shipping = 3462.9 net; 1.015 * 300 + 2100 fixed = 2404.5 all-in
+    assert "NT$1,058" in h and "all-in" in h
+
+
+def test_card_page_section_draws_all_six_grades(tmp_path):
+    from cardman.ui_pc import section
+    st = Store(tmp_path / "e.sqlite")
+    st.add_fx(FxRate("USD", "TWD", D("32"), NOW - timedelta(hours=1), "test"), now=NOW)
+    store_row(st, P, pc.parse_product(payload()), game="ygo")
+    h = section(st, P, "TWD", NOW)
+    assert "Graded prices on PriceCharting" in h
+    assert '<tr data-g="PSA 10">' in h and "NT$4,520.00" in h and "NT$76.16" in h
+    assert "2 sales per week" in h and "PSA 10: 124 graded" in h
+    assert 'data-pcsheet' in h and '"PSA 10"' in h
+    assert section(st, "p:EN_TCG:NOPE-EN001:x@1", "TWD", NOW) == ""
 
 
 def test_unswept_rows_say_so_instead_of_guessing(tmp_path):
@@ -145,4 +177,4 @@ def test_unswept_rows_say_so_instead_of_guessing(tmp_path):
     add_sales(st, P, (100, 100, 100), (2, 5, 9))
     trends.refresh(st, NOW, "TWD")
     h = view_market(st, NOW, "TWD", "TWD", {}, game="ygo")
-    assert "not swept" in h and "Raw → PSA 10" not in h
+    assert "not swept" in h and "Buy raw → grade" not in h

@@ -556,6 +556,7 @@ def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalo
         (f"Tournament status ({k.upper()})", lim) for k, lim in limits.items() if k in ("tcg", "ocg")]
     pend = f'<div class="pend"><small>Pendulum effect</small>{_para(c.get("pend_en"))}</div>' if c.get("pend_en") else ""
     from .ui_chart import section
+    from .ui_pc import section as pc_section
     if pkm:
         from .character import slug as _slug, species_of
         who = species_of(c.get("name_en") or "")[0]
@@ -568,6 +569,7 @@ def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalo
             f'<div class="cp-info">{top}' + picker + price + _pkm_details(c) + '</div></div>'
             + section(passcode, hist, chosen).replace(
                 '</section>', f'<p class="small"><a href="/settings?card={e(passcode)}#past">Fill in past prices for this card</a></p></section>', 1)
+            + pc_section(st, chosen, cur, now)
             + _market_section(passcode, market, chosen, by_id, M, now, f)
             + _sold_panel(st, all_v, chosen, M)
             + _versions_table(passcode, all_v, chosen, value, listed, M)
@@ -584,6 +586,7 @@ def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalo
         + '</dl></details></div></div>'
         + section(passcode, hist, chosen).replace('</section>', f'<p class="small"><a href="/settings?card={e(passcode)}#past">Fill in past '
                                                    'prices for this card</a></p></section>', 1)
+        + pc_section(st, chosen, cur, now)
         + _market_section(passcode, market, chosen, by_id, M, now, f)
         + _sold_panel(st, all_v, chosen, M)
         + _versions_table(passcode, all_v, chosen, value, listed, M)

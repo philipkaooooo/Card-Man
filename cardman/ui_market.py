@@ -93,9 +93,16 @@ a.mpcl:hover small,a.mpcl:focus-visible small{color:var(--teal-deep)}
 .mpc small{display:block;font-size:11.5px;color:var(--muted);margin-top:2px;font-variant-numeric:tabular-nums;
 overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mpc .pcnone{font-size:13px;color:var(--muted)}
-.flip{background:color-mix(in srgb,#b98a1e 7%,var(--surface));border-color:color-mix(in srgb,#b98a1e 28%,var(--line))}
+.flip{background:color-mix(in srgb,#b98a1e 7%,var(--surface));border-color:color-mix(in srgb,#b98a1e 28%,var(--line));
+flex-direction:column;align-items:stretch;gap:3px}
 .flip .bb-h{color:#8a6614}
-.flip .bb i{color:#8a6614;font-style:normal;font-weight:700}
+.flip .bb-h small{font-size:11.5px;letter-spacing:0;text-transform:none;font-weight:600;color:color-mix(in srgb,#8a6614 70%,var(--fg2))}
+.flip .bb{max-width:100%;white-space:normal;display:block;padding:2px 0;font-size:13.5px}
+.flip .bb b{font-weight:700}.flip .bb i{color:#8a6614;font-style:normal;font-weight:700}
+.flip .bb:hover i,.flip a.bb:hover b{color:#6d5110}
+.tag{display:inline-block;font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;padding:2px 6px;
+border-radius:4px;margin-right:7px;vertical-align:1px}
+.tag.now{background:var(--teal);color:#fff}.tag.wait{background:color-mix(in srgb,#8a6614 16%,var(--surface));color:#8a6614}
 small.cl{display:none}
 @media(max-width:900px){.mrow{grid-template-columns:1fr 1fr;gap:10px 16px}
 .mmain{grid-column:1/-1}
@@ -322,22 +329,29 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
         v = usd_home(usd)
         return M(v) if v is not None else f"${usd:,.2f}"
 
-    def raw_usd(home_v: float):
-        try:
-            if M.fx is not None:
-                return float(M.fx.convert(Decimal(str(home_v)), M.home, "USD", now))
-        except Exception:
-            return None
-
     def vol_per_month(vol):
         m = re.match(r"^(\d+)\s+sales?\s+per\s+(day|week|month|year)$", (vol or "").strip())
         if not m:
             return None
         per = {"day": 30.0, "week": 4.35, "month": 1.0, "year": 1 / 12}[m.group(2)]
         return int(m.group(1)) * per
-        return None
 
-    plays = []
+    # Buy raw at a live ask, grade it, sell it as PSA 10: only the money left after the real costs counts.
+    from .engine import load_profile
+    try:
+        profile = load_profile()
+    except Exception:
+        profile = {}
+    route = dict((profile.get("routes") or {}).get("INTL") or {})
+    exit_c = dict(profile.get("exit") or {})
+    k_buy = 1 + float(route.get("payment_fx_spread_pct") or 0)
+    fixed = float(route.get("inbound_shipping") or 0) + float((profile.get("grading") or {}).get("cost_home") or 0)
+    fee_pct = (float(exit_c.get("platform_fee_pct") or 0) + float(exit_c.get("returns_reserve_pct") or 0)
+               + float(exit_c.get("payout_fx_spread_pct") or 0))
+    ship_out = float(exit_c.get("outbound_shipping") or 0)
+    target = float(profile.get("target_return") or 0)
+
+    buys, watches = [], []
     for r in rows:
         if (r["gkey"] or "|") != "|":
             continue
@@ -350,35 +364,59 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
         pu = usd_home(used["p"])
         if not pu or not (f / 3 <= pu <= f * 3):
             continue                       # PC's own ungraded price is far from ours: not the same printing
-        vol = (psa.get("vol") or "")
-        rate = vol_per_month(vol)
+        rate = vol_per_month(psa.get("vol"))
         if rate is None or rate < 1:
             continue                       # PSA 10 sells less than once a month: a shelf, not a market
-        ru = raw_usd(f)
-        if not ru:
+        psa_home = usd_home(psa["p"])
+        if not psa_home:
             continue
-        net = psa["p"] - 25.0 - ru
-        mult = net / ru
-        if 0.5 <= mult <= 100:
-            plays.append((mult, r, psa, f))
-    plays.sort(key=lambda x: -x[0])
-    plays = plays[:3]
+        net = psa_home * (1 - fee_pct) - ship_out
+        if net <= fixed:
+            continue                       # even a free raw card cannot pay the grader and the shipping
+        ask = r["ask_low"]
+        if ask:
+            if not (f / 3 <= ask <= f * 3):
+                continue                   # the cheapest ask is a different printing than PC's row
+            profit = net - k_buy * ask - fixed
+            if profit > 0:
+                buys.append((profit, r, ask, net, psa))
+            continue
+        pay = (net - (1 + target) * fixed) / ((1 + target) * k_buy)
+        if pay > 0:
+            watches.append((net - k_buy * f - fixed, r, pay, net, psa))
+    buys.sort(key=lambda x: -x[0])
+    watches.sort(key=lambda x: -x[0])
     flip = ""
-    if plays:
+    picks = [("now",) + b for b in buys[:3]] + [("wait",) + w for w in watches[:3 - min(3, len(buys))]]
+    if picks:
         items = []
-        for mult, r, psa, f in plays:
+        for kind, room, r, ask, net, psa in picks:
             pid = r["printing_id"]
             k = _card_key(pid)
             nm = name_of(pid) or r["label"].split(" · ")[0]
-            url = pcrows[pid].get("url")
             vol = (psa.get("vol") or "").replace(" per ", "/")
-            ext = ' target="_blank" rel="noreferrer noopener"' if url else ""
-            href = url or (card_href(k) if k else "/market")
-            items.append(f'<a class="bb" href="{e(href)}"{ext} title="PSA 10 sells {e(pc_money(psa["p"]))} '
-                         f'({e(vol) or "no recent sales"}) on PriceCharting; after a $25 grading fee that is '
-                         f'{mult:.1f}x this version\'s raw typical"><b>{mult:.1f}×</b> {e(nm)} '
-                         f'<i>{M(f)} → {pc_money(psa["p"])}</i></a>')
-        flip = ('<div class="mk-best flip"><span class="bb-h">Raw → PSA 10, after $25 grading</span>'
+            if kind == "now":
+                all_in = k_buy * ask + fixed
+                tag = '<span class="tag now">buy now</span>'
+                line = f'{M(ask)} ask · {M(all_in)} all-in · sells {M(net)} · <i>+{M(room)}</i>'
+                tip = (f'Cheapest live raw ask {M(ask)}; with grading and shipping the card costs {M(all_in)}. '
+                       f'PSA 10 sells {M(net)} after selling fees. Profit {M(room)}.')
+                href = links.get((pid, "|"))
+            else:
+                tag = '<span class="tag wait">no ask under</span>'
+                line = f'{M(ask)} max raw · {M(k_buy * ask + fixed)} all-in · sells {M(net)}'
+                tip = (f'No live raw ask clears this card\'s costs right now. Pay at most {M(ask)} for the raw '
+                       f'(all-in {M(k_buy * ask + fixed)}) and the PSA 10, at {pc_money(psa["p"])}, nets {M(net)} '
+                       f'with your {target * 100:.0f}% target met.')
+                href = None
+            inner = (f'<b>{e(nm)}</b> <i>{line}</i>')
+            if href:
+                items.append(f'<a class="bb" href="{e(href)}" target="_blank" rel="noreferrer noopener" '
+                             f'title="{e(tip + " PSA 10 trades " + vol + ".")}">{tag}{inner}</a>')
+            else:
+                items.append(f'<span class="bb" title="{e(tip + " PSA 10 trades " + vol + ".")}">{tag}{inner}</span>')
+        flip = ('<div class="mk-best flip"><span class="bb-h">Buy raw → grade → sell PSA 10'
+                f'<small> after your costs: {M(fixed)} fixed, {fee_pct * 100:.1f}% selling fees</small></span>'
                 + "".join(items) + '</div>')
     best = ""
     if deals:
@@ -495,7 +533,8 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
     note = ('<p class="muted small">Prices in your display currency, each sale converted at its own date. Typical sold is '
             'sold evidence only; asks come from the newest nightly snapshot and never move it. The 1 yr column is '
             'PriceCharting\'s own weekly sold data, fetched by a pinned sweep of this machine '
-            '(<code>python -m cardman.pc sweep</code>) and shown in your currency at today\'s rate.</p>')
+            '(<code>python -m cardman.pc sweep</code>) and shown in your currency at today\'s rate. The grading strip '
+            'uses your cost profile: inbound shipping, the PSA fee, and the selling fees you actually pay.</p>')
     return head + chips + best + flip + cols + f'<ul class="mlist">{"".join(body)}</ul>' + shown + note
 
 

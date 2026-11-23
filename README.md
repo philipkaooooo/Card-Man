@@ -39,9 +39,13 @@ Pricing rules: `docs/pricing-method.md` — a price comes from real sales of one
   DevTools pipe (the site's Cloudflare challenge passes in the real browser, not in a scripted client),
   resolves each product through the site search once, and stores the six grade prices, the sales-volume note
   and a year of weekly points in `pc_card` (~2 KB a card). Paced at about one card every few seconds, skips
-  rows younger than ten days; `--refetch` re-checks a set. The market board's `1 yr · PC` column and the
-  raw-to-PSA-10 strip read it against our sold medians; a card whose PriceCharting raw price sits more than
-  3x from ours is treated as a different printing and kept out of the grading strip.
+  rows younger than ten days; `--refetch` re-checks a set. The market board's `1 yr · PC` column reads it
+  against our sold medians; a card whose PriceCharting raw price sits more than 3x from ours is treated as a
+  different printing. The grading strip buys raw at the cheapest live ask (linking the listing), adds inbound
+  shipping and the PSA fee from `data/profile.json`, and nets the PSA 10 after selling fees: it names the
+  profit in currency and the most the raw may cost when no ask is low enough. Each card page carries a
+  PriceCharting section of its own (`ui_pc.py`): all six grades selectable, one line each, hover for the
+  week's sold price, plus the table and PSA/CGC population.
 
 ### Evidence and decisions (`store.py`)
 - Observations are written once; rewriting one with different content is refused. Cancellations, refunds,
