@@ -335,7 +335,7 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
                     pcm[pid] = row
             except Exception:
                 pass
-    from .ui_listing import lphoto, verdict
+    from .ui_listing import lphoto, verdict, suspect
     cut = now - _WINDOW[t] if t in _WINDOW else None
     if cut is not None:   # anchor the window on the freshest listing, not the wall clock: a collector that last
         tmax = st.db.execute("SELECT MAX(first_seen) FROM listing").fetchone()[0]   # landed a batch an hour ago
@@ -410,6 +410,26 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
                          (" \u00b7 " + e(vol.replace(" per ", "/")) if vol else "") + "</span>")
             except Exception:
                 pcrow = ""
+        # The hunt passes on a measured discount, not a flag: an ask at or under the sold ceiling,
+        # or under the PriceCharting comp, is a deal even when the engine never tagged it UNDERPRICED;
+        # an ask within a hair of either is fair market and worth a look. Identity must be settled first.
+        if code != "good" and pid and not suspect(d) and d.get("photo") != "clash" \
+                and "LOT" not in (d.get("kinds") or []) and "MISIDENTIFIED" not in (d.get("kinds") or []):
+            try:
+                aif = float(d.get("all_in_home") or 0)
+            except (TypeError, ValueError):
+                aif = 0.0
+            ceil = float(mb) if mb else 0.0
+            comp = float(rate) if rate is not None else 0.0
+            under_ceil = bool(aif and ceil and aif <= ceil)
+            under_pc = bool(aif and comp and aif <= comp * 0.97)
+            if under_ceil or under_pc:
+                code = "good"
+                if under_pc and not under_ceil:
+                    why = "Asking {} against a {} PriceCharting comp - {:.0f}% under the market's own sales.".format(
+                        M(aif), M(comp), (comp - aif) / comp * 100)
+            elif aif and ((ceil and aif <= ceil * 1.10) or (comp and aif <= comp * 1.05)):
+                code = "avg"
         counts["all"] += 1
         counts[code] += 1
         price_txt = charts.fmt(Decimal(str(price)), currency) if price not in (None, "") else "—"
@@ -1569,7 +1589,7 @@ filter:drop-shadow(0 7px 16px rgba(0,0,0,.28));transition:transform .18s var(--e
 .hun-status small::before{content:"\00b7";margin-right:9px;color:var(--muted)}
 .hun-status small{font-size:12px;color:var(--muted);font-weight:400;letter-spacing:0;text-transform:none}
 .boardwrap{position:relative;margin-top:2px;padding-top:calc(var(--wizh) - var(--wizdip));
---wizh:clamp(120px,16vw,232px);--wizdip:calc(var(--wizh)*.1)}
+--wizh:clamp(120px,16vw,232px);--wizdip:calc(var(--wizh)*.16)}
 .wizfloat{position:absolute;top:0;left:clamp(12px,2.6vw,38px);z-index:6;display:block;padding:0;border:0;
 background:none;cursor:pointer;line-height:0}
 .wizfloat .hun-wiz{width:calc(var(--wizh)*.668);height:var(--wizh);object-fit:contain;
@@ -1622,18 +1642,17 @@ font-style:normal;font-weight:900;font-size:clamp(56px,10.5vw,118px);letter-spac
 -webkit-text-stroke:3px var(--surface);paint-order:stroke fill;text-shadow:0 4px 0 rgba(0,0,0,.08);
 transition:transform .35s cubic-bezier(.2,1.8,.4,1);transition-delay:calc(var(--i)*30ms)}
 .huntitle:hover span{transform:translateY(-8px) rotate(-4deg)}
-.hungrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(172px,1fr));gap:24px 18px}
-a.hun.card{position:relative;display:flex;flex-direction:column;align-items:center;gap:9px;text-decoration:none;color:inherit;
-transition:transform .16s var(--ease)}
-a.hun.card:hover{transform:translateY(-4px)}
-.card-face{position:relative;width:100%;aspect-ratio:5/7;border-radius:11px;overflow:hidden;background:var(--surface);
-border:2px solid var(--line);box-shadow:0 6px 18px rgba(0,0,0,.16);transition:border-color .16s,box-shadow .16s var(--ease)}
+.hungrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(172px,1fr));gap:30px 20px}
+a.hun.card{position:relative;display:flex;flex-direction:column;align-items:center;gap:10px;text-decoration:none;color:inherit;border:0;border-radius:0;box-shadow:none;background:none}
+a.hun.card:hover,a.hun.card:focus-visible{transform:none;box-shadow:none}
+.card-face{position:relative;width:100%;aspect-ratio:421/614;border-radius:4.5%/3.2%;overflow:hidden;background:var(--soft);
+border:2px solid var(--line);box-shadow:0 12px 26px rgba(30,40,30,.18);transition:transform .18s var(--ease),box-shadow .18s var(--ease),border-color .16s}
 a.hun.card.sig-good .card-face{border-color:#2fbf71}
 a.hun.card.sig-avg .card-face{border-color:#e6a23c}
 a.hun.card.sig-bad .card-face{border-color:#e05252}
-a.hun.card:hover .card-face{box-shadow:0 13px 30px rgba(0,0,0,.24)}
-.card-face img.hun-img,.card-face span.hun-img{width:100%;height:100%;object-fit:contain;display:block;border:0;border-radius:0;background:var(--surface)}
-.card-face span.card.hun-img,.card-face img.card.hun-img{object-fit:contain;padding:0;box-sizing:border-box;background:var(--surface)}
+a.hun.card:hover .card-face{transform:translateY(-6px) scale(1.02);box-shadow:0 24px 46px rgba(30,40,30,.28)}
+.card-face img.hun-img,.card-face span.hun-img{width:100%;height:100%;object-fit:contain;display:block;border:0;border-radius:0;background:var(--soft)}
+.card-face span.card.hun-img,.card-face img.card.hun-img{object-fit:contain;padding:0;box-sizing:border-box;background:var(--soft)}
 .card-seal{position:absolute;top:6px;right:6px;z-index:5;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;
 font:900 11px/1 "Helvetica Neue",Arial,sans-serif;color:#fff;box-shadow:0 2px 5px rgba(0,0,0,.3)}
 .card-seal.s-good{background:#2fbf71}.card-seal.s-avg{background:#e6a23c}.card-seal.s-bad{background:#e05252}.card-seal.s-none{background:var(--muted)}
@@ -1656,15 +1675,15 @@ a.hun.card:hover .card-info,a.hun.card:focus-visible .card-info{opacity:1;transf
 .card-info .hun-spark{margin-top:auto}
 .card-info .hun-spark .spark{width:100%;height:26px}
 .card-pi{display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap}
-.card-price{background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:6px 20px;
-font-size:15px;font-weight:800;color:var(--fg);font-variant-numeric:tabular-nums;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.1)}
+.card-price{background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:4px 16px;
+font-size:18px;font-weight:800;color:var(--fg);font-variant-numeric:tabular-nums;white-space:nowrap;box-shadow:var(--shadow)}
 .card-meta{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);white-space:nowrap;max-width:100%;overflow:hidden}
 .card-when{overflow:hidden;text-overflow:ellipsis}
 .hun-deal{display:inline-block;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:750}
 .hun-deal.d-good{color:#1c8a4d;background:rgba(47,191,113,.16)}
 .hun-deal.d-avg{color:#a4701d;background:rgba(230,162,60,.18)}
 @media(hover:none){.card-face{aspect-ratio:auto;overflow:visible}
-.card-face img.hun-img,.card-face span.hun-img{height:auto;aspect-ratio:5/7}
+.card-face img.hun-img,.card-face span.hun-img{height:auto;aspect-ratio:421/614}
 .card-info{position:static;opacity:1;transform:none;background:none;color:var(--fg2);padding:8px 2px 0;pointer-events:auto;border-radius:0}
 .card-info .bi-why,.card-info .hun-spark{display:none}.bi-read{font-size:11px}.bi-sub{color:var(--muted)}.bi-worth{color:var(--fg)}
 .card-info .hun-pc{color:var(--muted)}}

@@ -229,6 +229,38 @@ def test_empty_board_offers_a_way_out_and_is_marked_for_memory(board):
     assert 'href="/opportunities"' in dead
 
 
+def test_home_hunt_passes_on_a_measured_discount_not_a_flag(board):
+    get, post, ajax, db = board
+    from tests.test_listing_verdict import D, sc
+    pid = "p:EN_TCG:LOB-EN001:legend-of-blue-eyes-white-dragon:ultra-rare@89631139"
+    # resolved and under the sold ceiling, but the engine never tagged UNDERPRICED -> still a deal
+    _add_listing(db, "deal", payload=D(kinds=[], scenarios=[sc(pid=pid)], printing_id=pid, all_in_home=400.0, priced_share=1.0))
+    # a hair over the ceiling is fair market, worth a look, not a skip
+    _add_listing(db, "fair", payload=D(kinds=[], scenarios=[sc(pid=pid, max_buy=300.0)], printing_id=pid, all_in_home=320.0, priced_share=1.0))
+    page = get("/")
+    assert re.search(r'class="hun card sig-good" href="[^"]*" data-key="ebay_browse:EBAY_US:deal"', page)
+    assert re.search(r'class="hun card sig-avg" href="[^"]*" data-key="ebay_browse:EBAY_US:fair"', page)
+    assert "Under what to pay" in page and "Worth a second look" in page
+
+
+def test_home_hunt_counts_an_under_pc_ask_with_no_sales_as_a_deal(board):
+    get, post, ajax, db = board
+    from tests.test_listing_verdict import D, sc
+    pid = "p:EN_TCG:LOB-EN001:legend-of-blue-eyes-white-dragon:ultra-rare@89631139"
+    _add_listing(db, "pcdeal", payload=D(kinds=["REFERENCE_GAP"], scenarios=[sc(basis="reference", pid=pid)],
+                                         printing_id=pid, all_in_home=300.0, priced_share=1.0))
+    st = Store(db)
+    with st.db:
+        st.db.execute("CREATE TABLE pc_card (printing_id TEXT, grades TEXT, status TEXT)")
+        st.db.execute("INSERT INTO pc_card VALUES (?,?,?)", (pid, json.dumps({"Ungraded": {"p": 12.0}}), "ok"))
+        st.db.execute("INSERT INTO fx_rate (base, quote, mid, as_of, source, spread_pct, recorded_at) VALUES (?,?,?,?,?,?,?)",
+                      ("USD", "TWD", "32", "2026-11-03T12:00:00+00:00", "test", "0", "2026-11-03T12:00:00+00:00"))
+    st.db.close()
+    page = get("/")
+    assert re.search(r'class="hun card sig-good" href="[^"]*" data-key="ebay_browse:EBAY_US:pcdeal"', page)
+    assert "PriceCharting comp" in page
+
+
 def test_board_tiles_are_image_led_cards_with_a_hover_peek(board):
     get, *_ = board
     page = get("/opportunities")
