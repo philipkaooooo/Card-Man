@@ -2026,10 +2026,10 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                                                                      game="pkm", qs=qs), qs)
                 if parts == ["market"]:
                     from .ui_market import view_market
-                    return self._page("market", "Market", view_market(st, now, self._cur(), _engine_home(st), qs, game="pkm", pkm=idx.cat), qs)
+                    return self._page("market", "Market", view_market(st, now, self._cur(), _engine_home(st), qs, game="pkm", pkm=idx.cat, token=token), qs)
                 if parts == ["market", "now"]:
                     from .ui_now import view_now
-                    return self._page("market", "Now", view_now(st, now, self._cur(), _engine_home(st), qs, game="pkm", pkm=idx.cat), qs)
+                    return self._page("market", "Now", view_now(st, now, self._cur(), _engine_home(st), qs, game="pkm", pkm=idx.cat, token=token), qs)
                 if parts == ["opportunities"]:
                     from .ui_listing import view_list
                     if not _engine_ready(st):
@@ -2289,10 +2289,10 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                                                                      bookmark=bookmarklet(port, capture_key()), searches=[]), qs)
                 elif parts == ["market"]:
                     from .ui_market import view_market
-                    self._page("market", "Market", view_market(st, now, self._cur(), _engine_home(st), qs, game="ygo", cards=cards), qs)
+                    self._page("market", "Market", view_market(st, now, self._cur(), _engine_home(st), qs, game="ygo", cards=cards, token=token), qs)
                 elif parts == ["market", "now"]:
                     from .ui_now import view_now
-                    self._page("market", "Now", view_now(st, now, self._cur(), _engine_home(st), qs, game="ygo", cards=cards), qs)
+                    self._page("market", "Now", view_now(st, now, self._cur(), _engine_home(st), qs, game="ygo", cards=cards, token=token), qs)
                 elif parts == ["opportunities"]:
                     if not _engine_ready(st):
                         self._page("opportunities", "Listings", view_opportunities(st, now, token, self._cur(), "open"), qs)

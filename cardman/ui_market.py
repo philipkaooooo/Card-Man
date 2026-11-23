@@ -97,6 +97,12 @@ border:1px solid var(--line);box-shadow:0 2px 6px rgba(15,30,45,.14)}
 .mrow:hover .mthumb img{transform:scale(1.06)}
 .mthumb.ph{background:repeating-linear-gradient(135deg,var(--soft) 0 6px,var(--surface) 6px 12px);border:0;box-shadow:none}
 .mid{min-width:0}
+.mnamewrap{display:flex;align-items:center;gap:7px;min-width:0}
+.mnamewrap .mname{min-width:0}
+.mpile{display:inline-flex;flex:none;opacity:0;transition:opacity .15s}
+.mrow:hover .mpile,.mpile:focus-within{opacity:1}
+.mpile .pbtn{width:22px;height:22px;font-size:12px;background:var(--surface)}
+@media(hover:none){.mpile{opacity:1}}
 .mname{font-weight:700;font-size:16.5px;color:var(--fg);text-decoration:none;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 a.mname:hover{color:var(--teal-deep)}
 .mmeta{display:flex;gap:6px;align-items:center;min-width:0;margin-top:3px}
@@ -268,17 +274,18 @@ def _days_since(iso, now: datetime) -> int | None:
 
 
 def _ask_links(st, now: datetime, home: str, pids: list[str]) -> tuple[dict[tuple[str, str], str],
+                                                                       dict[tuple[str, str], str],
                                                                        dict[tuple[str, str], str]]:
     """The cheapest live listing behind each ask, same evidence rules as the nightly snapshot: engine 95% on the
     card, 90% on the printing, no lots, no ended listings, nothing unseen for three days. Returns the listing
-    URL and its listing id, so a section can show the seller's own photo."""
+    URL, its listing id, and its store key, so a section can show the seller's own photo or file the listing."""
     from decimal import Decimal
 
     from .fx import FxTable
     from .history import ASK_CARD_PROB, ASK_PRINTING_PROB
     from .listing_parser import _GRADE_RE
     if not pids or not {"card_listing", "listing"} <= _tables(st):
-        return {}, {}
+        return {}, {}, {}
     try:
         fx = FxTable(st.fx_rates(), max_age=timedelta(days=3))
     except Exception:
@@ -286,12 +293,12 @@ def _ask_links(st, now: datetime, home: str, pids: list[str]) -> tuple[dict[tupl
     fresh = (now - timedelta(days=3)).isoformat()
     marks = ",".join("?" * len(pids))
     rows = st.db.execute(
-        "SELECT c.printing_id, l.price, l.currency, l.data_json, l.title, l.url, l.listing_id FROM card_listing c "
+        "SELECT c.printing_id, l.price, l.currency, l.data_json, l.title, l.url, l.listing_id, l.key FROM card_listing c "
         f"JOIN listing l ON l.key=c.key WHERE c.printing_id IN ({marks}) AND c.card_prob>=? AND c.printing_prob>=? "
         "AND c.lot=0 AND l.kind='ask' AND c.status<>'REJECTED' AND l.ended_at IS NULL AND l.last_seen>=?",
         (*pids, ASK_CARD_PROB, ASK_PRINTING_PROB, fresh))
-    best: dict[tuple[str, str], tuple[float, str, str | None]] = {}
-    for pid, price, cur, dj, title, url, lid in rows:
+    best: dict[tuple[str, str], tuple[float, str, str | None, str]] = {}
+    for pid, price, cur, dj, title, url, lid, lkey in rows:
         if not url:
             continue
         try:
@@ -316,9 +323,10 @@ def _ask_links(st, now: datetime, home: str, pids: list[str]) -> tuple[dict[tupl
                 continue
         key = (pid, f"{gc or ''}|{gr or ''}")
         if key not in best or v < best[key][0]:
-            best[key] = (v, url, lid)
-    return ({k: url for k, (_v, url, _l) in best.items()},
-            {k: lid for k, (_v, _url, lid) in best.items() if lid})
+            best[key] = (v, url, lid, lkey)
+    return ({k: url for k, (_v, url, _l, _k) in best.items()},
+            {k: lid for k, (_v, _url, lid, _k) in best.items() if lid},
+            {k: lkey for k, (_v, _url, _l, lkey) in best.items() if lkey})
 
 
 def _actionable(st, game: str, now: datetime, home: str, cur: str, rows: list[dict]) -> dict:
@@ -361,7 +369,7 @@ def _actionable(st, game: str, now: datetime, home: str, cur: str, rows: list[di
     under_n = len(deals)
     deals = [d for _p, d in deals[:6]]
     pids = sorted({r["printing_id"] for r in rows} | {d["printing_id"] for d in deals})
-    links, items = _ask_links(st, now, home, pids)
+    links, items, keys = _ask_links(st, now, home, pids)
     pcrows = pc.rows_for(st, [r["printing_id"] for r in rows])
 
     def usd_home(usd: float | None):
@@ -463,14 +471,14 @@ def _actionable(st, game: str, now: datetime, home: str, cur: str, rows: list[di
             f'<span class="sp" title="{e(site)} · {e(day)} · {e(ev.replace("_", " ").lower())}">'
             f'<b>{e(price)}</b><small>{e(day)}</small></span>' for price, day, site, ev in got)
 
-    return {"deals": deals, "under_n": under_n, "picks": picks, "links": links, "items": items,
+    return {"deals": deals, "under_n": under_n, "picks": picks, "links": links, "items": items, "keys": keys,
             "pcrows": pcrows, "fair_of": fair_of, "usd_home": usd_home, "pc_money": pc_money,
             "vol_per_month": vol_per_month, "flip_profit": flip_profit, "proof_sales": proof_sales,
             "k_buy": k_buy, "fixed": fixed, "fee_pct": fee_pct, "ship_out": ship_out, "target": target}
 
 
 def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "ygo",
-                cards=None, pkm=None) -> str:
+                cards=None, pkm=None, token: str = "") -> str:
     M = Money(st, home, cur, now)
     if "price_trend" not in _tables(st):
         return ('<h1>Market</h1><p class="empty">The market board fills once cards start selling. The engine writes it at '
@@ -551,7 +559,14 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
             '</div>')
     name_of = _name_of(cards, pkm)
     links, pcrows = A["links"], A["pcrows"]
+    pkeys = A["keys"]
     usd_home, pc_money = A["usd_home"], A["pc_money"]
+    mback = "/pkm/market" if game == "pkm" else "/market"
+    if token:
+        from .pile import keys as pile_keys
+        _piled = frozenset(pile_keys(st))
+    else:
+        _piled = frozenset()
 
     if not rows:
         return (head + chips + '<p class="empty">Nothing matches those filters yet. A version shows up once real sales '
@@ -645,9 +660,21 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
         else:
             short = f'{kpts} point' if kpts else ("no series" if pcr else "not swept")
             pc_html = f'<span class="mpc"><span class="pcnone">—</span><small>{short}</small></span>'
+        pkey = pkeys.get((pid, gkey))
+        pf = ""
+        if pkey and token:
+            piled = pkey in _piled
+            pf = (f'<form class="mpile" method="post" action="/pile/{"remove" if piled else "add"}">'
+                  f'<input type="hidden" name="t" value="{e(token)}"><input type="hidden" name="key" value="{e(pkey)}">'
+                  f'<input type="hidden" name="back" value="{e(mback)}">'
+                  f'<button class="pbtn{" on" if piled else ""}" type="submit" '
+                  f'title="{"In the pile - remove" if piled else "Set aside in the card pile"}" '
+                  f'aria-label="{"Remove from the card pile" if piled else "Set aside in the card pile"}">'
+                  f'{"✓" if piled else "＋"}</button></form>')
         body.append(
             f'<li class="mrow {row_cls}"><div class="mmain">{thumb}'
-            f'<span class="mid">{nm_html}<span class="mmeta"><span class="mcode">{e(r["label"])}</span>{pill}</span></span></div>'
+            f'<span class="mid"><span class="mnamewrap">{pf}{nm_html}</span>'
+            f'<span class="mmeta"><span class="mcode">{e(r["label"])}</span>{pill}</span></span></div>'
             f'<div class="mfair"><small class="cl">Typical sold</small>'
             f'<b title="Middle of the {"last 30 days of" if use30 else ""} sales of this exact version: {n} sold between '
             f'{M(r["low"])} and {M(r["high"])}">{M(fair)}</b>'

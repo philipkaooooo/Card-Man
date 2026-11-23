@@ -154,8 +154,8 @@ def deal_card(key: str, d: dict, v: Verdict, cards, M, now: datetime, photos: di
             f'<div class="dart">{art}</div>'
             f'<div class="dbody"><a class="dtitle" href="{href}">{e(name)}</a>{f"<span class=dsub>{e(sub)}</span>" if sub else ""}'
             f'<p class="dinfo">{"".join(info)}<span class="i-basis">{e(_basis(v))}</span></p>'
-            f'{price_track(price, value, M)}<div class="dpills">{pill}<span class="dpile">{pilef}</span></div>'
-            f'<p class="dwhy">{e(v.reason)}</p>{more}</div></article>')
+            f'{price_track(price, value, M)}<div class="dpills">{pill}</div>'
+            f'<p class="dwhy">{e(v.reason)}</p>{more}{pilef}</div></article>')
 
 
 def first_seen(st, keys) -> dict[str, str]:
@@ -207,7 +207,10 @@ font-weight:500;border:1px solid var(--line);background:var(--surface);transitio
 .deals{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(440px,100%),1fr));gap:16px}
 .deal{display:grid;grid-template-columns:112px minmax(0,1fr);gap:16px;padding:16px;background:var(--surface);border:1px solid var(--line);
 border-radius:var(--r);box-shadow:var(--shadow);transition:transform .26s var(--ease),box-shadow .26s var(--ease),opacity .26s var(--ease);
-transition-delay:var(--d,0ms)}
+transition-delay:var(--d,0ms);position:relative}
+.deal .pilebtn{position:absolute;bottom:10px;right:10px;z-index:6;opacity:0;transition:opacity .15s}
+.deal:hover .pilebtn,.deal .pilebtn:has(.pbtn.on),.deal .pilebtn:focus-within{opacity:1}
+@media(hover:none){.deal .pilebtn{opacity:1}}
 .deal:hover{transform:translateY(-2px);box-shadow:var(--shadow-hi)}
 .dart{position:relative;display:flex;align-items:flex-start;border-radius:10px;background:transparent;align-self:start}
 .dart:not(:has(.shot)){display:block;overflow:hidden;background:var(--soft);aspect-ratio:3/4}

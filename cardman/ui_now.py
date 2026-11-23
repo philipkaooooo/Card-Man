@@ -45,6 +45,12 @@ background:color-mix(in srgb,var(--surface) 80%,transparent);backdrop-filter:blu
 .nz-name{display:block;font-weight:800;font-size:14.5px;color:var(--fg);text-decoration:none;
 overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 a.nz-name:hover{color:var(--teal-deep)}
+.nz-namewrap{display:flex;align-items:center;gap:7px;min-width:0}
+.nz-namewrap .nz-name{min-width:0}
+.nz-tile .mpile{display:inline-flex;flex:none;opacity:0;transition:opacity .15s}
+.nz-tile:hover .mpile,.nz-tile .mpile:focus-within{opacity:1}
+.nz-tile .mpile .pbtn{width:22px;height:22px;font-size:12px;background:var(--surface)}
+@media(hover:none){.nz-tile .mpile{opacity:1}}
 .nz-meta{font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:1px 0 7px}
 .nz-nums{display:grid;grid-template-columns:repeat(auto-fit,minmax(62px,1fr));gap:4px 8px}
 .nz-nums b{display:block;font-size:14.5px;font-variant-numeric:tabular-nums;line-height:1.15;white-space:nowrap}
@@ -89,12 +95,12 @@ def _art(pid: str, items: dict, gkey: str, key: str | None, nm: str) -> str:
 
 
 def _tile(pid: str, gkey: str, key: str | None, nm: str, label: str, tag: str, tag_cls: str, art: str,
-          nums: str, proof: str, foot: str, cta: str, extra_cls: str = "") -> str:
+          nums: str, proof: str, foot: str, cta: str, extra_cls: str = "", pile: str = "") -> str:
     body = (f'<a class="nz-name" href="{e(card_href(key))}">{e(nm)}</a>' if key
             else f'<span class="nz-name">{e(nm)}</span>')
     return ('<article class="nz-tile' + extra_cls + '">'
             f'<div class="nz-frame">{art}<span class="nz-tag {tag_cls}">{e(tag)}</span></div>'
-            '<div class="nz-glass">' + body
+            '<div class="nz-glass"><span class="nz-namewrap">' + pile + body + '</span>'
             + f'<div class="nz-meta">{e(label)}</div>'
             + f'<div class="nz-nums">{nums}</div>'
             + f'<div class="mkproof"><span class="pl">sold</span>{proof}</div>'
@@ -107,7 +113,7 @@ def _num(v: str, lab: str, pos: bool = False) -> str:
 
 
 def view_now(st, now: datetime, cur: str, home: str, qs: dict, game: str = "ygo",
-             cards=None, pkm=None) -> str:
+             cards=None, pkm=None, token: str = "") -> str:
     if "price_trend" not in _tables(st):
         return ('<h1>Now</h1><p class="empty">Nothing to act on until cards start selling. The engine writes the '
                 'board at the end of every pass.</p>')
@@ -116,6 +122,24 @@ def view_now(st, now: datetime, cur: str, home: str, qs: dict, game: str = "ygo"
     A = _actionable(st, game, now, home, cur, rows)
     name_of = _name_of(cards, pkm)
     fair_of = A["fair_of"]
+    nback = "/pkm/market/now" if game == "pkm" else "/market/now"
+    if token:
+        from .pile import keys as pile_keys
+        _piled = frozenset(pile_keys(st))
+    else:
+        _piled = frozenset()
+
+    def pf(lkey: str | None) -> str:
+        if not lkey or not token:
+            return ""
+        piled = lkey in _piled
+        return (f'<form class="mpile" method="post" action="/pile/{"remove" if piled else "add"}">'
+                f'<input type="hidden" name="t" value="{e(token)}"><input type="hidden" name="key" value="{e(lkey)}">'
+                f'<input type="hidden" name="back" value="{e(nback)}">'
+                f'<button class="pbtn{" on" if piled else ""}" type="submit" '
+                f'title="{"In the pile - remove" if piled else "Set aside in the card pile"}" '
+                f'aria-label="{"Remove from the card pile" if piled else "Set aside in the card pile"}">'
+                f'{"✓" if piled else "＋"}</button></form>')
 
     name = {"ygo": "Yu-Gi-Oh!", "pkm": "Pokémon"}.get(game, game)
     tabs = ('<div class="mk-games" role="tablist" aria-label="Game">'
@@ -138,7 +162,7 @@ def view_now(st, now: datetime, cur: str, home: str, qs: dict, game: str = "ygo"
         under.append(_tile(pid, gkey, key, nm, d["label"], f"{pct:.0f}% under", "under",
                            _art(pid, A["items"], gkey, key, nm),
                            _num(M(ask), "ask") + _num(M(f), "typical") + _num(f"+{M(net)}", "after fees", True),
-                           A["proof_sales"](pid), _pace(d["sales_month"]), cta))
+                           A["proof_sales"](pid), _pace(d["sales_month"]), cta, pile=pf(A["keys"].get((pid, gkey)))))
 
     graded = []
     for kind, room, r, ask, net, psa in A["picks"]:
@@ -166,7 +190,8 @@ def view_now(st, now: datetime, cur: str, home: str, qs: dict, game: str = "ygo"
             cta = (f'<a class="nz-cta" href="{e(card_href(key))}">Watch the card →</a>' if key
                    else '<span class="nz-cta muted">—</span>')
         graded.append(_tile(pid, "|", key, nm, r["label"], tag, cls,
-                            _art(pid, A["items"], "|", key, nm), nums, A["proof_sales"](pid), foot, cta, " grade"))
+                            _art(pid, A["items"], "|", key, nm), nums, A["proof_sales"](pid), foot, cta, " grade",
+                            pile=pf(A["keys"].get((pid, "|")) if kind == "now" else None)))
 
     board = "/pkm/market" if game == "pkm" else "/market"
     under_html = (f'<div class="nz-h"><h2>Under typical now</h2><small>{A["under_n"]} live</small>'
