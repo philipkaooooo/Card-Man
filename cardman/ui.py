@@ -1832,6 +1832,25 @@ def reevaluate(st: Store, store_path: str, sid: str, now: datetime) -> str:
 
 # -- server -----------------------------------------------------------------------------------
 
+def _ui_token(store_path: str) -> str:
+    """One form token per store, kept across restarts so an open tab keeps its forms working."""
+    from pathlib import Path
+    p = Path(store_path).resolve().parent / ".ui-token"
+    try:
+        t = p.read_text(encoding="utf-8").strip()
+        if len(t) >= 24:
+            return t
+    except OSError:
+        pass
+    t = secrets.token_urlsafe(24)
+    try:
+        p.write_text(t, encoding="utf-8")
+        p.chmod(0o600)
+    except OSError:
+        pass
+    return t
+
+
 def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezone.utc), catalog=None, cards=None, images=None, pkm=None):
     """catalog: a zero-argument callable returning the identity Catalog (loaded once), or None."""
     from .cardinfo import CardIndex, ImageCache
@@ -2753,7 +2772,7 @@ def main(argv: list[str] | None = None) -> None:
             from .catalog_boot import write_status
             write_status("error", f"{type(x).__name__}: {x}")
     threading.Thread(target=_boot, daemon=True, name="catalog-boot").start()
-    srv = CardManServer(("127.0.0.1", a.port), make_handler(a.store, secrets.token_urlsafe(24),
+    srv = CardManServer(("127.0.0.1", a.port), make_handler(a.store, _ui_token(a.store),
                                                                   catalog=catalog_loader(a.catalog)))
     print(f"CardMan UI on http://127.0.0.1:{a.port}  (store {a.store}; Ctrl+C to stop)")
     if a.engine_every > 0:

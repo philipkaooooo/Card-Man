@@ -627,7 +627,7 @@ def _chase_rows(st, M) -> list[dict]:
         under = ask is not None and ask <= c["threshold"]
         sold_under = fair is not None and fair <= c["threshold"]
         out.append({**c, "ask": ask, "fair": fair, "under": under, "sold_under": sold_under,
-                    "pic": img(c["passcode"], "small", c["label"], cls="card").replace(' loading="lazy"', "")})
+                    "pic": img(c["passcode"], "", c["label"], cls="card").replace(' loading="lazy"', "")})
     return out
 
 
@@ -703,7 +703,7 @@ def view(st, idx, M, now: datetime, token: str, game: str = "ygo", back: str = "
     def art_of(i) -> str:
         pic = i.get("pic") or ""
         if pic:
-            return img(pic, "large", i["title"][:60], cls="card").replace(' loading="lazy"', "")
+            return img(pic, "", i["title"][:60], cls="card").replace(' loading="lazy"', "")
         photos = {i["iid"]: 1} if i["iid"] and ph.get(i["iid"]) else None
         return pair_art(i["key"], {"title": i["title"], "printing_id": i["printing_id"], "kinds": i["kinds"]},
                         photos, big=True)
@@ -712,35 +712,53 @@ def view(st, idx, M, now: datetime, token: str, game: str = "ygo", back: str = "
         is_card = i["key"].startswith(("card:", "tcg:"))
         ext = is_card and i["url"].startswith("http")
         op = e(i["url"]) if is_card else f"/opp/{e(i['key'])}"
-        info = (f'<b>{e(i["title"][:90])}</b>'
-                f'<div class="pi-line">{"Market" if is_card else "All-in"} <b>{M(i["ask"])}</b>'
-                + (f' · Resale <b>{M(i["resale"])}</b>' if i["resale"] is not None else "") + '</div>'
-                + (f'<div class="pi-line">{e(i["basis"])} · {i["n_sales"]} sales</div>' if i["n_sales"] else "")
-                + (f'<div class="pi-line">Profit {M(i["profit"])} ({roas(i):.2f}× per $)</div>' if roas(i) is not None else "")
-                + (f'<div class="pi-line">{" → ".join(str(M(h)) for h in i["hist"])}{_spark(i["hist"])}</div>'
-                   if len(i["hist"]) > 1 else "")
-                + f'<div class="pi-go"><a href="{op}"{" target=_blank rel=noreferrer" if ext else ""}>'
-                + ("Site ↗" if ext else "Open") + '</a></div>')
-        drop = (f'<form class="pcard-form" method="post" action="/pile/remove">'
-                f'<input type="hidden" name="t" value="{e(token)}"><input type="hidden" name="key" value="{e(i["key"])}">'
-                f'<input type="hidden" name="back" value="{e(back)}">'
-                f'<button class="pbtn on" title="Out of the pile" aria-label="Out of the pile">✕</button></form>')
+        when = _ago(i["added"], now)
+        logged = e(i["added"][:10]) if i["added"] else ""
+        lines = (f'<div class="prow"><span>Logged</span><b>{logged or "today"}</b></div>'
+                 + (f'<div class="prow"><span>{"Market" if is_card else "All-in"}</span><b>{M(i["ask"])}</b></div>'
+                    if i["ask"] is not None else "")
+                 + (f'<div class="prow"><span>Resale</span><b>{M(i["resale"])}</b></div>' if i["resale"] is not None else "")
+                 + (f'<div class="prow"><span>Profit</span><b>{M(i["profit"])} · {roas(i):.2f}×</b></div>'
+                    if roas(i) is not None else "")
+                 + (f'<div class="prow"><span>Basis</span><b>{e(i["basis"])} · {i["n_sales"]} sales</b></div>'
+                    if i["n_sales"] else "")
+                 + (f'<div class="prow"><span>Pile prices</span><b>{" → ".join(str(M(h)) for h in i["hist"])}</b></div>'
+                    if len(i["hist"]) > 1 else ""))
+        pid = i["printing_id"] or ""
+        goal = ""
+        if pid and _passcode(pid):
+            goal = (f'<form class="pgoal" method="post" action="/pile/chase">'
+                    f'<input type="hidden" name="t" value="{e(token)}"><input type="hidden" name="back" value="{e(back)}">'
+                    f'<input type="hidden" name="passcode" value="{e(_passcode(pid))}">'
+                    f'<input type="hidden" name="printing" value="{e(pid)}">'
+                    f'<input type="hidden" name="label" value="{e(i["title"][:110])}">'
+                    f'<input type="number" name="threshold" step="0.01" min="0.01" '
+                    f'value="{i["resale"] and round(i["resale"], 2) or ""}" aria-label="Goal: fire the bell under this price">'
+                    f'<button class="pbtn" title="Set this as the goal" aria-label="Set this goal">◎</button></form>')
+        sheet = (f'<div class="psheet">{lines}'
+                 + (f'<div class="pgoalrow"><span>Goal - bell under</span>{goal}</div>' if goal else "")
+                 + f'<div class="psheet-links"><a href="{op}"{" target=_blank rel=noreferrer" if ext else ""}>'
+                 + ("Open on site ↗" if ext else "Open listing") + '</a>'
+                 + f'<form method="post" action="/pile/remove">'
+                 f'<input type="hidden" name="t" value="{e(token)}"><input type="hidden" name="key" value="{e(i["key"])}">'
+                 f'<input type="hidden" name="back" value="{e(back)}">'
+                 f'<button class="plink" type="submit">Remove</button></form></div></div>')
         if i["side"] == "pile":
             left = _sort_form(token, i["key"], "set", back, "←", "left", "Set aside: keep it on the left")
         else:
             left = _sort_form(token, i["key"], "pile", back, "↥", "up", "Back to the middle pile")
         right = _sort_form(token, i["key"], "chase", back, "→", "right", "Chase: watch this card under a number")
-        when = _ago(i["added"], now)
         flash = '<span class="padd" aria-hidden="true">+ added</span>' if i["key"] == added else ""
         mark = " added" if i["key"] == added else ""
         price = M(i["ask"]) if i["ask"] is not None else "—"
         return (f'<article class="pcard cut{mark}" draggable="true" data-side="{e(i["side"])}" data-key="{e(i["key"])}">'
-                f'<div class="pface"><div class="part">{art_of(i)}</div><span class="pglare"></span>{flash}'
+                f'<div class="pface" role="button" tabindex="0" aria-label="Show when this was logged and set a goal">'
+                f'<div class="part">{art_of(i)}</div><span class="pglare"></span>{flash}'
                 f'<span class="pcoin">{price}</span>'
                 + (f'<span class="pwhen" title="Added {e(i["added"][:10])}">{e(when)}</span>' if when else "")
-                + drop + '</div>'
-                f'<div class="pname">{e(i["title"][:46])}</div>'
-                f'<div class="pinfo">{info}</div>'
+                + '</div>'
+                f'<a class="pname" href="{op}"{" target=_blank rel=noreferrer" if ext else ""}>{e(i["title"][:46])}</a>'
+                f'{sheet}'
                 f'<div class="psortrow">{left}{right}</div></article>')
 
     pile_tiles = "".join(tile(i) for i in piled)
@@ -751,23 +769,27 @@ def view(st, idx, M, now: datetime, token: str, game: str = "ygo", back: str = "
         state_cls = "fire" if c["under"] else "watch" if c["ask"] is not None else "idle"
         state = ('<span class="cdot ' + state_cls + '"></span>')
         scope = "any version" if not c["printing_id"] else "one version"
-        info = (f'<b>{e(c["label"])}</b>'
-                f'<div class="pi-line">Chase under <b>{M(c["threshold"])}</b> · {e(scope)}</div>'
-                f'<div class="pi-line">Live ask {M(c["ask"])} · Sold typical {M(c["fair"])}</div>'
-                + ('<div class="pi-line sold">Sold at or below your number.</div>' if c["sold_under"] else ""))
-        forms = (f'<div class="chase-edit"><form class="cset" method="post" action="/pile/chase/set">'
+        curb = f"/pkm/card/{c['passcode'][4:]}" if c["passcode"].startswith("pkm-") else f"/card/{e(c['passcode'])}"
+        lines = (f'<div class="prow"><span>Goal</span><b>{M(c["threshold"])} · {e(scope)}</b></div>'
+                 f'<div class="prow"><span>Live ask</span><b>{M(c["ask"])}</b></div>'
+                 f'<div class="prow"><span>Sold typical</span><b>{M(c["fair"])}</b></div>'
+                 + ('<div class="prow"><span>Sold</span><b>at or below your number</b></div>' if c["sold_under"] else ""))
+        forms = (f'<div class="pgoalrow"><span>New goal</span><form class="cset" method="post" action="/pile/chase/set">'
                  f'<input type="hidden" name="t" value="{e(token)}"><input type="hidden" name="id" value="{c["id"]}">'
                  f'<input type="hidden" name="back" value="{e(back)}">'
-                 f'<input type="number" name="threshold" step="0.01" min="0.01" value="{c["threshold"]:g}" aria-label="New threshold">'
-                 f'<button class="mini" title="Save the threshold" aria-label="Save the threshold">✓</button></form>'
-                 f'<form class="pcard-form" method="post" action="/pile/chase/remove">'
+                 f'<input type="number" name="threshold" step="0.01" min="0.01" value="{c["threshold"]:g}" aria-label="New goal">'
+                 f'<button class="pbtn" title="Save the goal" aria-label="Save the goal">◎</button></form></div>'
+                 f'<div class="psheet-links"><a href="{curb}">Open card</a>'
+                 f'<form method="post" action="/pile/chase/remove">'
                  f'<input type="hidden" name="t" value="{e(token)}"><input type="hidden" name="id" value="{c["id"]}">'
                  f'<input type="hidden" name="back" value="{e(back)}">'
-                 f'<button class="pbtn" title="Stop chasing" aria-label="Stop chasing">✕</button></form></div>')
-        chase_tiles.append(f'<article class="pcard cut chase"><div class="pface"><div class="part">{c["pic"]}</div>'
+                 f'<button class="plink" type="submit">Stop chasing</button></form></div>')
+        chase_tiles.append(f'<article class="pcard cut chase" data-side="chase">'
+                           f'<div class="pface" role="button" tabindex="0" aria-label="Show this chase and change its goal">'
+                           f'<div class="part">{c["pic"]}</div>'
                            f'<span class="pglare"></span><span class="pcoin">{M(c["threshold"])}{state}</span></div>'
-                           f'<div class="pname">{e(c["label"][:46])}</div>'
-                           f'<div class="pinfo">{info}</div>{forms}</article>')
+                           f'<a class="pname" href="{curb}">{e(c["label"][:46])}</a>'
+                           f'<div class="psheet">{lines}{forms}</div></article>')
 
     assists = []
     if items:
@@ -854,6 +876,23 @@ function init(){
    f.addEventListener('pointerleave',function(){f.style.removeProperty('--ry');f.style.removeProperty('--rx')});
   });
  }
+ [].forEach.call(document.querySelectorAll('.pcard .part img'),function(im){
+  function miss(){im.style.display='none';var p=im.closest('.part');if(p)p.classList.add('miss')}
+  if(im.complete&&im.naturalWidth===0){miss()}else{im.addEventListener('error',miss)}
+ });
+ function shut(){[].forEach.call(document.querySelectorAll('.pcard.open'),function(x){x.classList.remove('open')})}
+ [].forEach.call(document.querySelectorAll('.pcard .pface'),function(f){
+  f.addEventListener('click',function(e){
+   if(e.target.closest('a,button,input,select,form'))return;
+   var c=f.closest('.pcard'),was=c.classList.contains('open');
+   shut();if(!was)c.classList.add('open');
+  });
+  f.addEventListener('keydown',function(e){
+   if(e.key==='Enter'||e.key===' '){e.preventDefault();f.click()}
+  });
+ });
+ document.addEventListener('click',function(e){if(!e.target.closest('.pcard'))shut()});
+ document.addEventListener('keydown',function(e){if(e.key==='Escape')shut()});
  var a=document.querySelector('.pcard.added');
  if(a){
   setTimeout(function(){a.classList.remove('added')},2400);
@@ -904,11 +943,11 @@ border-radius:999px;background:var(--surface);max-width:560px;box-shadow:inset 0
 align-items:center;justify-content:center;cursor:pointer;flex:none}
 .padgo svg{width:16px;height:16px}
 .padgo:hover{filter:brightness(1.09)}
-.pboard{display:grid;grid-template-columns:minmax(180px,.62fr) minmax(0,2.3fr) minmax(180px,.62fr);gap:16px;
+.pboard{display:grid;grid-template-columns:minmax(240px,1fr) minmax(0,2fr) minmax(240px,1fr);gap:16px;
 align-items:stretch;margin:6px 0 8px;padding:0}
 .shell:has(.pboard){max-width:none}
 main:has(.pboard){padding-left:16px;padding-right:16px}
-.zcol{position:relative;border:1px solid var(--line);padding:12px 12px 14px;min-height:300px;
+.zcol{position:relative;border:1px solid var(--line);padding:12px 12px 14px;min-height:min(66vh,680px);
 border-radius:26px 20px 28px 18px/20px 28px 18px 26px;
 transition:box-shadow .25s var(--ease),border-color .25s var(--ease),background .25s var(--ease)}
 .zcol.over{border-color:var(--accent);outline:2px dashed color-mix(in srgb,var(--accent) 55%,transparent);
@@ -935,16 +974,17 @@ box-shadow:inset 0 1px 0 color-mix(in srgb,#fff 50%,transparent),0 12px 26px rgb
 .zhint{font-size:11.5px;color:var(--fg2)}
 .zcount{margin-left:auto;font-variant-numeric:tabular-nums;border:1px solid var(--line);border-radius:999px;
 padding:1px 9px;font-size:11.5px;color:var(--fg2);background:var(--surface)}
-.pfan{display:flex;flex-wrap:wrap;justify-content:center;align-items:flex-start;padding:34px 8px 10px;
-perspective:1000px;row-gap:26px}
-.pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:12px 10px;padding:14px 2px 4px}
+.pfan{display:flex;flex-wrap:wrap;justify-content:center;align-items:flex-start;padding:26px 8px 10px;
+perspective:1000px;gap:18px 20px}
+.pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:18px 12px;padding:14px 2px 4px}
 .pcard{position:relative;display:flex;flex-direction:column;gap:4px;width:132px;flex:none;cursor:grab}
 .pgrid .pcard{width:auto}
-.pfan .pcard{width:148px;margin:0 -12px}
-.pfan .pcard:nth-child(odd){transform:rotate(-2.4deg) translateY(4px)}
-.pfan .pcard:nth-child(3n){transform:rotate(2deg)}
-.pfan .pcard:nth-child(4n){transform:rotate(-.8deg) translateY(-3px)}
-.pfan .pcard:hover{transform:translateY(-9px) rotate(0) scale(1.055);z-index:40}
+.pfan .pcard{width:152px}
+.pcard.open{z-index:80}
+.pfan .pcard:nth-child(odd){transform:rotate(-1.6deg) translateY(3px)}
+.pfan .pcard:nth-child(3n){transform:rotate(1.4deg)}
+.pfan .pcard:nth-child(4n){transform:rotate(-.6deg) translateY(-2px)}
+.pfan .pcard:hover{transform:translateY(-7px) rotate(0) scale(1.035);z-index:40}
 .pcard:active{cursor:grabbing}
 .pcard.lift{opacity:.3;transform:scale(.96) rotate(0)!important}
 .pcard:hover{z-index:40}
@@ -961,7 +1001,9 @@ background:linear-gradient(170deg,color-mix(in srgb,var(--fg) 7%,var(--surface))
 .part .card.ph{display:flex;width:100%;aspect-ratio:59/86;align-items:center;justify-content:center;
 border-radius:9px;background:var(--bg);color:var(--muted);font-weight:800;border:1px dashed var(--axis)}
 .pname{font-size:11px;font-weight:650;text-align:center;line-height:1.22;color:var(--fg);opacity:.92;margin-top:4px;
-display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:2.1em}
+display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:2.1em;
+text-decoration:none}
+a.pname:hover{opacity:1;text-decoration:underline;text-underline-offset:2px}
 .pcoin{position:absolute;left:6px;bottom:6px;z-index:4;padding:2px 8px;border-radius:999px;
 background:color-mix(in srgb,#101418 78%,transparent);color:#fff;font-size:11.5px;font-weight:800;
 font-variant-numeric:tabular-nums;box-shadow:0 2px 6px rgba(0,0,0,.3)}
@@ -998,19 +1040,29 @@ color:var(--fg2);font-weight:800;font-size:10px;line-height:1;cursor:pointer;pad
 display:inline-flex;align-items:center;justify-content:center;box-shadow:0 2px 5px rgba(0,0,0,.14)}
 .pbtn:hover{border-color:var(--accent);color:var(--accent)}
 .pbtn.on{background:var(--accent);border-color:var(--accent);color:#fff}
-.pinfo{display:none;position:absolute;left:50%;top:calc(100% + 6px);transform:translateX(-50%);z-index:60;
-width:max-content;max-width:260px;background:var(--surface);border:1.5px solid var(--fg2);
+.pface{cursor:pointer}
+.pcard.open .pface{outline:2px solid color-mix(in srgb,var(--accent) 60%,transparent);outline-offset:2px}
+.psheet{display:none;position:absolute;left:50%;top:calc(100% + 8px);transform:translateX(-50%);z-index:70;
+width:252px;max-width:78vw;background:var(--surface);border:1.5px solid var(--fg2);
 border-radius:12px 10px 13px 9px/10px 13px 9px 12px;box-shadow:6px 8px 0 rgba(0,0,0,.14);
 padding:10px 12px;font-size:12px;color:var(--fg)}
-.pcard:hover .pinfo{display:block}
-.pinfo b{display:block;font-size:12.5px;margin-bottom:4px}
-.pi-line{margin:3px 0;color:var(--fg2);font-variant-numeric:tabular-nums}
-.pi-line b{display:inline;font-size:12px;color:var(--fg);margin:0}
-.pi-line.sold{color:#1d6b4f;font-weight:700}
-.pi-go{display:flex;gap:10px;margin-top:6px}
-.pi-go a{font-size:12px;font-weight:700;color:var(--teal-deep);text-decoration:none}
-.pi-go a:hover{text-decoration:underline}
-.pspark{display:inline-block;vertical-align:middle;margin-left:6px}
+.pcard.open .psheet{display:block}
+.zc-set .psheet{left:0;transform:none}
+.zc-chase .psheet{right:0;left:auto;transform:none}
+.prow{display:flex;justify-content:space-between;gap:10px;margin:3px 0;color:var(--fg2)}
+.prow b{color:var(--fg);font-variant-numeric:tabular-nums;text-align:right}
+.pgoalrow{display:flex;align-items:center;gap:8px;margin:8px 0 2px;border-top:1px dashed var(--axis);padding-top:8px}
+.pgoalrow>span{font-size:11px;color:var(--fg2);flex:none}
+.pgoal{display:flex;gap:4px;flex:1;margin:0}
+.pgoal input{width:100%;min-width:0;padding:4px 6px;border:1px solid var(--axis);border-radius:7px;
+background:var(--bg);color:var(--fg);font-size:12px;font-variant-numeric:tabular-nums}
+.psheet-links{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:9px}
+.psheet-links a{color:var(--teal-deep);font-weight:700;text-decoration:none;font-size:12px}
+.psheet-links a:hover{text-decoration:underline}
+.plink{border:0;background:none;color:#b3423a;font-weight:700;cursor:pointer;font-size:12px;padding:0}
+.plink:hover{text-decoration:underline}
+.part.miss::after{content:'?';position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+font-weight:900;font-size:30px;color:var(--muted)}
 .cdot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-left:5px;vertical-align:1px;background:#8a8f96}
 .cdot.fire{background:#e05a3a;box-shadow:0 0 0 3px color-mix(in srgb,#e05a3a 25%,transparent)}
 .cdot.watch{background:#e0a53a}

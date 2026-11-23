@@ -135,7 +135,7 @@ def test_sort_right_starts_a_chase_at_the_sold_typical(tmp_path):
     c = chases(st)[0]
     assert c["passcode"] == "89631139" and c["threshold"] == 800.0     # sold typical, not the ask
     assert keys(st) == []
-    assert "Chase under" in view(st, None, M(), NOW, "tok")
+    assert "Goal" in view(st, None, M(), NOW, "tok")
 
 
 def test_sort_right_without_a_card_stays_in_the_pile(tmp_path):
