@@ -424,6 +424,7 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     from .ui_icons import EFFECTS_CSS, ICON_CSS, SPRITE
     from .ui_decide import DECIDE_CSS
     from .ui_alerts import BELL, CSS as ALERTS_CSS
+    from .pile import PILE_CSS
     from .zone import CHAR_CSS
     theme = theme if theme in THEMES else "market"
     where = NAV_OF.get(nav, "")
@@ -463,7 +464,7 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     tz = datetime.now().astimezone().strftime("UTC%z")
     return (f'<!doctype html><html lang="en" data-theme="{"vault" if theme == "vault" else "auto"}"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)} · CardMan</title>'
-            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{PC_CSS}{ICON_CSS}{EFFECTS_CSS}{PRINT_CSS}{SHELL_CSS}{DECIDE_CSS}{CHAR_CSS}{MARKET_CSS}{NOW_CSS}{ALERTS_CSS}</style></head><body>{SPRITE}'
+            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{PC_CSS}{ICON_CSS}{EFFECTS_CSS}{PRINT_CSS}{SHELL_CSS}{DECIDE_CSS}{CHAR_CSS}{MARKET_CSS}{NOW_CSS}{ALERTS_CSS}{PILE_CSS}</style></head><body>{SPRITE}'
             + scope_links(f'<header class="top"><a class="logo" href="/"><span class="lmark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></span><span class="lword">CardMan<b class="lunder" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></b></span></a><nav class="main" aria-label="Main">{links}</nav>{BELL}{hsearch}'
                           f'{games}{curs}</header><main class="page">{crumb}{flash}{body}</main>', game) +
             f'<footer class="foot">Private to this Mac · times {e(tz)} · press <kbd>/</kbd> to search</footer>'
@@ -1484,6 +1485,7 @@ class EngineMoney:
     def __init__(self, st: Store, home: str, want: str, now: datetime):
         from datetime import timedelta
         self.cur, self.k = home, Decimal(1)
+        self.home, self.now = home, now
         if want != home:
             try:
                 self.k = FxTable(st.fx_rates(), max_age=timedelta(days=7)).convert(Decimal(1), home, want, now)
@@ -2001,7 +2003,8 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     return self._page("characters", "Characters", view_zone(idx.cat if idx else None), qs, crumb=("Cards", "/pkm/search"))
                 if parts == ["pile"]:
                     from .pile import view as view_pile
-                    return self._page("pile", "Card Pile", view_pile(st, EngineMoney(st, _engine_home(st), self._cur(), now), now, token), qs)
+                    return self._page("pile", "Card Pile", view_pile(st, idx, EngineMoney(st, _engine_home(st), self._cur(), now), now, token,
+                                                                      game="pkm", back="/pkm/pile"), qs)
                 if parts == ["search"]:
                     from .ui_home import Money, view_search
                     q = qs.get("q", [""])[0][:120]
@@ -2035,7 +2038,8 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     return self._page("opportunities", "Listings", view_list(
                         st, idx, now, M, v_filter=v if v in ("all", "BUY", "CHECK", "WATCH", "PASS", "every") else "all",
                         t_filter=t if t in ("any", "singles", "lots") else "any", home_cur=M.cur,
-                        site=qs.get("site", ["any"])[0] if qs.get("site", ["any"])[0] in ("any", "ebay", "yahoo", "mercari", "other") else "any", game="pkm"), qs)
+                        site=qs.get("site", ["any"])[0] if qs.get("site", ["any"])[0] in ("any", "ebay", "yahoo", "mercari", "other") else "any",
+                        game="pkm", token=token, back="/pkm/opportunities"), qs)
                 if parts[:1] in (["opp"], ["import"], ["settings"], ["costs"], ["static"]):
                     return self._go("/" + "/".join(parts) + (("?" + urlsplit(self.path).query) if urlsplit(self.path).query else ""))
                 return self._send(404, page("Not found", "<h1>Not found</h1>", nav="", store=store_path, game="pkm"))
@@ -2245,7 +2249,7 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     self._page("home", "Home", view_home(st, cards, now, self._cur(), self._theme(), assumed_costs=assumed, EM=EM, qs=qs, token=token), qs)
                 elif parts == ["pile"]:
                     from .pile import view as view_pile
-                    self._page("pile", "Card Pile", view_pile(st, EngineMoney(st, _engine_home(st), self._cur(), now), now, token), qs)
+                    self._page("pile", "Card Pile", view_pile(st, cards, EngineMoney(st, _engine_home(st), self._cur(), now), now, token), qs)
                 elif parts == ["deals"]:
                     self._page("deals", "Deals", view_deals(st, now, self._cur(), qs.get("syn", [""])[0] == "1"), qs)
                 elif parts == ["search"]:
@@ -2300,7 +2304,8 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                         self._page("opportunities", "Listings",
                                    view_list(st, cards, now, M, v_filter=v if v in ("all", "BUY", "CHECK", "WATCH", "PASS", "every") else "all",
                                              t_filter=t if t in ("any", "singles", "lots") else "any", home_cur=M.cur,
-                                             site=qs.get("site", ["any"])[0] if qs.get("site", ["any"])[0] in ("any", "ebay", "yahoo", "mercari", "other") else "any").replace(
+                                             site=qs.get("site", ["any"])[0] if qs.get("site", ["any"])[0] in ("any", "ebay", "yahoo", "mercari", "other") else "any",
+                                             token=token, back="/opportunities").replace(
                                        '</p>', '</p>' + tick, 1), qs)
                 elif parts == ["alerts"]:
                     from .ui_alerts import view_alerts
@@ -2385,17 +2390,64 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
             st = Store(store_path)
             now = clock()
             try:
+                def _pile_back():
+                    b = form.get("back", "")
+                    return b if b.startswith("/") and not b.startswith("//") else "/pile"
+
                 if parts == ["pile"]:
                     from .pile import add as pile_add, resolve as pile_resolve
                     key = pile_resolve(st, form.get("url", "")[:2048])
                     if not key:
-                        self._redirect("/pile", err="Not in the store yet. Open the listing once under Listings, then add it here.")
+                        self._redirect(_pile_back(), err="Not in the store yet. Open the listing once under Listings, then add it here.")
                     else:
-                        self._redirect("/pile", msg="Added to the pile." if pile_add(st, key, now) else "Already in the pile.")
+                        self._redirect(_pile_back(), msg="Added to the pile." if pile_add(st, key, now) else "Already in the pile.")
+                elif parts == ["pile", "add"]:
+                    from .pile import add as pile_add
+                    key = form.get("key", "")[:512]
+                    if not st.db.execute("SELECT 1 FROM listing WHERE key=?", (key,)).fetchone():
+                        self._redirect(_pile_back(), err="That listing is not in the store.")
+                    else:
+                        self._redirect(_pile_back(), msg="Set aside in the pile." if pile_add(st, key, now) else "Already in the pile.")
                 elif parts == ["pile", "remove"]:
                     from .pile import remove as pile_remove
                     pile_remove(st, form.get("key", "")[:512])
-                    self._redirect("/pile", msg="Removed from the pile.")
+                    self._redirect(_pile_back(), msg="Removed from the pile.")
+                elif parts == ["pile", "chase"]:
+                    from .pile import chase_add
+                    try:
+                        th = float(form.get("threshold", ""))
+                        if not (th > 0 and th < 1e9):
+                            raise ValueError
+                    except ValueError:
+                        self._redirect(_pile_back(), err="Threshold needs to be a number above zero.")
+                    else:
+                        passcode = form.get("passcode", "")[:40]
+                        printing = form.get("printing", "")[:64]
+                        label = form.get("label", "")[:120] or passcode
+                        if not passcode:
+                            self._redirect(_pile_back(), err="No card picked.")
+                        else:
+                            chase_add(st, passcode, printing, label, th, _engine_home(st), now)
+                            self._redirect(_pile_back(), msg="Chase started. The bell fires when an ask lands under your number.")
+                elif parts == ["pile", "chase", "set"]:
+                    from .pile import chase_set
+                    try:
+                        cid = int(form.get("id", ""))
+                        th = float(form.get("threshold", ""))
+                        if not (th > 0 and th < 1e9):
+                            raise ValueError
+                    except ValueError:
+                        self._redirect(_pile_back(), err="Threshold needs to be a number above zero.")
+                    else:
+                        chase_set(st, cid, th)
+                        self._redirect(_pile_back(), msg="Chase threshold updated.")
+                elif parts == ["pile", "chase", "remove"]:
+                    from .pile import chase_remove
+                    try:
+                        chase_remove(st, int(form.get("id", "")))
+                    except ValueError:
+                        pass
+                    self._redirect(_pile_back(), msg="Chase stopped.")
                 elif len(parts) == 3 and parts[0] == "deal" and parts[2] == "decide":
                     sid = parts[1]
                     try:

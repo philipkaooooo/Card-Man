@@ -435,9 +435,12 @@ def site_of(key: str) -> str:
     return "ebay" if src.startswith("ebay") else "yahoo" if src.startswith("yahoo") else "mercari" if src.startswith("mercari") else "other"
 
 
-def view_list(st, cards, now, M, *, v_filter: str, t_filter: str, home_cur: str, site: str = "any", game: str = "ygo") -> str:
+def view_list(st, cards, now, M, *, v_filter: str, t_filter: str, home_cur: str, site: str = "any", game: str = "ygo",
+              token: str = "", back: str = "/opportunities") -> str:
     """Listings: the decision rail (with live counts) on top, then two filter sections, then one card per listing."""
     from .ui_decide import deal_card, first_seen, rail
+    from .pile import keys as pile_keys
+    piled = frozenset(pile_keys(st))
     items = open_listings(st, M, game)
     is_lot = lambda d: "LOT" in (d.get("kinds") or [])
     pool = [i for i in items if (t_filter != "singles" or not is_lot(i[2])) and (t_filter != "lots" or is_lot(i[2]))
@@ -467,7 +470,8 @@ def view_list(st, cards, now, M, *, v_filter: str, t_filter: str, home_cur: str,
     page_items = shown[:150]
     ph = photo_counts(st, [item_id_of(key, d) for key, _s, d, _v in page_items])
     seen = first_seen(st, [key for key, *_ in page_items])
-    rows = [deal_card(key, d, v, cards, M, now, ph, seen.get(key), (sp or {}).get(d.get("printing_id") or "", "") if not is_lot(d) else "")
+    rows = [deal_card(key, d, v, cards, M, now, ph, seen.get(key), (sp or {}).get(d.get("printing_id") or "", "") if not is_lot(d) else "",
+                      token=token, piled=piled, back=back)
             for key, status, d, v in page_items]
     hidden = ""
     more = f'<p class="muted small">Showing the first 150 of {len(shown):,}. Pick a lane or a site to see the rest.</p>' if len(shown) > 150 else ""
@@ -542,6 +546,13 @@ def view_one(st, cards, key: str, now: datetime, token: str, M, profile: dict | 
     actions = []
     if url and url.startswith(("http://", "https://")):
         actions.append(f'<a class="btn" href="{e(url)}" target="_blank" rel="noreferrer noopener">Open the listing ↗</a>')
+    from .pile import keys as pile_keys
+    piled = key in frozenset(pile_keys(st))
+    back = f"/opp/{quote(key, safe='')}"
+    actions.append((f'<form method="post" action="/pile/{"remove" if piled else "add"}" class="inline">'
+                    f'<input type="hidden" name="t" value="{e(token)}"><input type="hidden" name="key" value="{e(key)}">'
+                    f'<input type="hidden" name="back" value="{e(back)}">'
+                    f'<button class="btn {"ghost" if piled else ""}" type="submit">{"In the pile ✓ - remove" if piled else "＋ Set aside in the pile"}</button></form>'))
     if v.code == CHECK or not settled:
         actions.append('<a class="btn ghost" href="#confirm">Tell us which version it is</a>')
     if c and d.get("photo") != "clash":   # a photo that is clearly another picture is not this card's page

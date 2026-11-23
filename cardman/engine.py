@@ -79,6 +79,7 @@ class TickReport:
     trends: int = 0
     alerts: int = 0
     validated: int = 0
+    watches: int = 0
     errors: list[str] = field(default_factory=list)
     routes: list[dict] = field(default_factory=list)
     ebay_sold: dict = field(default_factory=dict)
@@ -634,6 +635,11 @@ class Engine:
             rep.validated = alert_outcomes.sweep(self.store, now, home)["sold"]
         except Exception as x:
             rep.errors.append(f"alerts: {type(x).__name__}: {x}")
+        try:
+            from . import pile
+            rep.watches = pile.tick(self.store, now, home)
+        except Exception as x:
+            rep.errors.append(f"card pile: {type(x).__name__}: {x}")
         rep.open_opportunities = self.db.execute("SELECT COUNT(*) FROM opportunity WHERE status=?", (OPEN,)).fetchone()[0]
         rep.seconds = round(time.monotonic() - started, 3)
         with self.db:

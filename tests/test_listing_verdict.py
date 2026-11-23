@@ -94,6 +94,7 @@ def test_listing_page_keeps_raw_data_inside_closed_details(tmp_path):
                                                                                     d["url"], None, "ask", "12", "USD", None, "t", "t", None, "fp", "{}"))
     page = view_one(db, None, key, datetime.now(timezone.utc), "tok", M, None)
     outside = re.sub(r"<details.*?</details>", "", page, flags=re.S)
+    outside = re.sub(r'<input type="hidden"[^>]*>', "", outside)      # form plumbing carries the key; raw data must not show
     assert "2x Check" in outside and "not a sale" in outside
     assert key not in outside and "SPECTATE" not in outside and "fp" not in outside and "evpi" not in outside.lower()
     assert key in page and re.search(r"<details class=\"dsec\"><summary>Technical details", page) and "<details class=\"dsec\" open" not in page
