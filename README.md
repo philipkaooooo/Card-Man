@@ -44,8 +44,11 @@ Pricing rules: `docs/pricing-method.md` — a price comes from real sales of one
   different printing. The grading strip buys raw at the cheapest live ask (linking the listing), adds inbound
   shipping and the PSA fee from `data/profile.json`, and nets the PSA 10 after selling fees: it names the
   profit in currency and the most the raw may cost when no ask is low enough. Each card page carries a
-  PriceCharting section of its own (`ui_pc.py`): all six grades selectable, one line each, hover for the
-  week's sold price, plus the table and PSA/CGC population.
+  PriceCharting section of its own (`ui_pc.py`): all six grades selectable; every weekly sold point is its
+  own dot and hover snaps to the nearest one, naming the date, the price and the move since the week
+  before - warm dots on a rise, cold on a fall. A 3/6/9/12-month switch rescales plot and table
+  together, the change column recomputes client-side, and end tags price each live line, plus PSA/CGC
+  population.
 - `alerts.py` catches asks under the typical sold price the moment they land: the engine scans each batch
   right after it is analyzed and sweeps the whole board at the end of every pass, writing one `ASK_UNDER`
   signal per printing per price point (fee math identical to the under-typical section: raw in, raw out).
