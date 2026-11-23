@@ -567,7 +567,7 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", a
     base = "/pkm/" if game == "pkm" else "/"
     scan, live = _engine_line(st, now, base, token)
     letters = "".join(f'<span style="--i:{i};--c:{_PAL[i % 6]}" data-c="{c if c != " " else "&nbsp;"}">{c if c != " " else "&nbsp;"}</span>' for i, c in enumerate(_HUNT))
-    out = [f'<section class="hero hunt"><div class="hunframe"><h1 class="huntitle" aria-label="{e(_HUNT)}">{letters}</h1></div>'
+    out = [f'<section class="hero hunt"><h1 class="huntitle" aria-label="{e(_HUNT)}">{letters}</h1>'
             '<p class="huntag">Collect Wisely</p>'
             '<div class="huntline">' + _search_box(big=True, game=game) + '</div></section>']
     feed = _just_posted(st, now, game, M, qs or {}, base, token, _pulse(st, now, game, M), live)
@@ -1568,7 +1568,7 @@ filter:drop-shadow(0 7px 16px rgba(0,0,0,.28));transition:transform .18s var(--e
 .hun-status b{font-size:11px;letter-spacing:.14em;color:var(--fg);text-transform:uppercase;font-weight:750}
 .hun-status small::before{content:"\00b7";margin-right:9px;color:var(--muted)}
 .hun-status small{font-size:12px;color:var(--muted);font-weight:400;letter-spacing:0;text-transform:none}
-.boardwrap{position:relative;margin-top:14px;padding-top:calc(var(--wizh) - var(--wizdip));
+.boardwrap{position:relative;margin-top:2px;padding-top:calc(var(--wizh) - var(--wizdip));
 --wizh:clamp(120px,16vw,232px);--wizdip:calc(var(--wizh)*.1)}
 .wizfloat{position:absolute;top:0;left:clamp(12px,2.6vw,38px);z-index:6;display:block;padding:0;border:0;
 background:none;cursor:pointer;line-height:0}
@@ -1615,20 +1615,13 @@ box-shadow:0 0 0 2px rgba(47,191,113,.6),0 10px 34px rgba(47,191,113,.3);animati
 @media(prefers-reduced-motion:reduce){.hungrid>.hun-item,.hun-live.ok i{animation:none}.hunzone{transition:none}.hun.landed{animation:none}.hun.landed::after,.hun.landed .laser{animation:none}}
 .hun-all{margin-left:auto;font-size:14px;font-weight:600}
 .hun-note{color:var(--muted);margin:24px 2px 0;line-height:1.5;max-width:88ch}
-section.hero.hunt{padding:24px 4px 12px;max-width:none;text-align:center}
-.hunframe{display:inline-block;padding:clamp(10px,2vw,20px) clamp(18px,3.4vw,40px);margin:0 auto 4px;
-border-top:4px solid #e05252;border-right:4px solid #2f6ce0;border-bottom:4px solid #d4af6a;border-left:4px solid #e05252;
-border-radius:12px 7px 14px 8px/8px 14px 7px 12px;background:color-mix(in srgb,var(--surface) 72%,transparent);
-box-shadow:4px 5px 0 rgba(0,0,0,.10);transform:rotate(-.5deg)}
-.huntitle{font-family:"Avenir Next Condensed","Avenir Next","Arial Narrow","Helvetica Neue",system-ui,sans-serif;
-font-style:normal;font-weight:900;font-size:clamp(40px,7.4vw,74px);letter-spacing:-.01em;text-transform:uppercase;margin:0;cursor:default;line-height:.98;
---ink:url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='200'%20height='200'%3E%3Cfilter%20id='m'%3E%3CfeTurbulence%20type='fractalNoise'%20baseFrequency='0.9'%20numOctaves='2'%20seed='4'/%3E%3CfeColorMatrix%20type='matrix'%20values='0%200%200%200%201%200%200%200%200%201%200%200%200%200%201%200%200%200%201.7%20-0.28'/%3E%3C/filter%3E%3Crect%20width='200'%20height='200'%20filter='url(%23m)'/%3E%3C/svg%3E")}
+section.hero.hunt{padding:10px 4px 0;max-width:none;text-align:center}
+.hero.hunt h1.huntitle{font-family:"Avenir Next Condensed","Avenir Next","Arial Narrow","Helvetica Neue",system-ui,sans-serif;
+font-style:normal;font-weight:900;font-size:clamp(56px,10.5vw,118px);letter-spacing:-.015em;text-transform:uppercase;margin:0 auto;cursor:default;line-height:.92}
 .huntitle span{position:relative;display:inline-block;white-space:pre;color:var(--fg);
-text-shadow:.5px 0 currentColor,-.5px 0 currentColor;
-transition:transform .35s cubic-bezier(.2,1.8,.4,1);transition-delay:calc(var(--i)*30ms);
--webkit-mask-image:var(--ink);mask-image:var(--ink);-webkit-mask-size:190px 190px;mask-size:190px 190px;
--webkit-mask-position:calc(var(--i)*-11px) calc(var(--i)*5px);mask-position:calc(var(--i)*-11px) calc(var(--i)*5px)}
-.huntitle:hover span{transform:translateY(-7px) rotate(-4deg)}
+-webkit-text-stroke:3px var(--surface);paint-order:stroke fill;text-shadow:0 4px 0 rgba(0,0,0,.08);
+transition:transform .35s cubic-bezier(.2,1.8,.4,1);transition-delay:calc(var(--i)*30ms)}
+.huntitle:hover span{transform:translateY(-8px) rotate(-4deg)}
 .hungrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(172px,1fr));gap:24px 18px}
 a.hun.card{position:relative;display:flex;flex-direction:column;align-items:center;gap:9px;text-decoration:none;color:inherit;
 transition:transform .16s var(--ease)}
@@ -1678,14 +1671,10 @@ font-size:15px;font-weight:800;color:var(--fg);font-variant-numeric:tabular-nums
 @media(max-width:460px){.hungrid{grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:18px 12px}}
 .mkt{display:inline-flex;align-items:center;justify-content:center;width:19px;height:19px;border-radius:50%;flex:none;
 font:700 11px/1 "Helvetica Neue",Arial,sans-serif;color:#fff}
-.huntag{margin:0 auto 20px;display:flex;align-items:center;justify-content:center;gap:16px;
-font-family:"Avenir Next","Avenir",system-ui,-apple-system,"Segoe UI",sans-serif;font-size:clamp(14px,1.8vw,18px);font-weight:800;
-letter-spacing:.24em;text-transform:uppercase;color:transparent;
-background:linear-gradient(90deg,#e05252,#2f6ce0,#b8862f,#2fbf71,#e6a23c,#8a7ef0);
--webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
-.huntag::before,.huntag::after{content:"";height:2px;width:clamp(30px,7vw,70px);border-radius:2px;flex:none}
-.huntag::before{background:linear-gradient(90deg,transparent,#e05252,#2f6ce0,#b8862f)}
-.huntag::after{background:linear-gradient(90deg,#2fbf71,#e6a23c,#8a7ef0,transparent)}
+.huntag{margin:2px auto 14px;display:flex;align-items:center;justify-content:center;gap:14px;
+font-family:"Avenir Next","Avenir",system-ui,-apple-system,"Segoe UI",sans-serif;font-size:clamp(12px,1.5vw,15px);font-weight:700;
+letter-spacing:.4em;text-indent:.4em;text-transform:uppercase;color:var(--fg2)}
+.huntag::before,.huntag::after{content:"";height:1px;width:clamp(28px,6vw,64px);flex:none;background:var(--axis)}
 .huntline{display:flex;justify-content:center;gap:20px}
 .huntline form.search.big{width:100%;max-width:720px;margin:0 auto}
 .reg{position:absolute;inset:0;pointer-events:none}
