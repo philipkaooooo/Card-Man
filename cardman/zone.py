@@ -1,12 +1,13 @@
 """The Characters tab: one official picture per Pokémon, in dex order, counted from this catalog.
 
-The per-card prices stay on the character page that already exists. This file only draws the grid
-and serves the picture. It does not price anything.
+The per-card prices stay on the character page that already exists. This file draws the grid,
+ranks it with PriceCharting money, and serves the picture. It does not price anything itself.
 """
 from __future__ import annotations
 
 import json
 import re
+from decimal import Decimal
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +22,13 @@ _DISPLAY = {
     "nidoran-f": "Nidoran♀", "nidoran-m": "Nidoran♂",
     "type-null": "Type: Null", "flabebe": "Flabébé",
 }
+
+_GEN_EDGES = (151, 251, 386, 493, 649, 721, 809, 905, 10 ** 6)
+_GEN_ROMAN = ("I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX")
+_GEN_HUE = ("#d94f38", "#b98a1e", "#1c8f74", "#3f6fc9", "#7a5bb5",
+            "#c34f8f", "#b8702a", "#56743a", "#2f8fa8")
+
+SORTS = ("dex", "cap", "top", "move", "pace")
 
 
 def _key(text: str) -> str:
@@ -52,20 +60,97 @@ def book() -> _Book:
     return _Book(json.loads(SPECIES.read_text()) if SPECIES.exists() else [])
 
 
-def rows(cat) -> list[tuple]:
-    """(slug, name, dex, card count) in dex order, from the catalog already loaded. No second card list."""
+def _gen(dex: int) -> int:
+    for i, edge in enumerate(_GEN_EDGES):
+        if dex <= edge:
+            return i + 1
+    return len(_GEN_ROMAN)
+
+
+def entries(cat) -> list[dict]:
+    """One row per physical Pokémon: dex, name, slug, and every card id behind the tile."""
     if cat is None:
         return []
     from .character import slug, species_index
     who = book()
-    # One tile per dex number, not per spelling: "Charizard" and "Charizard & Braixen" are the same Pokémon.
-    merged: dict[int, set[str]] = {}
+    merged: dict[int, tuple[set[str], set[str]]] = {}
     for name, cids in species_index(cat).items():
         dex = who.dex(name)
         if dex:
-            merged.setdefault(dex, set()).update(cids)
-    return [(slug(who.by_dex.get(dex, str(dex))), who.by_dex.get(dex, str(dex)), dex, len(cids))
-            for dex, cids in sorted(merged.items())]
+            slot = merged.setdefault(dex, (set(), set()))
+            slot[1].add(name)
+            slot[0].update(cids)
+    out = []
+    for dex, (cids, names) in sorted(merged.items()):
+        label = who.by_dex.get(dex) or sorted(names)[0]
+        out.append({"dex": dex, "name": label, "slug": slug(label), "cids": sorted(cids)})
+    return out
+
+
+def rows(cat) -> list[tuple]:
+    """(slug, name, dex, card count) in dex order. Kept for callers that only need the four fields."""
+    return [(e["slug"], e["name"], e["dex"], len(e["cids"])) for e in entries(cat)]
+
+
+def _pkm_series(cid: str) -> str:
+    """Catalog id back from a printing id: pk:EN:base1-4:holo@pkm-base1-4 -> base1-4."""
+    tail = cid.rsplit("@", 1)[-1]
+    return tail[4:] if tail.startswith("pkm-") else tail
+
+
+def _last_move(points) -> tuple[float | None, float | None]:
+    """Last Ungraded price and first-to-last change, from a PriceCharting point list."""
+    pts = [(int(x), float(v)) for x, v in (points or []) if v is not None]
+    pts.sort()
+    if not pts:
+        return None, None
+    last = pts[-1][1]
+    move = None
+    if len(pts) >= 2 and pts[0][1] > 0:
+        move = (last - pts[0][1]) / pts[0][1] * 100.0
+    return last, move
+
+
+def macro(st, by_dex: dict[int, list[str]]) -> dict[int, dict]:
+    """Per character, from stored PriceCharting rows and our own sales: cap, top card, 12-mo move, pace.
+
+    cap   - sum of the latest Ungraded PriceCharting price over every priced printing of the character.
+    top   - the single most valuable of those printings; the high-to-low read of one card.
+    move  - cap-weighted first-to-last change of those same series over 12 months, in percent.
+    pace  - copies of this character's cards sold per month, from our own sales ledger.
+    """
+    if st is None:
+        return {}
+    have = {r[0] for r in st.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    values: dict[str, list[tuple[float, float | None]]] = {}
+    if "pc_card" in have:
+        for pid, series in st.db.execute(
+                "SELECT printing_id, series FROM pc_card WHERE status='ok' AND printing_id LIKE '%@pkm-%'"):
+            try:
+                ser = json.loads(series or "{}")
+            except ValueError:
+                continue
+            last, move = _last_move(ser.get("Ungraded"))
+            if last is not None:
+                values.setdefault(_pkm_series(pid), []).append((last, move))
+    pace: dict[str, float] = {}
+    if "price_trend" in have:
+        for pid, month in st.db.execute(
+                "SELECT printing_id, sales_month FROM price_trend WHERE game='pkm' "
+                "AND (gkey='|' OR gkey='') AND sales_month>0"):
+            pace[_pkm_series(pid)] = pace.get(_pkm_series(pid), 0.0) + float(month)
+    out: dict[int, dict] = {}
+    for dex, cids in by_dex.items():
+        rows_ = [v for cid in cids for v in values.get(cid, [])]
+        cap = sum(v for v, _m in rows_)
+        top = max((v for v, _m in rows_), default=0.0)
+        weighted = [(v, m) for v, m in rows_ if m is not None and v > 0]
+        wsum = sum(v for v, _m in weighted)
+        move = sum(v * m for v, m in weighted) / wsum if wsum else None
+        monthly = sum(pace.get(cid, 0.0) for cid in cids)
+        out[dex] = {"cap": cap, "top": top, "move": move, "pace": monthly or None,
+                    "priced": len(rows_), "versions": len(cids)}
+    return out
 
 
 def icon(dex: int) -> tuple[bytes, str]:
@@ -91,44 +176,184 @@ def icon(dex: int) -> tuple[bytes, str]:
 LEAN = 100
 
 
-def view_zone(cat) -> str:
+def _pace(n: float) -> str:
+    if n is None:
+        return ""
+    return f"{n:.1f}/mo" if n < 10 else f"{n:,.0f}/mo"
+
+
+def view_zone(st, cat, now, cur: str, home: str, qs: dict) -> str:
+    from .ui_home import Money
     from .ui import e
-    found = rows(cat)
+    M = Money(st, home, cur, now)
+    found = entries(cat)
+    sort = qs.get("sort", ["dex"])[0]
+    sort = sort if sort in SORTS else "dex"
+    stats = macro(st, {f["dex"]: f["cids"] for f in found})
+
+    def conv(usd: float | None):
+        if usd is None:
+            return None
+        try:
+            if M.fx is not None:
+                return float(M.fx.convert(Decimal(str(usd)), "USD", M.home, now))
+        except Exception:
+            pass
+        return None
+
+    def money(usd: float | None) -> str:
+        if not usd:
+            return ""
+        v = conv(usd)
+        return M(v) if v is not None else f"${usd:,.0f}"
+
+    def rank(f: dict):
+        s = stats.get(f["dex"]) or {}
+        if sort == "cap":
+            return (-(s.get("cap") or 0.0), f["dex"])
+        if sort == "top":
+            return (-(s.get("top") or 0.0), f["dex"])
+        if sort == "move":
+            return (-(s["move"] if s.get("move") is not None else -1e9), f["dex"])
+        if sort == "pace":
+            return (-(s.get("pace") or 0.0), f["dex"])
+        return (f["dex"],)
+
+    found.sort(key=rank)
+    priced = [stats[f["dex"]] for f in found if stats.get(f["dex"], {}).get("priced")]
+    cap_all = sum(s["cap"] for s in priced)
+    cards_all = sum(len(f["cids"]) for f in found)
+
     tiles = []
-    for slug, name, dex, n in found:
+    for f in found:
+        dex, s = f["dex"], stats.get(f["dex"]) or {}
+        g = _gen(dex)
+        meta = []
+        if s.get("priced"):
+            meta.append(f'<b>{money(s["cap"])}</b>')
+            if s.get("move") is not None:
+                mv = s["move"]
+                meta.append(f'<span class="zmv {"pos" if mv >= 0 else "neg"}">{mv:+.0f}%</span>')
+            if s.get("pace"):
+                meta.append(f'<span>{_pace(s["pace"])}</span>')
+        else:
+            meta.append('<span class="znone">no PC yet</span>')
+        if s.get("priced"):
+            tip_bits = [f'PriceCharting: {s["priced"]} of {s.get("versions") or 0} printings priced.',
+                        f'Cap {money(s.get("cap")) or "$0"}, top card {money(s.get("top")) or "$0"}.']
+            if s.get("move") is not None:
+                tip_bits.append(f'12-month move {s["move"]:+.0f}%.')
+            cap_tip = " ".join(tip_bits)
+        else:
+            cap_tip = ('No PriceCharting row for this character yet; the sweep fills one printing per '
+                       'character each pass.')
         tiles.append(
-            f'<a class="zchar" href="/pkm/character/{e(slug)}" data-name="{e(name.lower())}">'
-            f'<img src="/pkm/icon/{dex}.png" alt="" width="104" height="104" loading="lazy" decoding="async">'
-            f'<span class="znm"><b>{e(name)}</b><small><b>{n}</b> card{"s" if n != 1 else ""}</small></span></a>')
+            f'<a class="zd" href="/pkm/character/{e(f["slug"])}" data-name="{e(f["name"].lower())}" '
+            f'style="--g:{_GEN_HUE[g - 1]}" title="{e(f["name"])} #{dex} - {e(cap_tip)}">'
+            f'<span class="zplate">'
+            f'<span class="zno">#{dex:03d}</span><span class="zgen">Gen {_GEN_ROMAN[g - 1]}</span>'
+            f'<img src="/pkm/icon/{dex}.png" alt="" width="120" height="120" loading="lazy" decoding="async">'
+            f'<span class="zid"><b>{e(f["name"])}</b><em title="{len(f["cids"])} cards in the catalog">{len(f["cids"])}</em></span>'
+            f'</span>'
+            f'<span class="zmeta">{"".join(meta)}</span></a>')
+
     shown, hidden = "".join(tiles[:LEAN]), "".join(tiles[LEAN:])
     more = (f'<template id="zrest">{hidden}</template>'
             f'<div class="zmorewrap"><button id="zmore" type="button">Show all {len(found)} characters</button></div>'
             if hidden else "")
+
+    def chip(key: str, label: str, tip: str) -> str:
+        on = sort == key
+        href = "/pkm/characters" + ("" if key == "dex" else f"?sort={key}")
+        return (f'<a class="zchip{" on" if on else ""}" href="{href}" title="{e(tip)}"'
+                + (' aria-current="true"' if on else "") + f'>{label}</a>')
+
+    chips = (chip("dex", "Dex order", "The National Dex, what the page always was.")
+             + chip("cap", "Market cap", "Every priced printing's latest PriceCharting Ungraded price, summed. High to low.")
+             + chip("top", "Top card", "The single most valuable printing of the character. High to low.")
+             + chip("move", "12-mo move", "Cap-weighted 12-month change across the character's priced PriceCharting series.")
+             + chip("pace", "Sales pace", "Copies of this character's cards sold per month, from our own ledger."))
+
+    tape = (f'<b>{len(priced)}</b> of {len(found)} characters priced · '
+            f'<b>{money(cap_all)}</b> tracked at PriceCharting · <b>{cards_all:,}</b> cards'
+            if priced else
+            f'<b>{cards_all:,}</b> cards across {len(found)} characters. No PriceCharting row yet - '
+            f'the background sweep adds one printing per character each pass.')
+
     empty = '<p class="empty">The Pokémon card list is still loading.</p>' if cat is None else ""
     return (f'<style>main.page{{max-width:min(96vw,1840px)}}</style>'
-            f'<section class="zone"><h1>Characters</h1>'
-            f'<p class="sub">{len(found)} Pokémon with a card on this site. The picture is that Pokémon. '
-            f'The number is how many different cards it has.</p>'
-            f'<input id="cfind" class="cfind" placeholder="Find a character" autocomplete="off">'
+            f'<section class="zone">'
+            f'<div class="zhead"><h1>Characters</h1>'
+            f'<p class="sub">One tile per Pokémon the catalog holds. The picture is the Pokémon, the box is its name '
+            f'and card count, and the line under it is what its PriceCharting printings are worth today.</p></div>'
+            f'<div class="ztools"><div class="zchips">{chips}</div>'
+            f'<label class="zfindwrap"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">'
+            f'<circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/>'
+            f'<path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>'
+            f'<input id="cfind" class="cfind" placeholder="Find a character" aria-label="Find a character" '
+            f'autocomplete="off"></label></div>'
+            f'<p class="ztape">{tape}</p>'
             f'<div class="zgrid">{shown}</div>{more}{empty}</section>')
 
 
 CHAR_CSS = """
-section.zone{padding-top:4px}section.zone h1{font-size:clamp(28px,4vw,40px);letter-spacing:-.02em;margin:0 0 6px}
-.cfind{width:min(420px,100%);margin:0 0 18px;border-radius:999px;padding:10px 16px}
-.zgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:22px 12px}
-.zchar{display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;text-decoration:none;color:var(--fg);
-background:none;border:0;border-radius:14px;padding:4px 0 0;box-shadow:none}
-.zchar img{width:104px;height:104px;object-fit:contain;filter:drop-shadow(0 10px 14px rgba(20,60,40,.13));
-transition:transform .16s var(--ease)}
-.zchar:hover img{transform:translateY(-4px)}
-.znm{display:flex;flex-direction:column;align-items:center;max-width:100%;background:var(--surface);
-border:1px solid var(--line);border-radius:999px;padding:4px 14px 5px;box-shadow:var(--shadow)}
-.znm b{font-size:15px;font-weight:700;line-height:1.25;letter-spacing:-.01em;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.znm small{color:var(--fg2);font-size:12px;line-height:1.25}
-.znm small b{font-size:12.5px;color:var(--fg)}
-.zmorewrap{grid-column:1/-1;text-align:center;margin:20px 0 4px}
+section.zone{padding-top:4px}
+.zhead h1{font-size:clamp(28px,4vw,40px);letter-spacing:-.02em;margin:0 0 4px}
+section.zone .sub{margin:0 0 14px}
+.ztools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 8px}
+.zchips{display:flex;gap:6px;flex-wrap:wrap}
+.zchip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:7px 14px;
+font-size:13px;font-weight:650;color:var(--fg2);text-decoration:none;box-shadow:var(--shadow);
+transition:border-color .15s,color .15s,box-shadow .15s}
+.zchip:hover{color:var(--fg);border-color:var(--axis)}
+.zchip.on{color:var(--fg);border-color:var(--axis);box-shadow:var(--shadow-hi)}
+.zfindwrap{flex:1 1 220px;max-width:380px;margin-left:auto;display:flex;flex-direction:row;align-items:center;gap:8px;
+border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:0 14px;box-shadow:var(--shadow);
+color:var(--fg2)}
+.zfindwrap:focus-within{border-color:var(--axis);box-shadow:var(--shadow-hi)}
+.cfind{flex:1;border:0;background:none;outline:0;padding:10px 0;font-size:14px;color:var(--fg);min-width:0}
+.ztape{margin:2px 0 20px;font-size:13px;color:var(--fg2)}
+.ztape b{color:var(--fg);font-weight:700}
+.zgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(142px,1fr));gap:20px 14px}
+.zd{display:block;text-decoration:none;color:var(--fg)}
+.zplate{position:relative;display:block;aspect-ratio:1/1.02;border-radius:18px;overflow:hidden;
+background:radial-gradient(130% 96% at 50% -6%,color-mix(in oklab,var(--g) 34%,var(--surface)) 0%,
+var(--surface) 66%);
+border:1px solid color-mix(in oklab,var(--g) 42%,var(--line));
+box-shadow:0 10px 24px color-mix(in oklab,var(--g) 14%,rgba(20,40,30,.12)),var(--shadow);
+transition:transform .18s var(--ease),box-shadow .18s var(--ease)}
+.zplate::before{content:"";position:absolute;inset:7px;border-radius:12px;pointer-events:none;
+border:1px solid color-mix(in oklab,var(--g) 30%,transparent)}
+.zd:hover .zplate{transform:translateY(-4px);box-shadow:0 16px 30px color-mix(in oklab,var(--g) 20%,rgba(20,40,30,.14)),var(--shadow-hi)}
+.zno{position:absolute;top:10px;left:12px;z-index:3;font-size:11px;font-weight:750;letter-spacing:.04em;
+color:color-mix(in oklab,var(--g) 72%,var(--fg))}
+.zgen{position:absolute;top:10px;right:12px;z-index:3;font-size:10px;font-weight:700;letter-spacing:.05em;
+text-transform:uppercase;color:color-mix(in oklab,var(--g) 58%,var(--fg2))}
+.zplate img{position:absolute;left:50%;bottom:24%;transform:translateX(-50%);width:auto;height:auto;
+max-width:78%;max-height:56%;z-index:2;
+filter:drop-shadow(0 10px 12px color-mix(in oklab,var(--g) 22%,rgba(10,30,20,.18)));
+transition:transform .18s var(--ease)}
+.zd:hover .zplate img{transform:translateX(-50%) translateY(-3px) scale(1.03)}
+.zid{position:absolute;left:8px;right:8px;bottom:8px;z-index:1;display:flex;align-items:center;
+justify-content:space-between;gap:8px;padding:6px 8px 6px 11px;border-radius:10px;
+background:color-mix(in oklab,var(--surface) 82%,var(--g) 18%);
+border:1px solid color-mix(in oklab,var(--g) 34%,var(--line))}
+.zid b{font-size:13.5px;font-weight:750;line-height:1.2;letter-spacing:-.01em;min-width:0;
+overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.zid em{flex:0 0 auto;font-style:normal;font-size:11px;font-weight:750;color:var(--fg2);
+background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:1px 7px;line-height:1.5}
+.zmeta{display:flex;align-items:center;justify-content:center;gap:5px;flex-wrap:wrap;
+font-size:12px;color:var(--fg2);padding:7px 2px 0;min-height:18px}
+.zmeta b{color:var(--fg);font-weight:750}
+.zmeta span+span::before{content:"·";margin-right:5px;color:var(--line-strong,var(--line))}
+.zmv.pos{color:#0f9a86;font-weight:700}
+.zmv.neg{color:#c4553b;font-weight:700}
+.zmv.pos::before,.zmv.neg::before{color:inherit}
+.znone{color:var(--fg2);opacity:.72}
+.zmorewrap{grid-column:1/-1;text-align:center;margin:22px 0 4px}
 .zmorewrap button{border:1px solid var(--axis);border-radius:999px;background:var(--surface);color:var(--fg);
 font-weight:650;font-size:14px;padding:9px 22px;cursor:pointer;box-shadow:var(--shadow)}
 .zmorewrap button:hover{box-shadow:var(--shadow-hi)}
+@media (max-width:640px){.zgrid{grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:16px 10px}
+.zfindwrap{margin-left:0;max-width:none;width:100%}}
 """

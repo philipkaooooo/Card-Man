@@ -330,7 +330,7 @@ document.querySelectorAll('[data-tip][title]').forEach(function(el){el.removeAtt
 (function(){var q=document.getElementById('cfind'),b=document.getElementById('zmore'),g=document.querySelector('.zgrid');
 if(!q&&!b)return;
 function filt(){var s=q?q.value.toLowerCase():'';
- document.querySelectorAll('.zchar').forEach(function(a){a.hidden=!!(s&&a.getAttribute('data-name').indexOf(s)<0)})}
+ document.querySelectorAll('.zd').forEach(function(a){a.hidden=!!(s&&a.getAttribute('data-name').indexOf(s)<0)})}
 if(q)q.addEventListener('input',filt);
 if(b&&g)b.addEventListener('click',function(){var t=document.getElementById('zrest');if(!t)return;
  g.appendChild(t.content.cloneNode(true));t.remove();b.parentNode.remove();filt()});
@@ -2004,7 +2004,7 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     return self._send(200, body, ctype)
                 if parts == ["characters"]:
                     from .zone import view_zone
-                    return self._page("characters", "Characters", view_zone(idx.cat if idx else None), qs, crumb=("Cards", "/pkm/search"))
+                    return self._page("characters", "Characters", view_zone(st, idx.cat if idx else None, now, self._cur(), _engine_home(st), qs), qs, crumb=("Cards", "/pkm/search"))
                 if parts == ["pile"]:
                     from .pile import view as view_pile
                     return self._page("pile", "Card Pile", view_pile(st, idx, EngineMoney(st, _engine_home(st), self._cur(), now), now, token,
