@@ -348,7 +348,8 @@ NAV = (("home", "Home", "/"), ("listings", "Listings", "/opportunities"), ("mark
 SUBS = {"cards": (("pile", "Card Pile", "/pile"), ("characters", "Characters", "/pkm/characters"))}
 NAV_OF = {"home": "home", "opportunities": "listings", "market": "market", "search": "cards", "pile": "cards", "import": "add",
           "costs": "settings", "settings": "settings", "characters": "cards",
-          "deals": "settings", "scan": "settings", "evidence": "settings", "results": "settings", "engine": "settings"}
+          "deals": "settings", "scan": "settings", "evidence": "settings", "results": "settings", "engine": "settings",
+          "alerts": "listings"}
 PRINT_CSS = """
 /* analog street print: paper grain, misregistration, hand-inked edges. decoration only, never data */
 body::after{content:"";position:fixed;inset:0;z-index:9;pointer-events:none;opacity:.04;
@@ -1514,7 +1515,7 @@ def _engine_home(st: Store) -> str:
 def view_opportunities(st: Store, now: datetime, token: str, cur: str, show: str) -> str:
     head = ('<h1>Opportunities</h1><p class="sub">What the engine found in everything it has collected: ranked by money at '
             'stake, how soon it ends, and what a quick check could settle. Only listings with defensible evidence get escalated '
-            'to a deal.</p>')
+            'to a deal. <a href="/alerts">Did the alerts turn into sales? \u2192</a></p>')
     tick = (f'<form method="post" action="/engine/tick" class="inline"><input type="hidden" name="t" value="{e(token)}">'
             '<button>Check for new listings now</button><span class="muted small">Reads new files in data/inbox (CSV, JSONL, '
             'saved pages) and eBay once its keys exist, then re-analyzes only what changed.</span></form>')
@@ -2271,6 +2272,9 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                                              t_filter=t if t in ("any", "singles", "lots") else "any", home_cur=M.cur,
                                              site=qs.get("site", ["any"])[0] if qs.get("site", ["any"])[0] in ("any", "ebay", "yahoo", "mercari", "other") else "any").replace(
                                        '</p>', '</p>' + tick, 1), qs)
+                elif parts == ["alerts"]:
+                    from .ui_alerts import view_alerts
+                    self._page("alerts", "Alerts", view_alerts(st, now, _engine_home(st)), qs)
                 elif parts == ["opportunities", "engine"]:
                     self._page("engine", "Engine details", view_opportunities(st, now, token, self._cur(), qs.get("show", ["open"])[0]), qs)
                 elif parts[0] == "opp" and len(parts) == 2:

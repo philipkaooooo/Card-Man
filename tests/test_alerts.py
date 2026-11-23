@@ -70,3 +70,60 @@ def test_every_page_carries_the_bell(tmp_path):
     from cardman.ui import page
     h = page("t", "<h1>t</h1>", nav="home", store=str(tmp_path / "x.sqlite")).decode()
     assert 'id="abell"' in h and 'id="apop"' in h and "Under-typical asks as they land" in h
+
+
+def test_outcome_sold_near_ask_with_hit_rate(tmp_path):
+    from cardman import alert_outcomes
+    st = seed(tmp_path)
+    add_ask(st, P, 1500)
+    alerts.scan(st, NOW, "TWD")
+    assert alert_outcomes.sweep(st, NOW + timedelta(days=1), "TWD") == {"open": 1, "sold": 0, "gone": 0}
+    st.add_observation(MarketObservation(
+        id="sale-after", evidence_type=ET.MARKETPLACE_MARKED_SOLD, source="ebay_browse:EBAY_US",
+        original_amount=D("1500"), currency="TWD", event_time=NOW + timedelta(days=2),
+        capture_time=NOW + timedelta(days=2), source_url="fixture://after", printing_candidates=(P,)),
+        now=NOW + timedelta(days=2))
+    got = alert_outcomes.sweep(st, NOW + timedelta(days=4), "TWD")
+    assert got["sold"] == 1 and got["open"] == 0
+    state, sale_price, days = st.db.execute("SELECT state, sale_price, days FROM alert_outcome").fetchone()
+    assert state == "SOLD_NEAR" and sale_price == 1500 and 1 < days < 3
+    s = alert_outcomes.stats(st, now=NOW + timedelta(days=4), home="TWD")
+    assert s["sold"] == 1 and s["rate"] == 100 and s["capital"] == 1500 and s["edge"] > 0
+    bell = alerts.recent(st, now=NOW + timedelta(days=4))
+    assert bell[0]["state"] == "SOLD_NEAR" and bell[0]["hit"] == {"sold": 1, "n": 1}
+
+
+def test_outcome_gone_without_a_sale(tmp_path):
+    from cardman import alert_outcomes
+    st = seed(tmp_path)
+    add_ask(st, P, 1500)
+    alerts.scan(st, NOW, "TWD")
+    assert alert_outcomes.sweep(st, NOW + timedelta(days=5), "TWD")["gone"] == 1
+    assert st.db.execute("SELECT state FROM alert_outcome").fetchone()[0] == "GONE"
+    assert alert_outcomes.stats(st, now=NOW + timedelta(days=5))["rate"] == 0
+
+
+def test_outcome_confirmed_sale_when_the_listing_ends_sold(tmp_path):
+    from cardman import alert_outcomes
+    st = seed(tmp_path)
+    add_ask(st, P, 1500)
+    alerts.scan(st, NOW, "TWD")
+    with st.db:
+        st.db.execute("UPDATE listing SET kind='sold', ended_at=? WHERE key='l1'",
+                      ((NOW + timedelta(days=1)).isoformat(),))
+    assert alert_outcomes.sweep(st, NOW + timedelta(days=2), "TWD")["sold"] == 1
+    state, sale_price, note = st.db.execute("SELECT state, sale_price, note FROM alert_outcome").fetchone()
+    assert state == "SOLD" and sale_price == 1500 and "ended sold" in note
+
+
+def test_alerts_page_states_the_flow_and_the_rules(tmp_path):
+    from cardman import alert_outcomes
+    from cardman.ui_alerts import view_alerts
+    st = seed(tmp_path)
+    add_ask(st, P, 1500)
+    alerts.scan(st, NOW, "TWD")
+    alert_outcomes.sweep(st, NOW + timedelta(days=5), "TWD")
+    h = view_alerts(st, NOW + timedelta(days=5), "TWD")
+    assert "did the asks turn into sales" in h.lower()
+    assert "inference" in h and "Money flow by week" in h and "Gone" in h
+    assert "Blue-Eyes" in h or "LOB-EN001" in h

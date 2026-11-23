@@ -78,6 +78,7 @@ class TickReport:
     ask_rows: int = 0
     trends: int = 0
     alerts: int = 0
+    validated: int = 0
     errors: list[str] = field(default_factory=list)
     routes: list[dict] = field(default_factory=list)
     ebay_sold: dict = field(default_factory=dict)
@@ -626,6 +627,8 @@ class Engine:
             from .card_market import ensure_index
             ensure_index(self.store)
             rep.alerts += alerts.scan(self.store, now, home)
+            from . import alert_outcomes
+            rep.validated = alert_outcomes.sweep(self.store, now, home)["sold"]
         except Exception as x:
             rep.errors.append(f"alerts: {type(x).__name__}: {x}")
         rep.open_opportunities = self.db.execute("SELECT COUNT(*) FROM opportunity WHERE status=?", (OPEN,)).fetchone()[0]

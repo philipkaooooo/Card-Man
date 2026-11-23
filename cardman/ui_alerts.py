@@ -31,6 +31,18 @@ box-shadow:6px 8px 0 rgba(0,0,0,.12);z-index:45;padding:6px}
 .afoot{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:7px 8px 3px;border-top:1px solid var(--line);margin-top:4px}
 .afoot a,.afoot button{font-size:12px;color:var(--teal-deep);background:none;border:0;padding:0;cursor:pointer;text-decoration:none;font-weight:700}
 .afoot a:hover,.afoot button:hover{text-decoration:underline}
+.ach{display:inline-block;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:800;letter-spacing:.04em;
+text-transform:uppercase;border:1px solid var(--line)}
+.ach.sold{color:#1d6b4f;border-color:#1d6b4f;background:color-mix(in srgb,#1d6b4f 10%,var(--surface))}
+.ach.gone{color:var(--muted);border-color:var(--line)}
+.ach.open{color:#9a6a15;border-color:#9a6a15;background:color-mix(in srgb,#9a6a15 9%,var(--surface))}
+.aflow{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:12px 0 4px}
+.aflow div{border:1.5px solid var(--line);border-radius:10px;padding:9px 11px;background:var(--surface)}
+.aflow small{display:block;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.aflow b{font-size:20px;font-variant-numeric:tabular-nums}
+.abar{display:inline-block;height:8px;border-radius:4px;background:#1d6b4f;vertical-align:middle;min-width:2px}
+.abar.bg{background:color-mix(in srgb,#1d6b4f 16%,var(--surface))}
+.apage table.compact td,.apage table.compact th{font-size:12.5px}
 .atoasts{position:fixed;right:16px;bottom:16px;z-index:80;display:flex;flex-direction:column;gap:8px;max-width:min(340px,86vw)}
 .atoast{background:var(--surface);border:1.5px solid var(--fg2);border-left:5px solid #c4553b;
 border-radius:11px 9px 12px 8px/9px 12px 8px 11px;box-shadow:5px 7px 0 rgba(0,0,0,.13);padding:10px 12px;
@@ -61,6 +73,11 @@ function item(it){
  a.appendChild(h('b',null,it.label));
  a.appendChild(h('span','av',money(it.ask,it.cur)+' \u00b7 '+Math.round(it.pct||0)+'% under '+money(it.typical,it.cur)));
  a.appendChild(h('small',null,ago(it.at)));
+ if(it.state==='SOLD')a.appendChild(h('small',null,'sold: the listing itself ended sold'));
+ else if(it.state==='SOLD_NEAR')a.appendChild(h('small',null,'sold near the ask'+(it.days!=null?' after '+it.days+' d':'')+(it.sale!=null?' \u00b7 '+money(it.sale,it.cur):'')));
+ else if(it.state==='GONE')a.appendChild(h('small',null,'gone, no matching sale'));
+ else if(it.state==='OPEN')a.appendChild(h('small',null,'still live'));
+ if(it.hit&&it.hit.n>=2)a.appendChild(h('small',null,'this print: '+it.hit.sold+' of '+it.hit.n+' past alerts sold'));
  a.onclick=function(){see([it.id]);setTimeout(function(){paint(cur)},0)};
  return a}
 function paint(items){
@@ -71,7 +88,7 @@ function paint(items){
  pop.appendChild(h('div','ahead','Under typical \u00b7 newest first'));
  items.slice(0,12).forEach(function(it){pop.appendChild(item(it))});
  var f=h('div','afoot');
- var m=h('a',null,'Open the market \u2192');m.href='/market#under';f.appendChild(m);
+ var m=h('a',null,'Was it real? \u2192');m.href='/alerts';f.appendChild(m);
  if(window.Notification){
   if(Notification.permission==='default'){var q=h('button',null,'Desktop alerts');q.type='button';
    q.onclick=function(){Notification.requestPermission().then(function(){paint(cur)})};f.appendChild(q)}
@@ -103,3 +120,73 @@ document.addEventListener('visibilitychange',function(){if(!document.hidden){doc
 poll();setInterval(poll,40000);
 })();
 """
+
+
+def _money(v, cur: str) -> str:
+    if v is None:
+        return "-"
+    sym = {"USD": "$", "TWD": "NT$", "JPY": "\u00a5", "EUR": "\u20ac", "GBP": "\u00a3"}.get(cur, cur + " ")
+    return sym + (f"{v:,.0f}" if abs(v) >= 1000 else f"{v:,.2f}")
+
+
+def _when(iso: str) -> str:
+    return (iso or "")[:10]
+
+
+STATE_MARK = {"SOLD": ("sold", "sold: the listing itself ended sold"),
+              "SOLD_NEAR": ("sold", "sold near the ask"),
+              "GONE": ("gone", "gone, no matching sale"),
+              "OPEN": ("open", "still live")}
+
+
+def view_alerts(st, now, home: str) -> str:
+    """Was it real: every followed alert, the weekly money flow, and the sell-through the next alerts are read against."""
+    from html import escape as _e
+    from . import alert_outcomes
+    s = alert_outcomes.stats(st, days=60, now=now, home=home)
+    rows = alert_outcomes.ledger(st, days=60, now=now)
+    out = ['<div class="apage"><h1>Alerts: did the asks turn into sales?</h1>'
+           '<p class="sub">Every under-typical ask is followed to its end. <b>Sold</b> means the listing itself ended '
+           'sold or accepted an offer. <b>Sold near the ask</b> means it vanished and a raw sale of the same print '
+           'landed inside the ask band (0.75x ask to 1.25x typical) within 21 days - an inference, and named as one. '
+           '<b>Gone</b> means it vanished with nothing behind it. <b>Live</b> means the ask is still on the board.</p>']
+    out.append('<div class="aflow">')
+    bits = [("Alerts followed · 60 d", f"{s['n']}"),
+            ("Still live", f"{s['live']}"),
+            ("Sold of resolved", f"{s['rate']:.0f}%" if s["rate"] is not None else "-"),
+            ("Money caught", _money(s["capital"], home)),
+            ("Edge if bought", _money(s["edge"], home))]
+    for k, v in bits:
+        out.append(f'<div><small>{_e(k)}</small><b>{_e(v)}</b></div>')
+    out.append('</div>')
+    if s["weeks"]:
+        out.append('<section><h2>Money flow by week</h2><div class="wrap"><table class="compact">'
+                   '<tr><th>Week</th><th class="n">Alerts</th><th class="n">Sold</th><th>Share</th>'
+                   '<th class="n">Capital</th><th class="n">Edge</th></tr>')
+        top = max(w["n"] for w in s["weeks"]) or 1
+        for w in s["weeks"]:
+            share = (w["sold"] / w["n"] * 100) if w["n"] else 0
+            out.append(f'<tr><td>{_e(w["week"])}</td><td class="n">{w["n"]}</td><td class="n">{w["sold"]}</td>'
+                       f'<td><span class="abar" style="width:{max(2, share / 100 * 90):.0f}px"></span>'
+                       f'<span class="abar bg" style="width:{max(2, (1 - share / 100) * 90):.0f}px"></span> '
+                       f'{share:.0f}%</td><td class="n">{_money(w["capital"], home)}</td>'
+                       f'<td class="n">{_money(w["edge"], home)}</td></tr>')
+        out.append('</table></div></section>')
+    if not rows:
+        out.append('<section><h2>No alerts followed yet</h2><p>The ledger fills on the next engine pass after an '
+                   'under-typical ask has been seen for three days and either sold or gone.</p></section>')
+        return "".join(out) + "</div>"
+    out.append('<section><h2>Every followed alert</h2><div class="wrap"><table class="compact">'
+               '<tr><th>Seen</th><th>Card</th><th class="n">Ask</th><th class="n">Typical</th><th>State</th>'
+               '<th class="n">After</th><th class="n">Sale</th><th>What happened</th></tr>')
+    for r in rows:
+        cls, title = STATE_MARK.get(r["state"], ("open", r["state"] or ""))
+        name = f'<a href="{_e(r["href"])}">{_e(r["label"] or "")}</a>' if r.get("href") else _e(r["label"] or "")
+        after = f'{r["days"]:g} d' if r["days"] is not None else "-"
+        out.append(f'<tr><td>{_e(_when(r["at"]))}</td><td>{name}</td>'
+                   f'<td class="n">{_money(r["ask"], home)}</td><td class="n">{_money(r["typical"], home)}</td>'
+                   f'<td><span class="ach {cls}">{cls}</span></td>'
+                   f'<td class="n">{after}</td>'
+                   f'<td class="n">{_money(r["sale_price"], home)}</td><td>{_e(r["note"] or title)}</td></tr>')
+    out.append('</table></div></section></div>')
+    return "".join(out)

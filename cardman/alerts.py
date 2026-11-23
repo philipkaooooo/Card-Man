@@ -34,9 +34,10 @@ def _game(pid: str) -> str:
     return "pkm" if pid.startswith("pk:") else "ygo"
 
 
-def _asks(st, now: datetime, home: str, pids: list[str] | None) -> dict[str, float]:
-    """Cheapest live ask per printing, converted to home currency. Same gates the snapshot uses: 95% on the
-    card, 90% on the printing, no lots, nothing ended, nothing unseen for three days."""
+def _asks(st, now: datetime, home: str, pids: list[str] | None) -> dict[str, dict]:
+    """Cheapest live ask per printing, converted to home currency, with the listing it came from so an outcome
+    can follow it. Same gates the snapshot uses: 95% on the card, 90% on the printing, no lots, nothing ended,
+    nothing unseen for three days."""
     have = _tables(st)
     if not {"card_listing", "listing"} <= have:
         return {}
@@ -53,19 +54,19 @@ def _asks(st, now: datetime, home: str, pids: list[str] | None) -> dict[str, flo
         where = f" AND c.printing_id IN ({','.join('?' * len(pids))})"
         args += tuple(pids)
     rows = st.db.execute(
-        "SELECT c.printing_id, l.price, l.currency FROM card_listing c JOIN listing l ON l.key=c.key "
+        "SELECT c.printing_id, l.price, l.currency, l.key, l.url FROM card_listing c JOIN listing l ON l.key=c.key "
         "WHERE c.card_prob>=? AND c.printing_prob>=? AND c.lot=0 AND l.kind='ask' AND c.status<>'REJECTED' "
         "AND l.ended_at IS NULL AND l.last_seen>=?" + where, args)
-    best: dict[str, float] = {}
-    for pid, price, cur in rows:
+    best: dict[str, dict] = {}
+    for pid, price, cur, lkey, url in rows:
         try:
             v = float(price) if cur == home else (float(fx.convert(Decimal(str(price)), cur, home, now)) if fx else None)
         except Exception:
             continue
         if v is None or v <= 0:
             continue
-        if pid not in best or v < best[pid]:
-            best[pid] = v
+        if pid not in best or v < best[pid]["ask"]:
+            best[pid] = {"ask": v, "key": lkey, "url": url}
     return best
 
 
@@ -106,7 +107,8 @@ def scan(st, now: datetime, home: str, pids: list[str] | None = None) -> int:
     added = 0
     day = now.date().isoformat()
     with st.db:
-        for pid, ask in asks.items():
+        for pid, info in asks.items():
+            ask = info["ask"]
             t = typ.get(pid)
             if not t or t["n"] < MIN_SALES:
                 continue
@@ -119,12 +121,18 @@ def scan(st, now: datetime, home: str, pids: list[str] | None = None) -> int:
             label = label_for(pid)
             detail = {"label": label, "ask": round(ask, 2), "typical": round(fair, 2),
                       "pct": round(disc * 100, 1), "cur": home, "game": _game(pid), "day": day,
+                      "key": info["key"], "url": info["url"],
                       "text": f"{label} asked at {ask:,.0f} {home}, {disc * 100:.0f}% under its typical "
                               f"{fair:,.0f} {home} after fees."}
-            added += st.db.execute(
-                "INSERT OR IGNORE INTO market_signal VALUES (?,?,?,?,?)",
-                (f"ASK_UNDER:{pid}:{ask:.2f}", "ASK_UNDER", pid, now.isoformat(),
-                 json.dumps(detail, ensure_ascii=False))).rowcount
+            sid = f"ASK_UNDER:{pid}:{ask:.2f}"
+            dj = json.dumps(detail, ensure_ascii=False)
+            got = st.db.execute("INSERT OR IGNORE INTO market_signal VALUES (?,?,?,?,?)",
+                                (sid, "ASK_UNDER", pid, now.isoformat(), dj)).rowcount
+            if not got:
+                # a signal written before the listing key was kept: attach it now so the outcome can follow it
+                got = st.db.execute("UPDATE market_signal SET detail_json=? WHERE id=? AND instr(detail_json, '\"key\"')=0",
+                                    (dj, sid)).rowcount
+            added += got
     return added
 
 
@@ -139,6 +147,17 @@ def recent(st, days: int = 7, limit: int = 30, now: datetime | None = None) -> l
                          "WHERE kind='ASK_UNDER' AND at>=? ORDER BY at DESC LIMIT ?", (cutoff, limit)).fetchall()
     from .games import card_href
     from .ui_market import _card_key
+    states, hits = {}, {}
+    have = _tables(st)
+    if "alert_outcome" in have:
+        for oid, pid, state, days, sale in st.db.execute(
+                "SELECT signal_id, printing_id, state, days, sale_price FROM alert_outcome"):
+            states[oid] = (state, days, sale)
+        for pid, sold, n in st.db.execute(
+                "SELECT printing_id, SUM(state IN ('SOLD','SOLD_NEAR')), COUNT(*) FROM alert_outcome "
+                "WHERE state<>'OPEN' GROUP BY printing_id"):
+            if n:
+                hits[pid] = {"sold": int(sold or 0), "n": int(n)}
     out = []
     for sid, at, pid, dj in rows:
         try:
@@ -150,5 +169,9 @@ def recent(st, days: int = 7, limit: int = 30, now: datetime | None = None) -> l
                     "ask": d.get("ask"), "typical": d.get("typical"), "pct": d.get("pct"),
                     "cur": d.get("cur") or "TWD", "game": d.get("game") or _game(pid),
                     "href": card_href(key) if key else None,
-                    "text": d.get("text") or ""})
+                    "text": d.get("text") or "",
+                    "state": (states.get(sid) or ("OPEN", None, None))[0],
+                    "days": (states.get(sid) or ("OPEN", None, None))[1],
+                    "sale": (states.get(sid) or ("OPEN", None, None))[2],
+                    "hit": hits.get(pid)})
     return out

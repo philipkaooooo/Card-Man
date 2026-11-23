@@ -51,6 +51,11 @@ Pricing rules: `docs/pricing-method.md` — a price comes from real sales of one
   signal per printing per price point (fee math identical to the under-typical section: raw in, raw out).
   The bell in the header polls `/alerts.json` every 40 s, badges what is unseen, toasts new asks while the app
   is open, and can post a desktop notification after one explicit click. Every alert links to its card page.
+- Alerts are followed to their end (`alert_outcomes.py`): the listing ended sold / accepted an offer is direct
+  evidence, a vanished ask counts as sold near the ask only when a raw sale of the same print lands inside the
+  ask band within 21 days, and anything else is gone. The Alerts page (`/alerts`) shows sell-through, the money
+  caught and the edge left on the table per week, plus every followed signal with what actually happened; the
+  bell shows each ask's state and how past alerts on that print resolved.
 - The board's **Trend** column (`trends.py`) uses one rule on every row: the median of the newest k sales
   against the median of the k before them, k = min(5, sales/2). Up 5%+ is Climbing, down 5%+ Slipping,
   inside that Holding. Too few sales for that, PriceCharting's own weekly series for the same grade supplies
