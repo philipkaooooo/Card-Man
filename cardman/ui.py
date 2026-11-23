@@ -345,8 +345,9 @@ ON = ' class="on" aria-current="page"'
 # One header, six places. Cards+ opens on hover to Card Pile and the character index.
 NAV = (("home", "Home", "/"), ("listings", "Listings", "/opportunities"), ("market", "Market", "/market"),
        ("cards", "Cards+", "/search"), ("add", "Add sales", "/import"), ("settings", "Settings", "/settings"))
-SUBS = {"cards": (("pile", "Card Pile", "/pile"), ("characters", "Characters", "/pkm/characters"))}
-NAV_OF = {"home": "home", "opportunities": "listings", "market": "market", "search": "cards", "pile": "cards", "import": "add",
+SUBS = {"cards": (("pile", "Card Pile", "/pile"), ("characters", "Characters", "/pkm/characters")),
+        "market": (("board", "Full board", "/market"), ("now", "Under typical & grading", "/market/now"))}
+NAV_OF = {"home": "home", "opportunities": "listings", "market": "market", "now": "market", "search": "cards", "pile": "cards", "import": "add",
           "costs": "settings", "settings": "settings", "characters": "cards",
           "deals": "settings", "scan": "settings", "evidence": "settings", "results": "settings", "engine": "settings",
           "alerts": "listings"}
@@ -412,19 +413,21 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     from .ui_settings import SETTINGS_CSS
     from .ui_pc import PC_CSS
     from .ui_market import MARKET_CSS
+    from .ui_now import NOW_CSS
     from .ui_icons import EFFECTS_CSS, ICON_CSS, SPRITE
     from .ui_decide import DECIDE_CSS
     from .ui_alerts import BELL, CSS as ALERTS_CSS
     from .zone import CHAR_CSS
     theme = theme if theme in THEMES else "market"
     where = NAV_OF.get(nav, "")
-    swap = ({"/": "/pkm/", "/market": "/pkm/market", "/opportunities": "/pkm/opportunities",
-             "/search": "/pkm/search"} if game == "pkm" else {})
+    swap = ({"/": "/pkm/", "/market": "/pkm/market", "/market/now": "/pkm/market/now",
+             "/opportunities": "/pkm/opportunities", "/search": "/pkm/search"} if game == "pkm" else {})
     links = ""
     for k, t, h in NAV:
         h = swap.get(h, h)
         if k in SUBS:
-            items = "".join(f'<a href="{sh}"{ON if sk == where else ""}>{e(st)}</a>' for sk, st, sh in SUBS[k])
+            items = "".join(f'<a href="{swap.get(sh, sh)}"{ON if sk == where else ""}>{e(st)}</a>'
+                            for sk, st, sh in SUBS[k])
             links += (f'<div class="nwrap"><a href="{h}"{ON if k == where else ""}>{e(t)}'
                       f'<span class="caret" aria-hidden="true">▾</span></a><div class="nsub">{items}</div></div>')
         else:
@@ -453,7 +456,7 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     tz = datetime.now().astimezone().strftime("UTC%z")
     return (f'<!doctype html><html lang="en" data-theme="{"vault" if theme == "vault" else "auto"}"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)} · CardMan</title>'
-            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{PC_CSS}{ICON_CSS}{EFFECTS_CSS}{PRINT_CSS}{SHELL_CSS}{DECIDE_CSS}{CHAR_CSS}{MARKET_CSS}{ALERTS_CSS}</style></head><body>{SPRITE}'
+            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{PC_CSS}{ICON_CSS}{EFFECTS_CSS}{PRINT_CSS}{SHELL_CSS}{DECIDE_CSS}{CHAR_CSS}{MARKET_CSS}{NOW_CSS}{ALERTS_CSS}</style></head><body>{SPRITE}'
             + scope_links(f'<header class="top"><a class="logo" href="/">CardMan</a><nav class="main" aria-label="Main">{links}</nav>{BELL}{hsearch}'
                           f'{games}{curs}</header><main class="page">{crumb}{flash}{body}</main>', game) +
             f'<footer class="foot">Private to this Mac · times {e(tz)} · press <kbd>/</kbd> to search</footer>'
@@ -1928,7 +1931,7 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
             if not back.startswith("/") or back.startswith("//"):
                 back = "/"
             base = (back[4:] if back.startswith("/pkm") else back) or "/"
-            same = base.split("?")[0] in ("/", "/opportunities", "/search", "/market")
+            same = base.split("?")[0] in ("/", "/opportunities", "/search", "/market", "/market/now")
             target = base if same else "/"
             to = ("/pkm" + target) if g == "pkm" else target
             self.send_response(303)
@@ -2012,6 +2015,9 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                 if parts == ["market"]:
                     from .ui_market import view_market
                     return self._page("market", "Market", view_market(st, now, self._cur(), _engine_home(st), qs, game="pkm", pkm=idx.cat), qs)
+                if parts == ["market", "now"]:
+                    from .ui_now import view_now
+                    return self._page("market", "Now", view_now(st, now, self._cur(), _engine_home(st), qs, game="pkm", pkm=idx.cat), qs)
                 if parts == ["opportunities"]:
                     from .ui_listing import view_list
                     if not _engine_ready(st):
@@ -2105,6 +2111,8 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                 return self._go("/pkm/")
             if self.game == "ygo" and parts == ["market"] and self._cookie("game") == "pkm":
                 return self._go("/pkm/market" + (("?" + u.query) if u.query else ""))
+            if self.game == "ygo" and parts[:2] == ["market", "now"] and self._cookie("game") == "pkm":
+                return self._go("/pkm/market/now" + (("?" + u.query) if u.query else ""))
             if self.game == "pkm" and pcards() is None and parts[:1] in (["search"], ["card"], ["character"], ["characters"]):
                 from .catalog_boot import read_status
                 stt = read_status()
@@ -2269,6 +2277,9 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                 elif parts == ["market"]:
                     from .ui_market import view_market
                     self._page("market", "Market", view_market(st, now, self._cur(), _engine_home(st), qs, game="ygo", cards=cards), qs)
+                elif parts == ["market", "now"]:
+                    from .ui_now import view_now
+                    self._page("market", "Now", view_now(st, now, self._cur(), _engine_home(st), qs, game="ygo", cards=cards), qs)
                 elif parts == ["opportunities"]:
                     if not _engine_ready(st):
                         self._page("opportunities", "Listings", view_opportunities(st, now, token, self._cur(), "open"), qs)

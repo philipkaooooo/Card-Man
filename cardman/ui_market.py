@@ -135,6 +135,15 @@ font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-s
 .mask b a{color:inherit;text-decoration:none;border-bottom:1px dashed color-mix(in srgb,var(--fg2) 45%,transparent)}
 .mask b a:hover{color:var(--teal-deep);border-color:var(--teal-deep)}
 .mtrend{display:block;min-width:0}
+.slp{flex:none;display:block;overflow:visible}
+.slp .ln{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}
+.slp .d0{fill:currentColor;opacity:.4}.slp .d1{fill:currentColor}
+.mtrend .slp{color:var(--fg2)}
+.mtrend.rising .slp{color:var(--teal)}
+.mtrend.falling .slp{color:#c4553b}
+.mtrend.steady .slp{color:#8a836f}
+.mtrend.none .slp{color:var(--muted)}
+.mtrend.none .d1{fill:none}
 .mtrend b{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:800;white-space:nowrap}
 .mtrend b i{flex:none;width:0;height:0;border-left:4.5px solid transparent;border-right:4.5px solid transparent}
 .mtrend.rising b{color:var(--teal-deep)}.mtrend.falling b{color:#a2452f}.mtrend.steady b,.mtrend.none b{color:var(--fg2)}
@@ -171,6 +180,24 @@ font-weight:600}}
 def _grade(gkey: str) -> str:
     gc, _, gr = (gkey or "|").partition("|")
     return f"{gc} {gr}".strip() if gc else ""
+
+
+def _slope(lab: str | None, pct: float | None, ours: bool) -> str:
+    """A two-point slope: the middle of the prior sales on the left, the middle of the newest on the right.
+    The angle is the size of the move; solid is our own sales, dashed is PriceCharting standing in; a dotted
+    flat line with a hollow end is no direction at all."""
+    if lab is None:
+        return ('<svg class="slp none" width="58" height="20" viewBox="0 0 58 20" aria-hidden="true">'
+                '<path class="ln" d="M6 13 H49" stroke-dasharray="2 3"/>'
+                '<circle class="d1" cx="49" cy="13" r="2.6" fill="none" stroke="currentColor"/></svg>')
+    dy = max(2.5, min(10.0, abs(pct or 0) / 5.0))
+    y1 = 13.0
+    y2 = 13.0 - dy if lab == "rising" else (13.0 + dy if lab == "falling" else 13.0)
+    dash = '' if ours else ' stroke-dasharray="3 2"'
+    return (f'<svg class="slp {lab}" width="58" height="20" viewBox="0 0 58 20" aria-hidden="true">'
+            f'<path class="ln" d="M6 {y1:.1f} L49 {y2:.1f}"{dash}/>'
+            f'<circle class="d0" cx="6" cy="{y1:.1f}" r="2.2"/>'
+            f'<circle class="d1" cx="49" cy="{y2:.1f}" r="3"/></svg>')
 
 
 def _spark(points: list, label: str, tip: str, href: str | None = None) -> str:
@@ -263,16 +290,18 @@ def _days_since(iso, now: datetime) -> int | None:
         return None
 
 
-def _ask_links(st, now: datetime, home: str, pids: list[str]) -> dict[tuple[str, str], str]:
+def _ask_links(st, now: datetime, home: str, pids: list[str]) -> tuple[dict[tuple[str, str], str],
+                                                                       dict[tuple[str, str], str]]:
     """The cheapest live listing behind each ask, same evidence rules as the nightly snapshot: engine 95% on the
-    card, 90% on the printing, no lots, no ended listings, nothing unseen for three days."""
+    card, 90% on the printing, no lots, no ended listings, nothing unseen for three days. Returns the listing
+    URL and its listing id, so a section can show the seller's own photo."""
     from decimal import Decimal
 
     from .fx import FxTable
     from .history import ASK_CARD_PROB, ASK_PRINTING_PROB
     from .listing_parser import _GRADE_RE
     if not pids or not {"card_listing", "listing"} <= _tables(st):
-        return {}
+        return {}, {}
     try:
         fx = FxTable(st.fx_rates(), max_age=timedelta(days=3))
     except Exception:
@@ -280,12 +309,12 @@ def _ask_links(st, now: datetime, home: str, pids: list[str]) -> dict[tuple[str,
     fresh = (now - timedelta(days=3)).isoformat()
     marks = ",".join("?" * len(pids))
     rows = st.db.execute(
-        "SELECT c.printing_id, l.price, l.currency, l.data_json, l.title, l.url FROM card_listing c "
+        "SELECT c.printing_id, l.price, l.currency, l.data_json, l.title, l.url, l.listing_id FROM card_listing c "
         f"JOIN listing l ON l.key=c.key WHERE c.printing_id IN ({marks}) AND c.card_prob>=? AND c.printing_prob>=? "
         "AND c.lot=0 AND l.kind='ask' AND c.status<>'REJECTED' AND l.ended_at IS NULL AND l.last_seen>=?",
         (*pids, ASK_CARD_PROB, ASK_PRINTING_PROB, fresh))
-    best: dict[tuple[str, str], tuple[float, str]] = {}
-    for pid, price, cur, dj, title, url in rows:
+    best: dict[tuple[str, str], tuple[float, str, str | None]] = {}
+    for pid, price, cur, dj, title, url, lid in rows:
         if not url:
             continue
         try:
@@ -310,35 +339,20 @@ def _ask_links(st, now: datetime, home: str, pids: list[str]) -> dict[tuple[str,
                 continue
         key = (pid, f"{gc or ''}|{gr or ''}")
         if key not in best or v < best[key][0]:
-            best[key] = (v, url)
-    return {k: url for k, (_v, url) in best.items()}
+            best[key] = (v, url, lid)
+    return ({k: url for k, (_v, url, _l) in best.items()},
+            {k: lid for k, (_v, _url, lid) in best.items() if lid})
 
 
-def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "ygo",
-                cards=None, pkm=None) -> str:
+def _actionable(st, game: str, now: datetime, home: str, cur: str, rows: list[dict]) -> dict:
+    """The numbers both action sections spend: under-typical deals, raw→PSA 10 picks, ask links and listing
+    ids, PriceCharting rows, and the cost constants."""
+    from .engine import load_profile
     M = Money(st, home, cur, now)
-    if "price_trend" not in _tables(st):
-        return ('<h1>Market</h1><p class="empty">The market board fills once cards start selling. The engine writes it at '
-                'the end of every pass, or run <code>python -m cardman.trends refresh</code>.</p>')
-    label = qs.get("label", ["all"])[0]
-    label = label if label in ("all", "rising", "falling", "steady", "none") else "all"
-    sort = qs.get("sort", ["move"])[0]
-    sort = {"move30": "move"}.get(sort) or (sort if sort in ("move", "edge", "sales", "spread", "recent") else "move")
-    min_sales = qs.get("min", ["0"])[0]
-    min_sales = int(min_sales) if min_sales.isdigit() else 0
-    s = trends.summary(st, game)
-    rows = trends.board(st, game=game, label=None if label == "all" else label, min_sales=min_sales, sort=sort, limit=200)
-    name = {"ygo": "Yu-Gi-Oh!", "pkm": "Pokémon"}.get(game, game)
-    total = s["series"] or 1
-
-    def pct(n):
-        return max(0.0, n / total * 100)
 
     def fair_of(r):
         return r["median_30"] if (r["n_30"] or 0) >= 3 else r["median"]
 
-    # Your real costs, loaded once: both sections below spend the same numbers.
-    from .engine import load_profile
     try:
         profile = load_profile()
     except Exception:
@@ -352,9 +366,6 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
                + float(exit_c.get("payout_fx_spread_pct") or 0))
     ship_out = float(exit_c.get("outbound_shipping") or 0)
     target = float(profile.get("target_return") or 0)
-
-    def net_sale(home_v):
-        return home_v * (1 - fee_pct) - ship_out
 
     def flip_profit(ask_home, fair_home):
         # Raw in, raw out: exit fees and the buy-side spread. Inbound/outbound shipping is padding on a comparison.
@@ -372,61 +383,8 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
     deals.sort(key=lambda x: -x[0])
     under_n = len(deals)
     deals = [d for _p, d in deals[:6]]
-
-    def jump(lab):
-        q = {k: v for k, v in qs.items() if k not in ("msg", "err", "label")}
-        if lab not in ("all", label):
-            q["label"] = lab
-        return "/market" + ("?" + e(urlencode(q)) if q else "")
-
-    pulse = ""
-    if s["series"]:
-        tiles = (("rising", "up", "p-up", s["rising"], "Climbing"),
-                 ("falling", "down", "p-down", s["falling"], "Slipping"),
-                 ("steady", "hold", "p-hold", s["steady"], "Holding"),
-                 ("none", "none", "p-none", s["no_trend"], "Thin"))
-        rule = ("One rule on every row: the middle of its newest sales against the middle of the ones just before "
-                "them. Climbing: up 5% or more. Slipping: down 5% or more. Holding: inside 5%. Too few sales "
-                "here, PriceCharting's 12-month series for the same grade answers; Thin means neither could.")
-        pulse = ('<div class="mkph-bar" role="img" aria-label="Market split by trend" title="' + e(rule) + '">'
-                 + "".join(f'<a class="{bc}" style="width:{pct(n):.1f}%" href="{jump(l)}" '
-                           f'title="{n:,} {w} — show only these"></a>' for l, _c, bc, n, w in tiles if n)
-                 + '</div><div class="mkph-row">'
-                 + "".join(f'<a class="mtile {c}{" on" if label == l else ""}" href="{jump(l)}"'
-                           + (' aria-current="true"' if label == l else "")
-                           + f' title="{w}: {n:,} versions. A click keeps only these; a second click clears it.">'
-                           f'<i></i><b>{n:,}</b><small>{w}</small></a>' for l, c, _bc, n, w in tiles)
-                 + (f'<a class="mtile deal" href="#under" title="{under_n} live asks under the typical sold price '
-                    f'after fees."><b>{under_n}</b><small>under typical</small></a>' if under_n else "")
-                 + '<span class="mkstat">'
-                 + f'<span><b>{s["with_asks"]:,}</b> listed</span>'
-                 + f'<span><b>{s["n_30"]:,}</b> sold · 30d</span>'
-                 + '</span></div>')
-    tabs = ('<div class="mk-games" role="tablist" aria-label="Game">'
-            + "".join(f'<a role="tab"{ON_TAB if g == game else ""} href="/game?{e(urlencode({"g": g, "back": "/market"}))}">'
-                      f'{e(lab)}</a>' for g, lab in (("ygo", "Yu-Gi-Oh!"), ("pkm", "Pokémon")))
-            + '</div>')
-    head = f'<div class="mk-top"><h1>The {e(name)} market</h1>' + tabs + '</div>' + pulse
-    chips = _filters({**qs, "sort": sort, "min": str(min_sales)}, sort, str(min_sales))
-    cols = ('<div class="mhead">'
-            '<span>Card</span>'
-            '<span title="Median of this exact version\'s sales, in your currency. Uses the last 30 days when 3+ sales '
-            'sit there, otherwise all stored sales. The line under it is the middle half (p25-p75).">Typical sold</span>'
-            '<span title="Copies sold per month. The line under it: newest sale and how many sales back the number.">'
-            'Sales pace</span>'
-            '<span title="Cheapest live listing in the newest snapshot (up to 3 days old), the listing itself one click '
-            'away, and its gap to the typical price. Supply: listed count divided by the monthly sales pace.">'
-            'Cheapest ask</span>'
-            '<span title="PriceCharting\'s own weekly sold prices for this grade (Ungraded for raw rows), last 12 '
-            'months. The line under it is the year change. A verdict from a second market, not a copy of ours.">'
-            '1 yr · PC</span>'
-            '<span title="The middle of this row\'s newest sales against the middle of the sales just before them - '
-            'same count on each side, up to 5. Climbing 5%+, Slipping 5%-, else Holding. Too few sales, '
-            'PriceCharting\'s 12-month series for that grade answers instead; Thin means neither could.">'
-            'Trend</span>'
-            '</div>')
-    name_of = _name_of(cards, pkm)
-    links = _ask_links(st, now, home, sorted({r["printing_id"] for r in rows} | {d["printing_id"] for d in deals}))
+    pids = sorted({r["printing_id"] for r in rows} | {d["printing_id"] for d in deals})
+    links, items = _ask_links(st, now, home, pids)
     pcrows = pc.rows_for(st, [r["printing_id"] for r in rows])
 
     def usd_home(usd: float | None):
@@ -486,6 +444,94 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
     buys.sort(key=lambda x: -x[0])
     watches.sort(key=lambda x: -x[0])
     picks = [("now",) + b for b in buys[:4]] + [("wait",) + w for w in watches[:2]]
+    return {"deals": deals, "under_n": under_n, "picks": picks, "links": links, "items": items,
+            "pcrows": pcrows, "fair_of": fair_of, "usd_home": usd_home, "pc_money": pc_money,
+            "vol_per_month": vol_per_month, "flip_profit": flip_profit,
+            "k_buy": k_buy, "fixed": fixed, "fee_pct": fee_pct, "ship_out": ship_out, "target": target}
+
+
+def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "ygo",
+                cards=None, pkm=None) -> str:
+    M = Money(st, home, cur, now)
+    if "price_trend" not in _tables(st):
+        return ('<h1>Market</h1><p class="empty">The market board fills once cards start selling. The engine writes it at '
+                'the end of every pass, or run <code>python -m cardman.trends refresh</code>.</p>')
+    label = qs.get("label", ["all"])[0]
+    label = label if label in ("all", "rising", "falling", "steady", "none") else "all"
+    sort = qs.get("sort", ["move"])[0]
+    sort = {"move30": "move"}.get(sort) or (sort if sort in ("move", "edge", "sales", "spread", "recent") else "move")
+    min_sales = qs.get("min", ["0"])[0]
+    min_sales = int(min_sales) if min_sales.isdigit() else 0
+    s = trends.summary(st, game)
+    rows = trends.board(st, game=game, label=None if label == "all" else label, min_sales=min_sales, sort=sort, limit=200)
+    name = {"ygo": "Yu-Gi-Oh!", "pkm": "Pokémon"}.get(game, game)
+    total = s["series"] or 1
+
+    def pct(n):
+        return max(0.0, n / total * 100)
+
+    A = _actionable(st, game, now, home, cur, rows)
+    deals, under_n, picks = A["deals"], A["under_n"], A["picks"]
+    fair_of = A["fair_of"]
+
+    def jump(lab):
+        q = {k: v for k, v in qs.items() if k not in ("msg", "err", "label")}
+        if lab not in ("all", label):
+            q["label"] = lab
+        return "/market" + ("?" + e(urlencode(q)) if q else "")
+
+    pulse = ""
+    if s["series"]:
+        tiles = (("rising", "up", "p-up", s["rising"], "Climbing"),
+                 ("falling", "down", "p-down", s["falling"], "Slipping"),
+                 ("steady", "hold", "p-hold", s["steady"], "Holding"),
+                 ("none", "none", "p-none", s["no_trend"], "Thin"))
+        rule = ("One rule on every row: the middle of its newest sales against the middle of the ones just before "
+                "them. Climbing: up 5% or more. Slipping: down 5% or more. Holding: inside 5%. Too few sales "
+                "here, PriceCharting's 12-month series for the same grade answers; Thin means neither could.")
+        pulse = ('<div class="mkph-bar" role="img" aria-label="Market split by trend" title="' + e(rule) + '">'
+                 + "".join(f'<a class="{bc}" style="width:{pct(n):.1f}%" href="{jump(l)}" '
+                           f'title="{n:,} {w} — show only these"></a>' for l, _c, bc, n, w in tiles if n)
+                 + '</div><div class="mkph-row">'
+                 + "".join(f'<a class="mtile {c}{" on" if label == l else ""}" href="{jump(l)}"'
+                           + (' aria-current="true"' if label == l else "")
+                           + f' aria-label="{w}: {n:,} versions"'
+                           + f' title="{w}: {n:,} versions. A click keeps only these; a second click clears it.">'
+                           f'<i aria-hidden="true"></i><b>{n:,}</b><small class="sr">{w}</small></a>' for l, c, _bc, n, w in tiles)
+                 + (f'<a class="mtile deal" href="#under" title="{under_n} live asks under the typical sold price '
+                    f'after fees."><b>{under_n}</b><small>under typical</small></a>' if under_n else "")
+                 + '<span class="mkstat">'
+                 + f'<span><b>{s["with_asks"]:,}</b> listed</span>'
+                 + f'<span><b>{s["n_30"]:,}</b> sold · 30d</span>'
+                 + '</span></div>')
+    tabs = ('<div class="mk-games" role="tablist" aria-label="Game">'
+            + "".join(f'<a role="tab"{ON_TAB if g == game else ""} href="/game?{e(urlencode({"g": g, "back": "/market"}))}">'
+                      f'{e(lab)}</a>' for g, lab in (("ygo", "Yu-Gi-Oh!"), ("pkm", "Pokémon")))
+            + '</div>')
+    head = f'<div class="mk-top"><h1>The {e(name)} market</h1>' + tabs + '</div>' + pulse
+    chips = _filters({**qs, "sort": sort, "min": str(min_sales)}, sort, str(min_sales))
+    cols = ('<div class="mhead">'
+            '<span>Card</span>'
+            '<span title="Median of this exact version\'s sales, in your currency. Uses the last 30 days when 3+ sales '
+            'sit there, otherwise all stored sales. The line under it is the middle half (p25-p75).">Typical sold</span>'
+            '<span title="Copies sold per month. The line under it: newest sale and how many sales back the number.">'
+            'Sales pace</span>'
+            '<span title="Cheapest live listing in the newest snapshot (up to 3 days old), the listing itself one click '
+            'away, and its gap to the typical price. Supply: listed count divided by the monthly sales pace.">'
+            'Cheapest ask</span>'
+            '<span title="PriceCharting\'s own weekly sold prices for this grade (Ungraded for raw rows), last 12 '
+            'months. The line under it is the year change. A verdict from a second market, not a copy of ours.">'
+            '1 yr · PC</span>'
+            '<span title="The middle of this row\'s newest sales against the middle of the sales just before them - '
+            'same count on each side, up to 5. Climbing 5%+, Slipping 5%-, else Holding. Too few sales, '
+            'PriceCharting\'s 12-month series for that grade answers instead; Thin means neither could.">'
+            'Trend</span>'
+            '</div>')
+    name_of = _name_of(cards, pkm)
+    links, items, pcrows = A["links"], A["items"], A["pcrows"]
+    usd_home, pc_money, vol_per_month = A["usd_home"], A["pc_money"], A["vol_per_month"]
+    flip_profit = A["flip_profit"]
+    fixed, fee_pct, k_buy = A["fixed"], A["fee_pct"], A["k_buy"]
 
     # Proof: the newest real sales behind each card named in the two sections, straight from the store.
     from .card_market import site_of
@@ -655,7 +701,7 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
         cls = lab if lab in ("rising", "falling", "steady") else "none"
         row_cls = {"rising": "up", "falling": "down", "steady": "hold"}.get(lab, "none")
         if word is None:
-            word, pct_txt = "Thin", "add sales"
+            word, pct_txt = "Thin", f"n={r['n_sales']}"
         else:
             pct_txt = "flat" if abs(pct) < 1 else f"{pct:+.0f}%"
         meaning = {"rising": "Prices are climbing: a copy near typical is the buy.",
@@ -725,8 +771,9 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
             f'<div class="mask"><small class="cl">Cheapest ask</small>{ask_html}</div>'
             f'<div class="mpcell"><small class="cl">1 yr · PC</small>{pc_html}</div>'
             f'<div class="mtick"><small class="cl">Trend</small>'
-            f'<span class="mtrend {cls}" title="{e(why)} {e(meaning)}">'
-            f'<b><i aria-hidden="true"></i>{word}</b><span>{e(pct_txt)}</span><small>{e(ev)}</small></span></div></li>')
+            f'<span class="mtrend {cls}" title="{e(why)} {e(meaning)}" aria-label="{e(word)}: {e(pct_txt)}">'
+            f'<b>{_slope(lab, pct if lab else None, r.get("move_recent") is not None)}'
+            f'<span class="sr">{word}</span></b><span>{e(pct_txt)}</span><small>{e(ev)}</small></span></div></li>')
     shown = (f'<p class="muted small">Showing {len(rows)} of {s["series"]:,} versions'
              + (", the top 200 for this sort" if len(rows) >= 200 else "") + '.</p>')
     note = ('<p class="muted small">Prices in your display currency, each sale converted at its own date. Typical sold is '
@@ -758,9 +805,11 @@ def movement_strip(st, game: str, M: Money) -> str:
 
     blocks = []
     if up:
-        blocks.append('<div><h3>Rising</h3><ul class="mini">' + "".join(li(r) for r in up) + "</ul></div>")
+        blocks.append('<div><h3>' + _slope("rising", 25, True) + '<span class="sr">Rising</span></h3>'
+                      '<ul class="mini">' + "".join(li(r) for r in up) + "</ul></div>")
     if down:
-        blocks.append('<div><h3>Falling</h3><ul class="mini">' + "".join(li(r) for r in down) + "</ul></div>")
+        blocks.append('<div><h3>' + _slope("falling", 25, True) + '<span class="sr">Falling</span></h3>'
+                      '<ul class="mini">' + "".join(li(r) for r in down) + "</ul></div>")
     if not blocks:
         blocks.append('<p class="empty">No version has enough dated sales for a direction yet.</p>')
     return ('<div class="home-h"><h2>Market movement</h2><a href="/market">Whole market →</a></div>'
