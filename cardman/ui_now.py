@@ -68,6 +68,13 @@ def _official(key: str | None) -> str | None:
     return f"/img/card/{key}.jpg?size=small"
 
 
+def _pace(rate: float | None) -> str:
+    if not rate:
+        return "no sales pace"
+    n = f"{rate:.1f}" if rate < 10 else f"{rate:.0f}"
+    return f"{n} copies/mo"
+
+
 def _art(pid: str, items: dict, gkey: str, key: str | None, nm: str) -> str:
     lid = items.get((pid, gkey or "|"))
     off = _official(key)
@@ -82,7 +89,7 @@ def _art(pid: str, items: dict, gkey: str, key: str | None, nm: str) -> str:
 
 
 def _tile(pid: str, gkey: str, key: str | None, nm: str, label: str, tag: str, tag_cls: str, art: str,
-          nums: str, foot: str, cta: str, extra_cls: str = "") -> str:
+          nums: str, proof: str, foot: str, cta: str, extra_cls: str = "") -> str:
     body = (f'<a class="nz-name" href="{e(card_href(key))}">{e(nm)}</a>' if key
             else f'<span class="nz-name">{e(nm)}</span>')
     return ('<article class="nz-tile' + extra_cls + '">'
@@ -90,6 +97,7 @@ def _tile(pid: str, gkey: str, key: str | None, nm: str, label: str, tag: str, t
             '<div class="nz-glass">' + body
             + f'<div class="nz-meta">{e(label)}</div>'
             + f'<div class="nz-nums">{nums}</div>'
+            + f'<div class="mkproof"><span class="pl">sold</span>{proof}</div>'
             + f'<div class="nz-foot"><span>{foot}</span>{cta}</div>'
             + '</div></article>')
 
@@ -130,7 +138,7 @@ def view_now(st, now: datetime, cur: str, home: str, qs: dict, game: str = "ygo"
         under.append(_tile(pid, gkey, key, nm, d["label"], f"{pct:.0f}% under", "under",
                            _art(pid, A["items"], gkey, key, nm),
                            _num(M(ask), "ask") + _num(M(f), "typical") + _num(f"+{M(net)}", "after fees", True),
-                           f'{d["n_sales"]} sales', cta))
+                           A["proof_sales"](pid), _pace(d["sales_month"]), cta))
 
     graded = []
     for kind, room, r, ask, net, psa in A["picks"]:
@@ -138,7 +146,7 @@ def view_now(st, now: datetime, cur: str, home: str, qs: dict, game: str = "ygo"
         key = _card_key(pid)
         nm = name_of(pid) or r["label"].split(" · ")[0]
         rate = A["vol_per_month"](psa.get("vol") or "")
-        per = (f"{rate:.0f}/mo" if rate and rate >= 10 else f"{rate:.1f}/mo" if rate else "rare")
+        per = _pace(rate) if rate else "rare"
         pop = (A["pcrows"].get(pid) or {}).get("pop") or {}
         psa_pop = pop.get("psa") or []
         popn = psa_pop[9] if len(psa_pop) >= 10 else None
@@ -158,17 +166,17 @@ def view_now(st, now: datetime, cur: str, home: str, qs: dict, game: str = "ygo"
             cta = (f'<a class="nz-cta" href="{e(card_href(key))}">Watch the card →</a>' if key
                    else '<span class="nz-cta muted">—</span>')
         graded.append(_tile(pid, "|", key, nm, r["label"], tag, cls,
-                            _art(pid, A["items"], "|", key, nm), nums, foot, cta, " grade"))
+                            _art(pid, A["items"], "|", key, nm), nums, A["proof_sales"](pid), foot, cta, " grade"))
 
     board = "/pkm/market" if game == "pkm" else "/market"
     under_html = (f'<div class="nz-h"><h2>Under typical now</h2><small>{A["under_n"]} live</small>'
-                  f'<a href="{board}#under">Full board →</a></div>'
+                  f'<a href="{board}">Full board →</a></div>'
                   '<p class="nz-lead">Live asks below what the exact printing sells for, after the fees to sell it.</p>'
                   + ('<div class="nz-grid">' + "".join(under) + '</div>' if under else
                      '<p class="nz-empty">No live ask sits under the typical sold price after fees right now. '
                      'This fills as asks come in.</p>'))
-    grade_head = (f'<div class="nz-h"><h2>Buy raw → grade → PSA 10</h2><small>{len(graded)} picks</small>'
-                  f'<a href="{board}#grade">Full board →</a></div>')
+    grade_head = (f'<div class="nz-h"><h2>Buy raw → grade → sell PSA 10</h2><small>{len(graded)} picks</small>'
+                  f'<a href="{board}">Full board →</a></div>')
     if graded:
         grade_body = (f'<p class="nz-lead">Costs from your profile: {M(A["fixed"])} fixed per card (inbound shipping '
                       f'+ PSA fee), {A["fee_pct"] * 100:.1f}% to sell. The PSA 10 must trade at least monthly.</p>'
@@ -177,8 +185,8 @@ def view_now(st, now: datetime, cur: str, home: str, qs: dict, game: str = "ygo"
         grade_body = ('<p class="nz-lead">No raw ask clears grading and selling fees with a live PSA 10 market '
                       'behind it right now.</p>')
     return ('<section class="nz-zone"><div class="mk-top"><h1>Now · ' + e(name) + '</h1>' + tabs + '</div>'
-            '<p class="nz-lead">The two things worth acting on this pass. Photos are the sellers\' own; the '
-            'official card picture stands in when a listing carries none.</p>'
+            '<p class="nz-lead">The two things worth acting on this pass. The picture is the seller\'s own where the '
+            'listing has one; the chips under each card are its newest real sales.</p>'
             + under_html + grade_head + grade_body + '</section>')
 
 

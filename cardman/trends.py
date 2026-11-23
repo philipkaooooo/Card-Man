@@ -216,8 +216,8 @@ def _pc_change(pc_row: dict | None, gkey: str) -> tuple[float | None, str | None
     return chg, ("rising" if chg >= 5 else "falling" if chg <= -5 else "steady"), last
 
 
-_MOVE = "COALESCE(move_recent_label, pc_move_label)"
-_SORTS = {"move": "ABS(COALESCE(move_recent, pc_move, 0)) DESC, ABS(COALESCE(change_90, 0)) DESC",
+_MOVE = "COALESCE(pc_move_label, move_recent_label)"
+_SORTS = {"move": "ABS(COALESCE(pc_move, move_recent, 0)) DESC, ABS(COALESCE(change_90, 0)) DESC",
           "edge": "(COALESCE(median_30, median) - ask_low) / NULLIF(COALESCE(median_30, median), 0) DESC",
           "sales": "n_sales DESC, last_sale DESC",
           "spread": "ABS(COALESCE(spread, 0)) DESC",

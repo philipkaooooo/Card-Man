@@ -502,23 +502,38 @@ def rows_for(st, pids: list[str]) -> dict[str, dict]:
 
 
 def grade_series(pc_row: dict | None, gkey: str) -> tuple[str, list] | None:
-    """The PC series that matches one of our grade keys: raw -> Ungraded, PSA 10 -> PSA 10, 7/8/9 -> Grade n."""
+    """The PriceCharting series that answers for one of our grade keys. Exact first: raw -> Ungraded,
+    PSA 10 -> PSA 10, BGS 9.5 -> BGS 9.5, any company's 7/8/9 -> Grade n. Where the exact series is absent,
+    the nearest published one stands in and is named, so the surface can say which series answered."""
     if not pc_row:
         return None
     gc, _, gr = (gkey or "|").partition("|")
-    if not gc:
-        name = "Ungraded"
-    elif gc.upper() == "PSA" and gr == "10":
-        name = "PSA 10"
-    elif gc.upper() == "BGS" and gr == "9.5":
-        name = "BGS 9.5"
-    elif gr in ("7", "8", "9"):
-        name = f"Grade {gr}"
-    else:
-        return None
     series = pc_row.get("series") or {}
-    pts = series.get(name) or series.get(name.replace("Grade ", ""))
-    return (name, pts) if pts else None
+    for name in _series_order(gc.upper(), gr):
+        pts = series.get(name) or series.get(name.replace("Grade ", ""))
+        if pts:
+            return name, pts
+    return None
+
+
+def _series_order(gc: str, gr: str) -> list[str]:
+    if not gc:
+        return ["Ungraded"]
+    if gc == "PSA" and gr == "10":
+        return ["PSA 10"]
+    if gc == "BGS" and gr == "9.5":
+        return ["BGS 9.5"]
+    if gr in ("7", "8", "9"):
+        return [f"Grade {gr}"]
+    try:
+        n = float(gr)
+    except ValueError:
+        return []
+    if n == 10:
+        return ["PSA 10", "BGS 9.5"]
+    if n == 9.5:
+        return ["BGS 9.5", "PSA 10"]
+    return ["Grade 7"] if 1 <= n < 7 else []
 
 
 def current(pc_row: dict | None, name: str) -> dict | None:

@@ -88,7 +88,7 @@ def test_pokemon_uses_its_own_board_and_art_route(tmp_path):
     h = view_now(st, NOW, "TWD", "TWD", {}, game="pkm")
     assert "Now · Pokémon" in h and "40% under" in h
     assert "/pkm/img/pkm/sv3pt5-199.png?size=small" in h
-    assert "/pkm/market#under" in h
+    assert 'href="/pkm/market"' in h
 
 
 def test_market_menu_opens_to_the_zone():

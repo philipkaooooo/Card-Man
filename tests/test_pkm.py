@@ -242,7 +242,7 @@ def test_switch_routes_and_pages_for_pokemon(web):
     assert s == 302 and h["Location"] == "/pkm/"
     s, url, h, body = web("/pkm/search?q=199/165")
     assert url == "/pkm/card/sv3pt5-199"
-    assert all(x in body for x in ("Charizard ex", "330", "Version", "class=\"trendbox\"", "Regulation mark", "For sale now"))
+    assert all(x in body for x in ("Charizard ex", "330", "Version", "class=\"trendbox", "Regulation mark", "For sale now"))
     assert "Price over time" not in body
     assert 'href="/pkm/search' in body or 'action="/pkm/search"' in body
     s, url, h, body = web("/pkm/search?q=Charizard")

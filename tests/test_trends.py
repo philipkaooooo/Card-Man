@@ -108,18 +108,31 @@ def test_raw_sales_restate_to_near_mint(tmp_path):
 
 
 def test_board_trend_cell_names_the_direction_and_its_evidence(tmp_path):
+    """The trend column is PriceCharting's year for every row, even where our own sales could split."""
+    import json
+    from cardman.pc import SCHEMA as PC_SCHEMA
     from cardman.ui_market import view_market
     st = Store(tmp_path / "e.sqlite")
     for i in range(2):
         add(st, i, 100, 45 + i)
     for i in range(2):
         add(st, f"r{i}", 120, 4 + i)
+    st.db.executescript(PC_SCHEMA)
+    weeks = [[1740812400000, 10.0], [1760000000000, 11.0], [1770000000000, 12.0], [1780000000000, 12.0]]
+    with st.db:
+        st.db.execute(
+            "INSERT INTO pc_card (printing_id, game, url, title, query, match_note, grades, series, pop, fetched, status) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (P, "ygo", "https://www.pricecharting.com/game/yugioh/blue-eyes", "Blue-Eyes LOB-EN001", "q", "test",
+             json.dumps({"Ungraded": {"p": 12.0, "c": 0.0, "vol": "1 sale per week"}}),
+             json.dumps({"Ungraded": weeks}), json.dumps({}), NOW.isoformat(), "ok"))
     trends.refresh(st, NOW, "TWD")
     h = view_market(st, NOW, "TWD", "TWD", {}, game="ygo")
     assert 'class="mtrend rising"' in h and "Climbing" in h and "+20%" in h
     cell = h.split('class="mtrend rising"', 1)[1].split("</span></div></li>", 1)[0]
     assert "30d" not in cell                                        # the cell cites sales counts, not a day window
-    assert "newest 2 vs 2 before" in h
+    assert "newest 2 vs 2 before" not in h                          # our own move is out of the call
+    assert "4 sales · PC 12 mo" in h
     assert 'class="mkph-bar"' in h and 'class="fbar"' in h and 'class="flab">Order<' in h
     assert 'class="mtile up"' in h and 'class="mtile down"' in h and '>Climbing<' in h and '>Slipping<' in h
     assert "Climbing: up 5% or more" in h                           # the rule sits in the bar's tooltip, not a paragraph

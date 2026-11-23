@@ -78,7 +78,18 @@ def test_grade_series_matches_our_grade_keys():
     assert pc.grade_series(row, "PSA|10")[0] == "PSA 10"
     assert pc.grade_series(row, "BGS|9.5")[0] == "BGS 9.5"
     assert pc.grade_series(row, "BGS|7")[0] == "Grade 7"
-    assert pc.grade_series(row, "CGC|10") is None         # no CGC 10 series: say nothing rather than the wrong line
+
+
+def test_grade_series_names_the_nearest_series_when_ours_is_absent():
+    """CGC 10 has no series of its own; the exact-grade rule is close as possible, and the label says which answered."""
+    row = pc.parse_product(payload())
+    assert pc.grade_series(row, "CGC|10")[0] == "PSA 10"
+    assert pc.grade_series(row, "CGC|9.5")[0] == "BGS 9.5"
+    assert pc.grade_series(row, "CGC|8")[0] == "Grade 8"
+    assert pc.grade_series(row, "CGC|5")[0] == "Grade 7"
+    thin = {"series": {"Ungraded": [[1, 2.0], [2, 2.5]]}}
+    assert pc.grade_series(thin, "PSA|10") is None          # nothing published to stand in: say nothing
+    assert pc.grade_series(thin, "SGC|Authentic") is None
 
 
 def test_pick_link_prefers_the_exact_number():
@@ -122,8 +133,9 @@ def add_sales(st, printing, prices, days_ago):
             source_url=f"fixture://{i}", printing_candidates=(printing,)), now=NOW)
 
 
-def test_board_shows_the_year_line_and_the_grading_play(tmp_path):
+def test_board_keeps_the_year_line_and_the_zone_holds_the_grading_play(tmp_path):
     from cardman.ui_market import view_market
+    from cardman.ui_now import view_now
     st = Store(tmp_path / "e.sqlite")
     add_sales(st, P, (100, 100, 100), (2, 5, 9))
     st.add_fx(FxRate("USD", "TWD", D("32"), NOW - timedelta(hours=1), "test"), now=NOW)
@@ -134,16 +146,19 @@ def test_board_shows_the_year_line_and_the_grading_play(tmp_path):
     h = view_market(st, NOW, "TWD", "TWD", {}, game="ygo")
     assert "1 yr · PC" in h and 'class="mpc mpcl down"' in h
     assert "Ungraded · -21%" in h                          # 3.00 -> 2.38 is a fall
-    # no live ask: the strip names the most the raw card may cost, after grading, shipping and fees
-    assert "Buy raw → grade → sell PSA 10" in h
-    assert "wait for" in h and "pay at most" in h and "all-in" in h
+    # the grading play lives in the Now zone; the board starts straight at the printing list
+    assert 'id="under"' not in h and 'id="grade"' not in h
+    z = view_now(st, NOW, "TWD", "TWD", {}, game="ygo")
+    # no live ask: the tile names the most the raw card may cost, after grading, shipping and fees
+    assert "Buy raw → grade → sell PSA 10" in z
+    assert "wait for" in z and "pay at most" in z and "all-in" in z
 
 
-def test_grading_strip_buys_at_the_live_ask_and_counts_its_costs(tmp_path):
+def test_grading_tile_buys_at_the_live_ask_and_counts_its_costs(tmp_path):
     from cardman.card_market import _SCHEMA as CARD_SCHEMA
     from cardman.engine import _SCHEMA as ENGINE_SCHEMA
     from cardman.history import ASK_SCHEMA
-    from cardman.ui_market import view_market
+    from cardman.ui_now import view_now
     st = Store(tmp_path / "e.sqlite")
     add_sales(st, P, (100, 100, 100), (2, 5, 9))
     st.add_fx(FxRate("USD", "TWD", D("32"), NOW - timedelta(hours=1), "test"), now=NOW)
@@ -159,17 +174,17 @@ def test_grading_strip_buys_at_the_live_ask_and_counts_its_costs(tmp_path):
     trends.refresh(st, NOW, "TWD")
     row = pc.parse_product(payload("https://www.pricecharting.com/game/yugioh-legend-of-blue-eyes/blue-eyes"))
     store_row(st, P, row, game="ygo")
-    h = view_market(st, NOW, "TWD", "TWD", {}, game="ygo")
+    h = view_now(st, NOW, "TWD", "TWD", {}, game="ygo")
     assert "buy now" in h and "Open the raw listing" in h
     # 4520 PSA 10 - 16.75% fees - 300 shipping = 3462.9 net; 1.015 * 300 + 2100 fixed = 2404.5 all-in
     assert "NT$1,058" in h and "all-in" in h
 
 
-def test_under_section_carries_image_values_and_sold_proof(tmp_path):
+def test_zone_tiles_carry_values_images_and_sold_proof(tmp_path):
     from cardman.card_market import _SCHEMA as CARD_SCHEMA
     from cardman.engine import _SCHEMA as ENGINE_SCHEMA
     from cardman.history import ASK_SCHEMA
-    from cardman.ui_market import view_market
+    from cardman.ui_now import view_now
     st = Store(tmp_path / "e.sqlite")
     add_sales(st, P, (2000, 2000, 2000), (2, 5, 9))
     st.add_fx(FxRate("USD", "TWD", D("32"), NOW - timedelta(hours=1), "test"), now=NOW)
@@ -183,9 +198,9 @@ def test_under_section_carries_image_values_and_sold_proof(tmp_path):
         st.db.execute("INSERT INTO card_listing (passcode, key, card_prob, printing_id, printing_prob, lot, status) "
                       "VALUES ('89631139', 'l1', 0.97, ?, 0.94, 0, 'SEEN')", (P,))
     trends.refresh(st, NOW, "TWD")
-    h = view_market(st, NOW, "TWD", "TWD", {}, game="ygo")
-    under = h.split('id="under"')[1].split("</section>")[0]
-    assert "Under typical now" in under and 'class="mkimg"' in under
+    h = view_now(st, NOW, "TWD", "TWD", {}, game="ygo")
+    under = h.split("Under typical now")[1].split("Buy raw")[0]
+    assert 'class="nz-tile"' in under and 'class="nz-art"' in under
     assert "NT$700" in under and "NT$2,000" in under and "65% under" in under
     assert 'class="sp"' in under and "marketplace marked sold" in under   # sold listings as proof
     assert "Open the listing" in under
@@ -206,11 +221,29 @@ def test_card_page_section_draws_all_six_grades(tmp_path):
 
 def test_unswept_rows_say_so_instead_of_guessing(tmp_path):
     from cardman.ui_market import view_market
+    from cardman.ui_now import view_now
     st = Store(tmp_path / "e.sqlite")
     add_sales(st, P, (100, 100, 100), (2, 5, 9))
     trends.refresh(st, NOW, "TWD")
     h = view_market(st, NOW, "TWD", "TWD", {}, game="ygo")
-    assert "not swept" in h and "No raw ask clears" in h and 'class="mkcard grade"' not in h
+    assert "not swept" in h and " copies/mo" in h
+    z = view_now(st, NOW, "TWD", "TWD", {}, game="ygo")
+    assert "No raw ask clears" in z and 'class="nz-tile grade"' not in z
+
+
+def test_card_page_trend_panel_is_pricecharting_with_a_decision_line(tmp_path):
+    from cardman.ui_home import Money, _trend_box
+    st = Store(tmp_path / "e.sqlite")
+    st.add_fx(FxRate("USD", "TWD", D("32"), NOW - timedelta(hours=1), "test"), now=NOW)
+    store_row(st, P, pc.parse_product(payload()), game="ygo")
+    h = _trend_box(st, P, "TWD", NOW, Money(st, "TWD", "TWD", NOW))
+    assert 'class="trendbox falling"' in h and "Slipping" in h and "-21%" in h   # 3.00 -> 2.38
+    assert "12-month trend · PriceCharting" in h and 'href="#pcsheet"' in h
+    assert "12-mo low" in h and "12-mo high" in h and "Weekly points" in h and ">4<" in h
+    assert "NT$76" in h and "Wait, or bid well under typical" in h
+    assert "newest" not in h                                 # our own move is out of the call
+    nothing = _trend_box(st, "p:EN_TCG:NOPE-EN001:x@1", "TWD", NOW, Money(st, "TWD", "TWD", NOW))
+    assert 'class="trendbox none"' in nothing and "No PriceCharting sold series" in nothing
 
 
 def test_chart_carries_a_dot_per_point_and_a_range_switch(tmp_path):
