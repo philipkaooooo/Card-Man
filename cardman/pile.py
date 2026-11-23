@@ -102,6 +102,15 @@ def _passcode(pid: str) -> str:
     return pid.split("@", 1)[1] if "@" in pid else ""
 
 
+def _face_pid(d: dict) -> str:
+    """The printing whose face to show: the resolved one, else the likeliest the listing could be."""
+    pid = d.get("printing_id") or ""
+    if pid:
+        return pid
+    sc = d.get("scenarios") or []
+    return (max(sc, key=lambda s: s.get("weight") or 0).get("printing_id") or "") if sc else ""
+
+
 def known(st, key: str) -> bool:
     """A key the page can render: a stored listing, a card version, or a stored TCGplayer ask."""
     have = _tables(st)
@@ -568,15 +577,16 @@ def _listing_item(st, key: str, have: set, M) -> dict | None:
     hist = [r[0] for r in st.db.execute(
         "SELECT ask FROM pile_price WHERE key=? ORDER BY at DESC LIMIT 8", (key,))]
     hist.reverse()
+    pid = _face_pid(d)
     return {
         "title": d.get("title") or title or key, "url": d.get("url") or url,
-        "printing_id": d.get("printing_id") or "", "code": code,
+        "printing_id": pid, "code": code,
         "ask": _num(d.get("all_in_home", d.get("ask_home"))),
         "resale": _num(top.get("resale_mid")), "resale_low": _num(top.get("resale_low")),
         "profit": _num(top.get("profit_mid")),
         "basis": top.get("basis") or "none", "n_sales": top.get("n_sales") or 0,
         "kinds": d.get("kinds") or [], "game": d.get("game") or "ygo",
-        "iid": item_id_of(key, d), "hist": hist, "pic": "",
+        "iid": item_id_of(key, d), "hist": hist, "pic": _passcode(pid),
     }
 
 
@@ -617,7 +627,7 @@ def _chase_rows(st, M) -> list[dict]:
         under = ask is not None and ask <= c["threshold"]
         sold_under = fair is not None and fair <= c["threshold"]
         out.append({**c, "ask": ask, "fair": fair, "under": under, "sold_under": sold_under,
-                    "pic": img(c["passcode"], "small", c["label"], cls="card")})
+                    "pic": img(c["passcode"], "small", c["label"], cls="card").replace(' loading="lazy"', "")})
     return out
 
 
@@ -693,22 +703,24 @@ def view(st, idx, M, now: datetime, token: str, game: str = "ygo", back: str = "
     def art_of(i) -> str:
         pic = i.get("pic") or ""
         if pic:
-            return img(pic, "large", i["title"][:60], cls="card")
+            return img(pic, "large", i["title"][:60], cls="card").replace(' loading="lazy"', "")
         photos = {i["iid"]: 1} if i["iid"] and ph.get(i["iid"]) else None
         return pair_art(i["key"], {"title": i["title"], "printing_id": i["printing_id"], "kinds": i["kinds"]},
                         photos, big=True)
 
     def tile(i):
-        op = f"/opp/{e(i['key'])}" if not i.get("pic") else e(i["url"])
+        is_card = i["key"].startswith(("card:", "tcg:"))
+        ext = is_card and i["url"].startswith("http")
+        op = e(i["url"]) if is_card else f"/opp/{e(i['key'])}"
         info = (f'<b>{e(i["title"][:90])}</b>'
-                f'<div class="pi-line">{"Market" if i.get("pic") else "All-in"} <b>{M(i["ask"])}</b>'
+                f'<div class="pi-line">{"Market" if is_card else "All-in"} <b>{M(i["ask"])}</b>'
                 + (f' · Resale <b>{M(i["resale"])}</b>' if i["resale"] is not None else "") + '</div>'
                 + (f'<div class="pi-line">{e(i["basis"])} · {i["n_sales"]} sales</div>' if i["n_sales"] else "")
                 + (f'<div class="pi-line">Profit {M(i["profit"])} ({roas(i):.2f}× per $)</div>' if roas(i) is not None else "")
                 + (f'<div class="pi-line">{" → ".join(str(M(h)) for h in i["hist"])}{_spark(i["hist"])}</div>'
                    if len(i["hist"]) > 1 else "")
-                + f'<div class="pi-go"><a href="{op}"{" target=_blank rel=noreferrer" if i.get("pic") and i["url"].startswith("http") else ""}>'
-                + ("Site ↗" if i.get("pic") and i["url"].startswith("http") else "Open") + '</a></div>')
+                + f'<div class="pi-go"><a href="{op}"{" target=_blank rel=noreferrer" if ext else ""}>'
+                + ("Site ↗" if ext else "Open") + '</a></div>')
         drop = (f'<form class="pcard-form" method="post" action="/pile/remove">'
                 f'<input type="hidden" name="t" value="{e(token)}"><input type="hidden" name="key" value="{e(i["key"])}">'
                 f'<input type="hidden" name="back" value="{e(back)}">'
@@ -798,8 +810,8 @@ def view(st, idx, M, now: datetime, token: str, game: str = "ygo", back: str = "
             '</section>')
 
     def zhead(word: str, hint: str, n: int) -> str:
-        return (f'<header class="zhead"><h2>{e(word)}</h2><span class="zhint">{e(hint)}</span>'
-                f'<span class="zcount">{n}</span></header>')
+        return (f'<div class="zhead"><h2>{e(word)}</h2><span class="zhint">{e(hint)}</span>'
+                f'<span class="zcount">{n}</span></div>')
 
     return (head + '<section class="pboard">'
             '<div class="zcol zc-set" data-zone="set">'
@@ -871,7 +883,7 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
 """
 
 PILE_CSS = """
-.phead{margin:6px 0 18px}
+.phead{margin:6px 0 18px;padding-left:0;padding-right:0}
 .phtop{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;flex-wrap:wrap}
 .phead h1{margin:0;font-size:clamp(38px,5.6vw,68px);letter-spacing:-.035em;line-height:.94;font-weight:900}
 .pcues{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding-bottom:8px}
@@ -892,9 +904,11 @@ border-radius:999px;background:var(--surface);max-width:560px;box-shadow:inset 0
 align-items:center;justify-content:center;cursor:pointer;flex:none}
 .padgo svg{width:16px;height:16px}
 .padgo:hover{filter:brightness(1.09)}
-.pboard{display:grid;grid-template-columns:minmax(180px,.72fr) minmax(0,2fr) minmax(180px,.72fr);gap:14px;
-align-items:stretch;margin:6px 0 8px}
-.zcol{position:relative;border:1px solid var(--line);padding:12px 12px 14px;min-height:360px;
+.pboard{display:grid;grid-template-columns:minmax(180px,.62fr) minmax(0,2.3fr) minmax(180px,.62fr);gap:16px;
+align-items:stretch;margin:6px 0 8px;padding:0}
+.shell:has(.pboard){max-width:none}
+main:has(.pboard){padding-left:16px;padding-right:16px}
+.zcol{position:relative;border:1px solid var(--line);padding:12px 12px 14px;min-height:300px;
 border-radius:26px 20px 28px 18px/20px 28px 18px 26px;
 transition:box-shadow .25s var(--ease),border-color .25s var(--ease),background .25s var(--ease)}
 .zcol.over{border-color:var(--accent);outline:2px dashed color-mix(in srgb,var(--accent) 55%,transparent);
@@ -922,11 +936,11 @@ box-shadow:inset 0 1px 0 color-mix(in srgb,#fff 50%,transparent),0 12px 26px rgb
 .zcount{margin-left:auto;font-variant-numeric:tabular-nums;border:1px solid var(--line);border-radius:999px;
 padding:1px 9px;font-size:11.5px;color:var(--fg2);background:var(--surface)}
 .pfan{display:flex;flex-wrap:wrap;justify-content:center;align-items:flex-start;padding:34px 8px 10px;
-perspective:1000px}
+perspective:1000px;row-gap:26px}
 .pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:12px 10px;padding:14px 2px 4px}
-.pcard{position:relative;display:flex;flex-direction:column;gap:4px;width:128px;cursor:grab}
+.pcard{position:relative;display:flex;flex-direction:column;gap:4px;width:132px;flex:none;cursor:grab}
 .pgrid .pcard{width:auto}
-.pfan .pcard{margin:0 -17px}
+.pfan .pcard{width:148px;margin:0 -12px}
 .pfan .pcard:nth-child(odd){transform:rotate(-2.4deg) translateY(4px)}
 .pfan .pcard:nth-child(3n){transform:rotate(2deg)}
 .pfan .pcard:nth-child(4n){transform:rotate(-.8deg) translateY(-3px)}
@@ -939,8 +953,11 @@ transform:perspective(760px) rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg));
 transition:transform .14s var(--ease);
 filter:drop-shadow(0 9px 14px rgba(0,0,0,.22))}
 .pcard:hover .pface{filter:drop-shadow(0 17px 28px rgba(0,0,0,.30))}
-.part{display:block;border-radius:9px;overflow:hidden}
-.part img.card{display:block;width:100%;height:auto;border-radius:9px}
+.part{position:relative;display:block;border-radius:9px;overflow:hidden;aspect-ratio:59/86;
+background:linear-gradient(170deg,color-mix(in srgb,var(--fg) 7%,var(--surface)),color-mix(in srgb,var(--fg) 12%,var(--surface)))}
+.part img.card{display:block;width:100%;height:100%;object-fit:cover;border-radius:9px}
+.part .shot,.part .shot-off{position:absolute;inset:0;display:block;width:100%}
+.part .shot img.card,.part .shot-off img.card{height:100%}
 .part .card.ph{display:flex;width:100%;aspect-ratio:59/86;align-items:center;justify-content:center;
 border-radius:9px;background:var(--bg);color:var(--muted);font-weight:800;border:1px dashed var(--axis)}
 .pname{font-size:11px;font-weight:650;text-align:center;line-height:1.22;color:var(--fg);opacity:.92;margin-top:4px;
