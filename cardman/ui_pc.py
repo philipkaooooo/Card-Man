@@ -3,7 +3,7 @@
 Everything here comes from the sweep's own capture (pc_card). PriceCharting sells in USD; every number below
 is converted to the display currency once, on the server, so the chart, the chips and the table agree.
 
-The chart draws one dot per weekly sold-price point. Hovering stops on the nearest dot and names the sale date,
+The chart draws one dot per monthly sold-price point. Hovering stops on the nearest dot and names the month,
 the price and the move since the prior one; dots run warm when the price rose and cold when it fell. A range
 switch (3/6/9/12 months) rescales the plot and the table together.
 """
@@ -58,6 +58,14 @@ def section(st, printing_id: str, cur: str, now: datetime) -> str:
                     "vol": cell.get("vol"), "y": _year_change(pts), "pts": pts})
     if not any(x["pts"] or x["p"] for x in out):
         return ""
+    seen = ""
+    try:
+        read = datetime.fromisoformat(row["fetched"])
+        age = max(0, (now - read).days)
+        seen = (f'<p class="pcseen small muted">Prices read {read:%d %b %Y}'
+                + (f", {age}d ago" if age else ", today") + '. The first 151 characters refresh daily.</p>')
+    except (KeyError, TypeError, ValueError):
+        pass
     pop = row.get("pop") or {}
     psa, cgc = pop.get("psa") or [], pop.get("cgc") or []
     popnote = ""
@@ -79,13 +87,13 @@ def section(st, printing_id: str, cur: str, now: datetime) -> str:
     payload = {"cur": cur, "sym": SYM.get(cur, ""), "grades": out,
                "url": row.get("url"), "title": row.get("title")}
     return ('<section id="pcsheet"><h2>Graded prices on PriceCharting</h2>'
-            '<p class="hnote">Weekly sold prices for this exact printing at each grade PC tracks. Every point on the '
-            'line is one week of sales - stop on a dot for the date, the price and the move since the week before. '
+            '<p class="hnote">Monthly sold prices for this exact printing at each grade PC tracks. Every point on the '
+            "line is one month's price - stop on a dot for the date, the price and the move since the month before. "
             'Dots run warm when the price rose, cold when it fell.</p>'
             f'<div data-pcsheet><script type="application/json" class="pcjson">{json.dumps(payload).replace("</", "<\\/")}</script>'
             '<div class="pcbar"><div class="pctabs" role="group" aria-label="Grades to draw"></div>'
             '<div class="pcrng" role="group" aria-label="Months to show"></div></div>'
-            '<div class="pcplot"></div>'
+            f'<div class="pcplot"></div>{seen}'
             '<div class="wrap"><table class="compact pctable"><tr><th>Grade</th><th class="n">Now</th>'
             f'<th class="n prh">Change</th><th>Sold</th></tr>{"".join(rows)}</table></div>{popnote}'
             + (f'<p class="small"><a href="{e(row["url"])}" target="_blank" rel="noreferrer noopener">Open this card on '
@@ -179,7 +187,7 @@ document.querySelectorAll('[data-pcsheet]').forEach(function(root){
   var pad=(hi-lo)*.1||1;lo=Math.max(0,lo-pad);hi+=pad;
   var X=function(t){return L+(W-L-R)*(t-x0)/((x1-x0)||1)},Y=function(v){return T+(H-T-B)*(1-(v-lo)/(hi-lo))};
   var svg=el('svg',{viewBox:'0 0 '+W+' '+H,role:'img',
-   'aria-label':'PriceCharting weekly sold prices by grade, last '+months+' months; every dot is one week, the table below carries the numbers'});
+   'aria-label':'PriceCharting monthly sold prices by grade, last '+months+' months; every dot is one month, the table below carries the numbers'});
   nice(lo,hi,narrow?4:6).forEach(function(v){
    svg.appendChild(el('line',{x1:L,x2:W-(narrow?R-8:R)+8,y1:Y(v),y2:Y(v),'class':'ax'}));
    svg.appendChild(el('text',{x:L-7,y:Y(v)+4,'text-anchor':'end','class':'tk'},fmt(v,sym)))});
@@ -207,7 +215,7 @@ document.querySelectorAll('[data-pcsheet]').forEach(function(root){
    row.appendChild(h('b',{style:'color:'+dt.g.color},fmt(dt.v,sym)));row.appendChild(document.createTextNode(' '+dt.g.g));
    tip.appendChild(row);
    var mv=h('div',{style:'color:'+(dt.mv>0.5?WARM:dt.mv<-0.5?COLD:'var(--muted)')},
-    (dt.mv>0?'+':'')+dt.mv.toFixed(1)+'% vs the week before');
+    (dt.mv>0?'+':'')+dt.mv.toFixed(1)+'% vs the month before');
    tip.appendChild(mv);
    var r=svg.getBoundingClientRect(),px=(dt.x/W)*r.width,left=px+16;
    if(left+230>r.width)left=Math.max(0,px-246);

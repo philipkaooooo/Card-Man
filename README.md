@@ -38,17 +38,26 @@ Pricing rules: `docs/pricing-method.md` — a price comes from real sales of one
 - `pc.py`: the PriceCharting cross-market. `python -m cardman.pc sweep` launches a headed Chrome over the
   DevTools pipe (the site's Cloudflare challenge passes in the real browser, not in a scripted client),
   resolves each product through the site search once, and stores the six grade prices, the sales-volume note
-  and a year of weekly points in `pc_card` (~2 KB a card). Paced at about one card every few seconds, skips
-  rows younger than ten days; `--refetch` re-checks a set. The market board's `1 yr · PC` column reads it
-  against our sold medians; a card whose PriceCharting raw price sits more than 3x from ours is treated as a
-  different printing. The grading strip buys raw at the cheapest live ask (linking the listing), adds inbound
-  shipping and the PSA fee from `data/profile.json`, and nets the PSA 10 after selling fees: it names the
-  profit in currency and the most the raw may cost when no ask is low enough. Each card page carries a
-  PriceCharting section of its own (`ui_pc.py`): all six grades selectable; every weekly sold point is its
-  own dot and hover snaps to the nearest one, naming the date, the price and the move since the week
-  before - warm dots on a rise, cold on a fall. A 3/6/9/12-month switch rescales plot and table
+  and the monthly points in `pc_card` (~2 KB a card). Scope is the first 151 Pokémon by National Dex, every
+  printing the catalog holds (~9.4k): uncaptured rows first, then by sales demand. Those characters refresh
+  daily and the rest of the board weekly; `--ttl-days` overrides, `--dex-max` widens the scope, `--pid`
+  narrows to one, `--refetch` re-checks a set, and `python -m cardman.pc cover` prints priced / partial /
+  missing per character. A product page parsed once serves every printing that resolves to it in the same
+  pass, and edition words from the printing id (1st edition, unlimited) score the product match. History is
+  anchored to the grade cells on read (`_fix_units`): a capture written in cents is corrected against the
+  dollar cell, so a card cannot read 100x high. The market board's `1 yr · PC` column reads it against our
+  sold medians; a card whose PriceCharting raw price sits more than 3x from ours is treated as a different
+  printing. The grading strip buys raw at the cheapest live ask (linking the listing), adds inbound shipping
+  and the PSA fee from `data/profile.json`, and nets the PSA 10 after selling fees: it names the profit in
+  currency and the most the raw may cost when no ask is low enough. Each card page carries a PriceCharting
+  section of its own (`ui_pc.py`): all six grades selectable; every monthly sold point is its own dot and
+  hover snaps to the nearest one, naming the month, the price and the move since the month before - warm
+  dots on a rise, cold on a fall - under the capture date. A 3/6/9/12-month switch rescales plot and table
   together, the change column recomputes client-side, and end tags price each live line, plus PSA/CGC
-  population. Every capture's weekly points also go into `pc_point`, so the series deepens sweep over
+  population. Every capture's points also go into `pc_point`, so the series deepens sweep over sweep. The
+  Characters tab (`zone.py`) covers the same first 151: one tile per Pokémon, cap from the latest Ungraded
+  price of every priced printing, a 12-month move only when a year of stored history exists and only from
+  current captures, sales pace from our ledger, and a tape counting fully priced and partial characters.
   sweep and the 9/12-month views fill out instead of stopping at one capture's window.
 - `pile.py` is a board: new additions land in a full-width staging pile at the top (fanned, draggable),
   and each card sorts left into Set aside or right into Chases - drag it across the zones or press its

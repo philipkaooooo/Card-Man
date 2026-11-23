@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -98,41 +99,67 @@ def _pkm_series(cid: str) -> str:
     return tail[4:] if tail.startswith("pkm-") else tail
 
 
-def _last_move(points) -> tuple[float | None, float | None]:
-    """Last Ungraded price and first-to-last change, from a PriceCharting point list."""
-    pts = [(int(x), float(v)) for x, v in (points or []) if v is not None]
-    pts.sort()
+MOVE_DAYS = 365
+FRESH_DAYS = 45
+_CHUNK = 400
+
+
+def _week(points, now) -> tuple[float | None, float | None, bool]:
+    """Latest price, the move since the price a year ago, and whether the newest point is current.
+    A move is only claimed when the stored history reaches back a full year - no half-window labelled as 12 months."""
+    pts = sorted((int(x), float(v)) for x, v in (points or []) if v is not None and float(v) > 0)
     if not pts:
-        return None, None
+        return None, None, False
+    cut = (now - timedelta(days=MOVE_DAYS)).timestamp() * 1000
+    base = None
+    for x, v in pts:
+        if x < cut:
+            base = v
+        else:
+            break
     last = pts[-1][1]
-    move = None
-    if len(pts) >= 2 and pts[0][1] > 0:
-        move = (last - pts[0][1]) / pts[0][1] * 100.0
-    return last, move
+    move = (last - base) / base * 100.0 if base and base > 0 else None
+    fresh = pts[-1][0] >= (now - timedelta(days=FRESH_DAYS)).timestamp() * 1000
+    return last, move, fresh
 
 
-def macro(st, by_dex: dict[int, list[str]]) -> dict[int, dict]:
-    """Per character, from stored PriceCharting rows and our own sales: cap, top card, 12-mo move, pace.
+_VERS: dict[int, tuple[object, dict[str, list[str]]]] = {}
 
-    cap   - sum of the latest Ungraded PriceCharting price over every priced printing of the character.
-    top   - the single most valuable of those printings; the high-to-low read of one card.
-    move  - cap-weighted first-to-last change of those same series over 12 months, in percent.
-    pace  - copies of this character's cards sold per month, from our own sales ledger.
+
+def _vers(cat) -> dict[str, list[str]]:
+    """Card id -> every printing id the catalog holds for it. Built once per catalog instance."""
+    hit = _VERS.get(id(cat))
+    if hit is not None and hit[0] is cat:
+        return hit[1]
+    out: dict[str, list[str]] = {}
+    if getattr(cat, "by_card", None):
+        out = {cid: [p.id for p in ps] for cid, ps in cat.by_card.items()}
+    else:
+        for cid in cat._cards:
+            out[cid] = [v.id for v in cat.versions(cid)]
+    _VERS[id(cat)] = (cat, out)   # keep cat referenced so its id cannot be reused by another object
+    return out
+
+
+def macro(st, cat, by_dex: dict[int, list[str]], now) -> dict[int, dict]:
+    """Per character, from the merged PriceCharting history and our own sales: cap, top card, 12-mo move, pace.
+
+    cap      - sum of the latest Ungraded PriceCharting price over every priced printing of the character.
+    top      - the single most valuable of those printings; the high-to-low read of one card.
+    move     - cap-weighted change from a year before the newest point to the newest point, in percent.
+               Only series whose newest point is current (FRESH_DAYS) carry a move, so stale captures do not vote.
+    pace     - copies of this character's cards sold per month, from our own sales ledger.
+    priced   - printings with a usable series; versions is every printing the catalog holds.
     """
-    if st is None:
+    if st is None or cat is None:
         return {}
+    from . import pc
+    vers = _vers(cat)
+    pids = sorted({pid for cids in by_dex.values() for cid in cids for pid in vers.get(cid, [])})
+    row_of: dict[str, dict] = {}
+    for i in range(0, len(pids), _CHUNK):
+        row_of.update(pc.rows_for(st, pids[i:i + _CHUNK]))
     have = {r[0] for r in st.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    values: dict[str, list[tuple[float, float | None]]] = {}
-    if "pc_card" in have:
-        for pid, series in st.db.execute(
-                "SELECT printing_id, series FROM pc_card WHERE status='ok' AND printing_id LIKE '%@pkm-%'"):
-            try:
-                ser = json.loads(series or "{}")
-            except ValueError:
-                continue
-            last, move = _last_move(ser.get("Ungraded"))
-            if last is not None:
-                values.setdefault(_pkm_series(pid), []).append((last, move))
     pace: dict[str, float] = {}
     if "price_trend" in have:
         for pid, month in st.db.execute(
@@ -141,15 +168,29 @@ def macro(st, by_dex: dict[int, list[str]]) -> dict[int, dict]:
             pace[_pkm_series(pid)] = pace.get(_pkm_series(pid), 0.0) + float(month)
     out: dict[int, dict] = {}
     for dex, cids in by_dex.items():
-        rows_ = [v for cid in cids for v in values.get(cid, [])]
-        cap = sum(v for v, _m in rows_)
-        top = max((v for v, _m in rows_), default=0.0)
-        weighted = [(v, m) for v, m in rows_ if m is not None and v > 0]
-        wsum = sum(v for v, _m in weighted)
-        move = sum(v * m for v, m in weighted) / wsum if wsum else None
+        prints = sorted({pid for cid in cids for pid in vers.get(cid, [])})
+        lasts: list[float] = []
+        moves: list[tuple[float, float]] = []
+        newest = 0
+        for pid in prints:
+            row = row_of.get(pid)
+            if not row:
+                continue
+            last, move, fresh = _week((row.get("series") or {}).get("Ungraded"), now)
+            if last is None:
+                continue
+            lasts.append(last)
+            newest = max(newest, max((int(x) for x, _v in ((row.get("series") or {}).get("Ungraded") or [])), default=0))
+            if move is not None and fresh:
+                moves.append((last, move))
+        cap = sum(lasts)
+        top = max(lasts, default=0.0)
+        wsum = sum(v for v, _m in moves)
+        move = sum(v * m for v, m in moves) / wsum if wsum else None
         monthly = sum(pace.get(cid, 0.0) for cid in cids)
         out[dex] = {"cap": cap, "top": top, "move": move, "pace": monthly or None,
-                    "priced": len(rows_), "versions": len(cids)}
+                    "priced": len(lasts), "versions": len(prints),
+                    "seen": newest / 1000.0 if newest else None}
     return out
 
 
@@ -185,11 +226,12 @@ def _pace(n: float) -> str:
 def view_zone(st, cat, now, cur: str, home: str, qs: dict) -> str:
     from .ui_home import Money
     from .ui import e
+    from .pc import DEX_MAX
     M = Money(st, home, cur, now)
-    found = entries(cat)
+    found = [f for f in entries(cat) if f["dex"] <= DEX_MAX]
     sort = qs.get("sort", ["dex"])[0]
     sort = sort if sort in SORTS else "dex"
-    stats = macro(st, {f["dex"]: f["cids"] for f in found})
+    stats = macro(st, cat, {f["dex"]: f["cids"] for f in found}, now)
 
     def conv(usd: float | None):
         if usd is None:
@@ -221,8 +263,11 @@ def view_zone(st, cat, now, cur: str, home: str, qs: dict) -> str:
 
     found.sort(key=rank)
     priced = [stats[f["dex"]] for f in found if stats.get(f["dex"], {}).get("priced")]
+    full = [s for s in priced if s["versions"] and s["priced"] >= s["versions"]]
+    partial = len(priced) - len(full)
     cap_all = sum(s["cap"] for s in priced)
     cards_all = sum(len(f["cids"]) for f in found)
+    prints_all = sum((stats.get(f["dex"]) or {}).get("versions") or 0 for f in found)
 
     tiles = []
     for f in found:
@@ -243,10 +288,13 @@ def view_zone(st, cat, now, cur: str, home: str, qs: dict) -> str:
                         f'Cap {money(s.get("cap")) or "$0"}, top card {money(s.get("top")) or "$0"}.']
             if s.get("move") is not None:
                 tip_bits.append(f'12-month move {s["move"]:+.0f}%.')
+            if s.get("seen"):
+                age = max(0, int((now.timestamp() - s["seen"]) // 86400))
+                tip_bits.append(f'Latest price read {age}d ago.')
             cap_tip = " ".join(tip_bits)
         else:
-            cap_tip = ('No PriceCharting row for this character yet; the sweep fills one printing per '
-                       'character each pass.')
+            cap_tip = ('No PriceCharting row for this character yet; the sweep fills this character\'s '
+                       'printings next pass.')
         tiles.append(
             f'<a class="zd" href="/pkm/character/{e(f["slug"])}" data-name="{e(f["name"].lower())}" '
             f'style="--g:{_GEN_HUE[g - 1]}" title="{e(f["name"])} #{dex} - {e(cap_tip)}">'
@@ -268,24 +316,25 @@ def view_zone(st, cat, now, cur: str, home: str, qs: dict) -> str:
         return (f'<a class="zchip{" on" if on else ""}" href="{href}" title="{e(tip)}"'
                 + (' aria-current="true"' if on else "") + f'>{label}</a>')
 
-    chips = (chip("dex", "Dex order", "The National Dex, what the page always was.")
+    chips = (chip("dex", "Dex order", "The National Dex, Gen I first.")
              + chip("cap", "Market cap", "Every priced printing's latest PriceCharting Ungraded price, summed. High to low.")
              + chip("top", "Top card", "The single most valuable printing of the character. High to low.")
-             + chip("move", "12-mo move", "Cap-weighted 12-month change across the character's priced PriceCharting series.")
+             + chip("move", "12-mo move", "Cap-weighted change from a year before the newest stored point to the newest "
+                                          "point. Characters younger than a year in PriceCharting history show no move.")
              + chip("pace", "Sales pace", "Copies of this character's cards sold per month, from our own ledger."))
 
-    tape = (f'<b>{len(priced)}</b> of {len(found)} characters priced · '
-            f'<b>{money(cap_all)}</b> tracked at PriceCharting · <b>{cards_all:,}</b> cards'
+    tape = (f'<b>{len(full)}</b> of {len(found)} fully priced · <b>{partial}</b> partial · '
+            f'<b>{prints_all:,}</b> printings tracked · <b>{money(cap_all)}</b> market cap'
             if priced else
             f'<b>{cards_all:,}</b> cards across {len(found)} characters. No PriceCharting row yet - '
-            f'the background sweep adds one printing per character each pass.')
+            f'the sweep is filling every printing of the first {DEX_MAX}.')
 
     empty = '<p class="empty">The Pokémon card list is still loading.</p>' if cat is None else ""
     return (f'<style>main.page{{max-width:min(96vw,1840px)}}</style>'
             f'<section class="zone">'
             f'<div class="zhead"><h1>Characters</h1>'
-            f'<p class="sub">One tile per Pokémon the catalog holds. The picture is the Pokémon, the box is its name '
-            f'and card count, and the line under it is what its PriceCharting printings are worth today.</p></div>'
+            f'<p class="sub">One tile per Pokémon, the first {DEX_MAX} by National Dex. The picture is the Pokémon, the '
+            f'box is its name and card count, and the line under it is what its PriceCharting printings are worth today.</p></div>'
             f'<div class="ztools"><div class="zchips">{chips}</div>'
             f'<label class="zfindwrap"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">'
             f'<circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/>'

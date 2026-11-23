@@ -3,6 +3,8 @@ import json
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal as D
 
+import pytest
+
 from cardman import pc, trends
 from cardman.fx import FxRate
 from cardman.models import EvidenceType as ET, MarketObservation
@@ -17,12 +19,18 @@ PD = ("Ungraded\tGrade 7\tGrade 8\t\n \n\n$2.38 +$0.22\t$17.95 -$0.01\t$21.40 -$
       "1 sale per week\t4 sales per year\t2 sales per week\t\n")
 
 SERIES = {
-    "Ungraded": [[1740812400000, 3.0], [1754028000000, 1.95], [1780293600000, 2.0], [1793512800000, 2.38]],
-    "7": [[1740812400000, 0.0], [1754028000000, 9.99], [1780293600000, 14.54], [1793512800000, 17.95]],
-    "8": [[1740812400000, 0.0], [1754028000000, 11.13], [1780293600000, 15.0], [1793512800000, 21.4]],
-    "9": [[1740812400000, 12.56], [1754028000000, 11.61], [1780293600000, 20.79], [1793512800000, 24.0]],
-    "BGS 9.5": [[1740812400000, 14.0], [1754028000000, 14.38], [1780293600000, 27.75], [1793512800000, 26.0]],
-    "PSA 10": [[1740812400000, 39.99], [1754028000000, 60.61], [1780293600000, 87.5], [1793512800000, 141.25]],
+    "Ungraded": [[1761955200000, 3.0], [1740812400000, 3.0], [1754028000000, 1.95],
+                 [1780293600000, 2.0], [1793512800000, 2.38]],
+    "7": [[1761955200000, 0.0], [1740812400000, 0.0], [1754028000000, 9.99],
+          [1780293600000, 14.54], [1793512800000, 17.95]],
+    "8": [[1761955200000, 0.0], [1740812400000, 0.0], [1754028000000, 11.13],
+          [1780293600000, 15.0], [1793512800000, 21.4]],
+    "9": [[1761955200000, 12.56], [1740812400000, 12.56], [1754028000000, 11.61],
+          [1780293600000, 20.79], [1793512800000, 24.0]],
+    "BGS 9.5": [[1761955200000, 14.0], [1740812400000, 14.0], [1754028000000, 14.38],
+                [1780293600000, 27.75], [1793512800000, 26.0]],
+    "PSA 10": [[1761955200000, 39.99], [1740812400000, 39.99], [1754028000000, 60.61],
+               [1780293600000, 87.5], [1793512800000, 141.25]],
 }
 
 
@@ -69,7 +77,7 @@ def test_series_are_named_like_the_grade_strip_and_keep_a_year():
     assert row["grades"]["PSA 10"]["p"] == 141.25
     assert set(row["series"]) == {"Ungraded", "Grade 7", "Grade 8", "Grade 9", "BGS 9.5", "PSA 10"}
     assert row["series"]["PSA 10"][-1] == [1793512800000, 141.25]
-    assert row["series"]["Grade 7"][0][1] == 0.0          # a zero week is kept: the gap is the story
+    assert all(v > 0 for pts in row["series"].values() for _t, v in pts)   # a zero month is no sale, not a $0 price
 
 
 def test_grade_series_matches_our_grade_keys():
@@ -87,6 +95,14 @@ def test_grade_series_names_the_nearest_series_when_ours_is_absent():
     assert pc.grade_series(row, "CGC|9.5")[0] == "BGS 9.5"
     assert pc.grade_series(row, "CGC|8")[0] == "Grade 8"
     assert pc.grade_series(row, "CGC|5")[0] == "Grade 7"
+
+
+def test_year_change_compares_the_last_year_not_the_whole_chart():
+    month = 365 / 12 * 86_400_000
+    pts = [[int(i * month), 100.0] for i in range(60)]          # five years flat at 100
+    pts[-13][1] = 50.0                                          # exactly twelve months ago it was 50
+    assert pc.year_change(pts) == pytest.approx(100.0)          # +100% over the year, not +0% over five
+    assert pc.year_change([[1, 10.0], [2, 20.0], [3, 30.0]]) is None   # too short to call a year
     thin = {"series": {"Ungraded": [[1, 2.0], [2, 2.5]]}}
     assert pc.grade_series(thin, "PSA|10") is None          # nothing published to stand in: say nothing
     assert pc.grade_series(thin, "SGC|Authentic") is None
@@ -112,6 +128,16 @@ def test_pick_link_keeps_the_rarity_we_track():
     assert url.endswith("/the-guiding-flute-mams-en003")
     url, _ = pc.pick_link(links, code="MAMS-EN003", rarity="starlight rare")
     assert url.endswith("/the-guiding-flute-starlight-rare-mams-en003")
+
+
+def test_pick_link_refuses_a_product_for_another_card():
+    links = [{"h": "/game/pokemon-secret-wonders/lugia-14", "t": "Lugia #14 Prices | Pokemon Secret Wonders"}]
+    url, why = pc.pick_link(links, name="Wormadam Plant Cloak", number="41")
+    assert url is None and why == "no confident match"
+    # the promo scheme differs from the slug number: the name in the anchor carries it
+    links = [{"h": "/game/pokemon-promo/volcarona-100", "t": "Volcarona [Staff] #100 Prices | Promo"}]
+    url, _ = pc.pick_link(links, name="Volcarona", number="BW40")
+    assert url.endswith("/volcarona-100")
 
 
 def test_sweep_skips_fresh_rows_and_ingest_parses_captures(tmp_path):
@@ -239,7 +265,7 @@ def test_card_page_trend_panel_is_pricecharting_with_a_decision_line(tmp_path):
     h = _trend_box(st, P, "TWD", NOW, Money(st, "TWD", "TWD", NOW))
     assert 'class="trendbox falling"' in h and "Slipping" in h and "-21%" in h   # 3.00 -> 2.38
     assert "12-month trend · PriceCharting" in h and 'href="#pcsheet"' in h
-    assert "12-mo low" in h and "12-mo high" in h and "Weekly points" in h and ">4<" in h
+    assert "12-mo low" in h and "12-mo high" in h and "Monthly points" in h and ">5<" in h
     assert "NT$76" in h and "Wait, or bid well under typical" in h
     assert "newest" not in h                                 # our own move is out of the call
     nothing = _trend_box(st, "p:EN_TCG:NOPE-EN001:x@1", "TWD", NOW, Money(st, "TWD", "TWD", NOW))
@@ -247,7 +273,7 @@ def test_card_page_trend_panel_is_pricecharting_with_a_decision_line(tmp_path):
 
 
 def test_chart_carries_a_dot_per_point_and_a_range_switch(tmp_path):
-    """Every weekly point ships in the payload; the plot draws one dot per point and the 3/6/9/12 switch rescales."""
+    """Every monthly point ships in the payload; the plot draws one dot per point and the 3/6/9/12 switch rescales."""
     import re
     from cardman.ui_pc import section, PC_JS, PC_CSS
     st = Store(tmp_path / "e.sqlite")
@@ -256,7 +282,7 @@ def test_chart_carries_a_dot_per_point_and_a_range_switch(tmp_path):
     h = section(st, P, "TWD", NOW)
     data = json.loads(re.search(r'<script type="application/json" class="pcjson">(.*?)</script>', h, re.S).group(1))
     psa = [g for g in data["grades"] if g["g"] == "PSA 10"][0]
-    assert len(psa["pts"]) == 4 and psa["pts"][-1][1] == round(141.25 * 32, 2)
+    assert len(psa["pts"]) == 5 and psa["pts"][-1][1] == round(141.25 * 32, 2)
     assert data["sym"] == "NT$" and data["cur"] == "TWD"
     assert 'class="pcrng"' in h and 'class="pctabs"' in h
     assert 'class="n py"' in h and "prh" in h
@@ -283,7 +309,50 @@ def test_captures_accumulate_so_history_deepens_past_the_26_week_window(tmp_path
     b.write_text(json.dumps([later]))
     assert ingest(st, str(b)) == 1
     ser = rows_for(st, [pid])[pid]["series"]
-    assert len(ser["PSA 10"]) == 5                       # 4 from the first capture, one week reused, one new
+    assert len(ser["PSA 10"]) == 6                       # 5 from the first capture, one point reused, one new
     assert ser["PSA 10"][-2] == [1793512800000, 150.0]   # same week restated wins
-    assert len(ser["Ungraded"]) == 5                     # 4 + 1 new
+    assert len(ser["Ungraded"]) == 6                     # 5 + 1 new
     assert [x for x, _v in ser["PSA 10"]] == sorted(x for x, _v in ser["PSA 10"])
+
+
+def test_rows_for_repairs_a_cents_history_against_the_grade_cell(tmp_path):
+    """A capture written before the unit correction stores cents; the reader anchors it to the grade cell."""
+    st = Store(tmp_path / "e.sqlite")
+    row = pc.parse_product(payload())
+    row["grades"]["Ungraded"]["p"] = 1606.4
+    row["series"]["Ungraded"] = [[1793512800000, 160640.0], [1790834400000, 149901.0]]
+    store_row(st, P, row)
+    got = pc.rows_for(st, [P])[P]["series"]["Ungraded"]
+    assert got == [[1790834400000, 1499.01], [1793512800000, 1606.4]]
+
+
+def test_rows_for_fixes_one_stray_cents_point_inside_a_dollar_series(tmp_path):
+    st = Store(tmp_path / "e.sqlite")
+    row = pc.parse_product(payload())
+    row["grades"]["Ungraded"]["p"] = 2.38
+    row["series"]["Ungraded"] = [[1740812400000, 300.0], [1780293600000, 2.0], [1793512800000, 2.38]]
+    store_row(st, P, row)
+    got = dict(pc.rows_for(st, [P])[P]["series"]["Ungraded"])
+    assert got[1740812400000] == 3.0 and got[1780293600000] == 2.0 and got[1793512800000] == 2.38
+
+
+def test_scope_is_every_printing_of_the_first_151_and_nothing_past_it():
+    class Pr:
+        def __init__(self, pid):
+            self.id = pid
+
+    class Cat:
+        def __init__(self):
+            self._cards = {"a": ("a", "Charizard", "charizard", "base1", "4", "Pokémon", "Rare", None, None, "1999-01-09"),
+                           "b": ("b", "Chikorita", "chikorita", "neo1", "1", "Pokémon", "Rare", None, None, "2000-12-16")}
+
+        def versions(self, cid):
+            return [Pr(f"pk:EN:{cid}:holo@pkm-{cid}"), Pr(f"pk:EN:{cid}:reverse-holo@pkm-{cid}")]
+
+    class Who:
+        def dex(self, name):
+            return {"Charizard": 6, "Chikorita": 152}.get(name)
+
+    sc = pc.pkm_scope(Cat(), Who(), 151)
+    assert sorted(sc) == ["pk:EN:a:holo@pkm-a", "pk:EN:a:reverse-holo@pkm-a"]
+    assert set(sc.values()) == {6}
