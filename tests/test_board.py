@@ -120,8 +120,8 @@ def test_saved_views_apply_and_come_back_after_delete(board):
 def test_sort_and_price_band_and_search(board):
     get, *_ = board
     page = get("/opportunities?sort=ask:a")
-    prices = [float(x.replace(",", "")) for x in re.findall(r'class="i-price">[^0-9]*([0-9][0-9,.]*)', page)]
-    assert prices == sorted(prices), prices
+    prices = [float(x.replace(",", "")) for x in re.findall(r'class="bt-price"><b>[^0-9]*([0-9][0-9,.]*)', page)]
+    assert prices and prices == sorted(prices), prices
     narrow = get("/opportunities?q=lot")
     assert "ebay_browse:EBAY_US:lot" in narrow
     assert "ebay_browse:EBAY_US:buy" not in narrow
@@ -227,3 +227,36 @@ def test_empty_board_offers_a_way_out_and_is_marked_for_memory(board):
     assert 'data-empty="1"' in dead
     assert "Show everything" in dead
     assert 'href="/opportunities"' in dead
+
+
+def test_board_tiles_are_image_led_cards_with_a_hover_peek(board):
+    get, *_ = board
+    page = get("/opportunities")
+    for piece in ('class="btile', 'class="bt-art"', 'class="bt-peek"', 'bt-name"',
+                  'class="bt-price"', 'class="bt-pill', 'id="b-sortby"', 'class="bstudio"', 'class="fmore"'):
+        assert piece in page, piece
+    assert page.count('class="btile') == page.count('class="bcell')
+    assert 'a class="dtitle bt-name"' in page or 'class="dtitle bt-name"' in page
+    assert "Open the full listing" in page
+
+
+def test_sort_select_offers_presets_and_marks_the_active_one(board):
+    get, *_ = board
+    page = get("/opportunities?sort=ask:a")
+    assert 'id="b-sortby"' in page
+    assert '<option value="ask:a" selected>Lowest price</option>' in page
+    assert "Best deals first" in page and "Fine-tune" in page
+    custom = get("/opportunities?sort=ask:a,profit:d")
+    assert "Custom order" in custom
+
+
+def test_clash_photo_leads_the_art_instead_of_the_wrong_official_card():
+    from cardman.ui_listing import pair_art
+    d = {"photo": "clash", "kinds": [], "printing_id": "p1", "title": "A different card"}
+    html = pair_art("ebay:123", d, {"123": 1})
+    assert html.index("shot-real") < html.index("shot-off")
+    assert "Seller photo" in html and "the matched card differs" in html
+    big = pair_art("ebay:123", d, {"123": 1}, big=True)
+    assert 'class="shot big clash"' in big
+    match = pair_art("ebay:123", {**d, "photo": "match"}, {"123": 1})
+    assert match.index("shot-off") < match.index("shot-real")

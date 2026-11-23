@@ -34,6 +34,9 @@ SORTS = (("lane", "Best lane", "a"), ("profit", "Profit", "d"), ("ask", "Price",
 SORT_KEYS = {k for k, _, _ in SORTS}
 SORT_LABEL = {k: lab for k, lab, _ in SORTS}
 SORT_DEFAULT_DIR = {k: d for k, _, d in SORTS}
+SORT_PRESETS = (("lane:a,profit:d", "Best deals first"), ("profit:d", "Biggest margin"),
+                ("ask:a", "Lowest price"), ("value:d", "Highest value"), ("fresh:d", "Newest first"),
+                ("ends:a", "Ending soon"), ("pc:a", "Most under PC"))
 FRESH = (("1h", "Past hour", 3600), ("24h", "Past day", 86400), ("7d", "Past week", 604800))
 PER_PAGE = 48
 NEW = "NEW"
@@ -200,11 +203,76 @@ def sort_str(stack: list[tuple[str, str]]) -> str:
     return ",".join(f"{k}:{d}" for k, d in stack)
 
 
+# -- the listing tile -------------------------------------------------------------------------------------------------
+
+def board_tile(key, d, v, cards, M, now, photos, *, meta="", art_tag="", spark="") -> str:
+    """One listing as an image-led card, in the shape of the character page's card list: the picture leads, the name
+    and price sit under it, and the full read (why, price track, basis, the way in) opens on hover over the picture.
+    Presentation only — every number and verdict comes from ui_listing.verdict."""
+    from .ui_listing import _likely, _passcode, item_id_of, lphoto, LABEL
+    from .ui_home import _listing_art, img, _lot_art
+    from .ui_decide import LANE, LANE_WHY, _basis, price_track, check_point, _icon
+    lot = "LOT" in (d.get("kinds") or [])
+    top = v.top or {}
+    name = d.get("title") or key
+    pc = _passcode(top)
+    c = cards.card(pc) if (pc and cards is not None and not lot) else None
+    if c and d.get("printing_id") and d.get("photo") in (None, "none", "match"):
+        name = c.get("name_en") or name
+    likely = _likely(d) or top
+    sub = (" · ".join(likely["label"].split(" · ")[:3]) + ("" if d.get("printing_id") else " (probably)")
+           if likely and likely.get("label") and not lot else "")
+    price, value = d.get("all_in_home"), (float(top["resale_mid"]) if top.get("resale_mid") else None)
+    if "MISIDENTIFIED" in (d.get("kinds") or []) or (v.code == "PASS" and price and value and price < value):
+        value = None
+    href = f'/opp/{quote(key, safe="")}'
+    iid = item_id_of(key, d)
+    has = bool(iid and (photos or {}).get(iid))
+    oa = _listing_art(d)
+    clash = d.get("photo") == "clash"
+    if lot:
+        from .listing_parser import parse_listing_text
+        face = _lot_art(parse_listing_text(d.get("title") or "").lot_size)
+    elif clash and has:
+        face = lphoto(iid, 0, "l", name, cls="bt-photo")
+    elif oa:
+        face = img(oa, "large", name, cls="card bt-img")
+    elif has:
+        face = lphoto(iid, 0, "l", name, cls="bt-photo")
+    else:
+        face = img(None, "large", name, cls="card bt-img")
+    lane = LANE[v.code]
+    pill = f'<span class="bt-pill p-{lane}">{_icon(v.code)}{e(LABEL[v.code])}</span>'
+    if v.code == "CHECK":
+        pill += f'<span class="bt-check">{e(check_point(d, v))}</span>'
+    delta = ""
+    if price and value:
+        dv = value - price
+        delta = (f'<span class="bt-delta {"up" if dv >= 0 else "down"}">{e(M(abs(dv)))} '
+                 f'{"under" if dv >= 0 else "over"}</span>')
+    elif v.code == "WATCH" and top.get("max_buy") and not lot:
+        delta = f'<span class="bt-delta watch">Buy at {e(M(top["max_buy"]))} or less</span>'
+    ship = d.get("shipping")
+    freeship = ('<span class="bt-ship">free shipping</span>'
+                if ship not in (None, "", "None") and float(ship) == 0 else "")
+    track = price_track(price, value, M)
+    peek = (f'<div class="bt-peek"><p class="bt-why">{e(v.reason)}</p>{track}'
+            f'<p class="bt-basis">{e(_basis(v))}</p>'
+            f'<p class="dm-line bt-open"><a href="{href}">Open the full listing →</a></p></div>')
+    return (f'<div class="btile d-{lane}">'
+            f'<div class="bt-art">{face}<span class="bt-tags">{art_tag}</span>{pill}{peek}</div>'
+            f'<div class="bt-body"><a class="dtitle bt-name" href="{href}">{e(name)}</a>'
+            f'{f"<span class=bt-sub>{e(sub)}</span>" if sub else ""}'
+            f'<p class="bt-price"><b>{e(M(price))}</b>{freeship}{delta}</p>'
+            f'{f"<div class=bt-meta>{meta}</div>" if meta else ""}'
+            f'{f"<div class=bt-spark>{spark}</div>" if spark else ""}</div></div>')
+
+
 # -- the view ---------------------------------------------------------------------------------------------------------
 
 def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur: str = "TWD",
                game: str = "ygo", token: str = "", back: str = "/opportunities") -> str:
-    from .ui_decide import deal_card, first_seen, rail
+    from .ui_decide import first_seen, rail
     from .ui_listing import ORDER, open_listings, photo_counts, item_id_of, site_of, SITES, suspect, Verdict, BUY, LABEL
     from .ui_home import _pc_grade, _listing_art
     from .pile import keys as pile_keys
@@ -474,11 +542,24 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
                      f'data-tip="{e("Stop sorting by " + SORT_LABEL[k])}">×</a></li>')
     remaining = [(k, lab) for k, lab, _ in SORTS if k not in [a for a, _ in stack]]
     addopts = "".join(f'<option value="{k}">{e(lab)}</option>' for k, lab in remaining)
-    studio = ('<div class="bsort" role="group" aria-label="Sort order"><span class="bs-l">Sort</span>'
+    studio = ('<details class="bstudio"><summary data-tip="Stack several sorts and drag them into order">Fine-tune</summary>'
+              '<div class="bsort" role="group" aria-label="Sort order"><span class="bs-l">Sort stack</span>'
               f'<ol class="bs-list" id="bs-list">{"".join(pills)}</ol>'
               + (f'<select class="bs-add" id="bs-add" aria-label="Add a way to sort"><option value="">＋ add</option>{addopts}</select>'
                  if remaining else "")
-              + '</div>')
+              + '</div></details>')
+    cur_sort = sort_str(stack)
+    is_preset = any(sv == cur_sort for sv, _ in SORT_PRESETS)
+    preset_opts = "".join(f'<option value="{e(sv)}"{" selected" if sv == cur_sort else ""}>{e(lab)}</option>'
+                          for sv, lab in SORT_PRESETS)
+    if not is_preset:
+        preset_opts += f'<option value="{e(cur_sort)}" selected>Custom order</option>'
+    sortform = (f'<form class="bsortby" method="get" action="{e(back)}" data-bsortby>'
+                + "".join(f'<input type="hidden" name="{k}" value="{e(val)}">' for k, val in state.items()
+                          if val and k not in ("sort", "page"))
+                + '<label class="bsb-l" for="b-sortby">Sort</label>'
+                + f'<select id="b-sortby" name="sort" aria-label="Sort listings">{preset_opts}</select>'
+                + '<button type="submit">Go</button></form>')
 
     # -- facet rail
     def chip(param, val, text, on, n=None, dot=""):
@@ -543,7 +624,12 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
     n_sold = sum(sold_counts(st, game).values())
     track_sec = ('<div class="fsec" role="group" aria-label="Track record"><h3>Track record</h3>'
                  f'<a class="fchip" href="{e(back + "?sec=sold")}">Sold market<b class="fc-n">{n_sold:,}</b></a></div>')
-    facets = (f'<aside class="brail" aria-label="Filters">{rail_html}{track_sec}{type_sec}{site_sec}{fresh_sec}{price_sec}{cond_sec}{pc_sec}{mark_sec}{lab_sec}</aside>')
+    more_active = (t != "any" or site != "any" or bool(fresh) or bool(lab)
+                   or bool(state.get("pmin")) or bool(state.get("pmax")))
+    more = (f'<details class="fmore"{" open" if more_active else ""}><summary>More filters'
+            f'{" · on" if more_active else ""}</summary>'
+            f'{type_sec}{site_sec}{fresh_sec}{price_sec}{lab_sec}</details>')
+    facets = (f'<aside class="brail" aria-label="Filters">{rail_html}{cond_sec}{pc_sec}{mark_sec}{track_sec}{more}</aside>')
 
     # -- saved views
     views = views_of(st, game)
@@ -577,9 +663,9 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
     sectoggle = ('<span class="bsec-toggle" role="group" aria-label="Board section">'
                  f'<a class="fchip on" href="{e(href())}" aria-current="true">Live asks</a>'
                  f'<a class="fchip" href="{e(back + "?sec=sold")}">Sold market</a></span>')
-    toolbar = (f'<div class="bbar"><div class="bbar1">{searchf}{studio}{grptoggle}{sectoggle}'
+    toolbar = (f'<div class="bbar"><div class="bbar1">{searchf}{sortform}{studio}{grptoggle}{sectoggle}'
                f'<button type="button" class="bdense" id="b-dense" aria-pressed="false" '
-               f'data-tip="Tight rows fit more on screen" aria-label="Toggle tight rows">Tight</button>'
+               f'data-tip="Tight tiles fit more on screen" aria-label="Toggle tight tiles">Tight</button>'
                f'<label class="ball"><input type="checkbox" id="b-all"> pick page</label>{keys_hint}</div>{viewsrow}</div>')
 
     # -- cards
@@ -622,9 +708,6 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
                              f'<button type="submit" aria-label="{e("Remove label " + lname)}" '
                              f'data-tip="{e("Remove this label")}">×</button></form></span>')
             labrow = f'<div class="blabs">{"".join(chips)}</div>'
-        card = deal_card(key, d, vd, cards, M, now, ph, seen.get(key),
-                         (sp or {}).get(d.get("printing_id") or "", "") if not is_lot(d) else "",
-                         token=token, piled=piled, back=back)
         meta = []
         if key not in analyzed:
             meta.append(f'<span class="dpill p-new" data-tip="{e("Unchecked: the engine has not priced this listing yet")}">{NEW_ICON} Unchecked</span>')
@@ -649,14 +732,15 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
             span = f"{M(lo)}–{M(hi)}" if hi > lo else M(lo) if hi >= lo else "prices vary"
             meta.append(f'<a class="bgrp" href="{e(href(print=gk, grp="list", page=""))}" '
                         f'data-tip="{e("See every ask of this card")}" title="{e("See every ask")}">{cnt} asks · {e(span)}</a>')
-        metarow = f'<div class="bmeta">{"".join(meta)}</div>'
         iid = item_id_of(key, d)
         has_shot = bool(iid and ph.get(iid))
-        art_tag = ("Lot photo" if is_lot(d) else "Official art" if _listing_art(d)
-                   else "Seller photo" if has_shot else "No photo yet")
+        art_tag = ("Lot photo" if is_lot(d) else "Seller photo" if d.get("photo") == "clash" and has_shot
+                   else "Official art" if _listing_art(d) else "Seller photo" if has_shot else "No photo yet")
         arttag = f'<span class="bart" data-tip="{e("The picture shown: " + art_tag.lower())}">{e(art_tag)}</span>'
+        tile = board_tile(key, d, vd, cards, M, now, ph, meta="".join(meta), art_tag=arttag,
+                          spark=(sp or {}).get(d.get("printing_id") or "", "") if not is_lot(d) else "")
         cells.append(f'<div class="bcell{" mk-pinned" if pin_on else ""}{" mk-reviewed" if rev_on else ""}{" b-new" if key not in analyzed else ""}{" b-pcdeal" if key in promoted else ""}" '
-                     f'data-key="{e(key)}" tabindex="0">{ctl}{metarow}{arttag}{card}{labrow}</div>')
+                     f'data-key="{e(key)}" tabindex="0">{ctl}{tile}{labrow}</div>')
 
     # -- pager
     pager = ""
@@ -714,7 +798,7 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
             f'<p class="sub">{sub}</p>{tick}</div>')
     empty = (f'<p class="empty">Nothing matches these filters. <a href="{e(back)}">Show everything</a>, or widen a lane.</p>'
              if not cells else "")
-    grid = (printnote + f'<div class="deals bgrid" id="b-grid">{"".join(cells)}</div>') if cells else printnote
+    grid = (printnote + f'<div class="bgrid" id="b-grid">{"".join(cells)}</div>') if cells else printnote
     drawer = ('<div class="bshade" id="b-shade" hidden></div>'
               '<aside class="bdrawer" id="b-drawer" aria-label="Listing peek" aria-hidden="true">'
               '<div class="bd-head"><b id="bd-title">Listing</b>'
@@ -1027,6 +1111,28 @@ BOARD_CSS = """
 .bs-dir,.bs-x{text-decoration:none;color:var(--fg);padding:0 3px;font-weight:700;line-height:1}
 .bs-dir:hover{color:#2f6ce0}.bs-x:hover{color:#e05252}
 .bs-add{font:inherit;font-size:12.5px;border:1px dashed var(--fg);background:var(--surface);color:var(--fg);padding:3px 5px}
+.bsortby{display:inline-flex;align-items:center;gap:6px}
+.bsb-l{font-size:11px;text-transform:uppercase;letter-spacing:.09em;opacity:.65}
+.bsortby select{font:inherit;font-size:13px;border:1px solid var(--fg);background:var(--surface);color:var(--fg);padding:6px 8px;cursor:pointer}
+.bsortby select:focus{outline:2px solid #2f6ce0;outline-offset:-2px}
+.bsortby button{font:inherit;font-size:12px;border:1px solid var(--fg);border-left:0;background:var(--fg);color:var(--bg);padding:6px 9px;cursor:pointer}
+.bstudio{position:relative}
+.bstudio summary{list-style:none;cursor:pointer;font-size:12.5px;border:1px dashed var(--fg);background:var(--surface);
+ color:var(--fg);padding:6px 10px;user-select:none}
+.bstudio summary::-webkit-details-marker{display:none}
+.bstudio summary:hover{border-style:solid}
+.bstudio[open] summary{background:var(--fg);color:var(--bg);border-style:solid}
+.bstudio .bsort{position:absolute;top:calc(100% + 6px);left:0;z-index:60;flex-direction:column;align-items:flex-start;gap:8px;
+ min-width:250px;max-width:320px;background:var(--surface);border:1px solid var(--fg);
+ box-shadow:4px 4px 0 color-mix(in srgb,var(--fg) 22%,transparent);padding:12px}
+.fmore{border:1px solid var(--line);background:var(--surface)}
+.fmore summary{list-style:none;cursor:pointer;padding:9px 10px;font-size:11px;text-transform:uppercase;letter-spacing:.09em;
+ opacity:.75;user-select:none}
+.fmore summary::-webkit-details-marker{display:none}
+.fmore summary:hover{opacity:1}
+.fmore[open] summary{border-bottom:1px dashed var(--line);opacity:1}
+.fmore .fsec{border:0;border-bottom:1px dashed var(--line);background:none}
+.fmore .fsec:last-child{border-bottom:0}
 .bdense{font:inherit;font-size:12px;border:1px solid var(--fg);background:var(--surface);color:var(--fg);padding:5px 9px;cursor:pointer}
 .bdense[aria-pressed="true"]{background:var(--fg);color:var(--bg)}
 .ball{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;cursor:pointer}
@@ -1066,11 +1172,49 @@ BOARD_CSS = """
 .bprice input{width:100%;min-width:0;font:inherit;font-size:12.5px;border:1px solid var(--line);background:var(--bg);color:var(--fg);padding:4px 6px}
 .bprice input:focus{outline:2px solid #2f6ce0;outline-offset:-1px}
 .bprice button{font:inherit;font-size:11.5px;border:1px solid var(--fg);background:var(--fg);color:var(--bg);padding:4px 7px;cursor:pointer}
-.bgrid{position:relative}
+.bgrid{position:relative;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(232px,46%),1fr));gap:30px 20px}
 .bcell{position:relative;outline:none}
-.bcell:focus-visible{outline:2px solid #2f6ce0;outline-offset:3px}
-.bcell .deal{height:100%}
-.bctl{position:absolute;top:-9px;right:8px;z-index:5;display:flex;align-items:center;gap:5px}
+.bcell:focus-visible{outline:2px solid #2f6ce0;outline-offset:3px;border-radius:16px}
+.btile{display:flex;flex-direction:column;height:100%;padding:12px;background:var(--surface);border:1px solid var(--line);
+ border-radius:16px;box-shadow:var(--shadow);transition:transform .2s var(--ease),box-shadow .2s var(--ease),border-color .2s var(--ease),opacity .2s var(--ease)}
+.bcell:hover .btile{transform:translateY(-5px);box-shadow:var(--shadow-hi);border-color:var(--axis)}
+.bt-art{position:relative;border-radius:10px}
+.bt-img{width:100%;margin:0;aspect-ratio:421/614;object-fit:contain;border-radius:4.5%/3.2%;background:var(--soft);
+ filter:drop-shadow(0 10px 18px rgba(30,40,30,.16))}
+.bt-photo{width:100%;aspect-ratio:3/4;object-fit:cover;border-radius:10px;background:var(--soft);display:block}
+.bt-art .card.ph{width:100%;aspect-ratio:421/614}
+.bt-tags{position:absolute;left:8px;top:8px;z-index:3}
+.bt-pill{position:absolute;left:8px;bottom:8px;z-index:3;display:inline-flex;align-items:center;gap:5px;height:25px;padding:0 10px 0 8px;
+ border-radius:999px;font-size:11.5px;font-weight:700;color:var(--lane);background:color-mix(in srgb,var(--lane) 14%,var(--surface));
+ border:1px solid color-mix(in srgb,var(--lane) 30%,transparent);backdrop-filter:blur(3px)}
+.bt-pill .svi{width:13px;height:13px}
+.bt-check{position:absolute;right:8px;bottom:8px;z-index:3;font-size:10px;font-weight:600;color:var(--fg2);
+ background:color-mix(in srgb,var(--surface) 88%,transparent);border:1px dashed var(--axis);border-radius:999px;padding:2px 8px}
+.bt-peek{position:absolute;inset:0;z-index:4;display:flex;flex-direction:column;justify-content:flex-end;gap:7px;padding:14px;
+ border-radius:10px;color:var(--bg);background:linear-gradient(180deg,color-mix(in srgb,var(--fg) 55%,transparent) 0%,color-mix(in srgb,var(--fg) 92%,transparent) 46%);
+ opacity:0;transform:translateY(10px);pointer-events:none;transition:opacity .2s var(--ease),transform .2s var(--ease)}
+.bcell:hover .bt-peek,.bcell:focus-within .bt-peek{opacity:1;transform:translateY(0);pointer-events:auto}
+.bt-why{margin:0;font-size:12.5px;line-height:1.4;font-weight:500}
+.bt-basis{margin:0;font-size:11px;opacity:.8}
+.bt-peek .track{background:color-mix(in srgb,var(--bg) 30%,transparent)}
+.bt-peek .tk-m i{box-shadow:0 0 0 3px color-mix(in srgb,var(--fg) 80%,transparent)}
+.bt-open{margin:0;font-size:12px;font-weight:700}
+.bt-open a{color:var(--bg);text-decoration:underline;text-underline-offset:2px}
+.bt-body{display:flex;flex-direction:column;gap:5px;padding-top:11px;min-width:0}
+.bt-name{font-size:14.5px;font-weight:650;line-height:1.28;color:var(--fg);text-decoration:none;letter-spacing:-.01em;
+ display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.bt-name:hover{color:var(--teal-deep)}
+.bt-sub{font-size:11.5px;color:var(--muted);line-height:1.3}
+.bt-price{margin:0;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;font-variant-numeric:tabular-nums}
+.bt-price b{font-size:18px;font-weight:800;color:var(--fg);letter-spacing:-.01em}
+.bt-ship{font-size:10.5px;color:var(--muted)}
+.bt-delta{font-size:11.5px;font-weight:700}
+.bt-delta.up{color:var(--teal-deep)}.bt-delta.down{color:var(--grey)}.bt-delta.watch{color:var(--sky-text);font-weight:600}
+.bt-meta{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:2px}
+.bt-spark{margin-top:2px}.bt-spark svg{display:block;width:100%;height:auto}
+.bctl{position:absolute;top:6px;right:6px;z-index:6;display:flex;align-items:center;gap:5px;opacity:0;transition:opacity .15s}
+.bcell:hover .bctl,.bctl:focus-within,.bcell.picked .bctl{opacity:1}
+@media(hover:none){.bctl{opacity:1}}
 .bsel{width:17px;height:17px;accent-color:#2f6ce0;cursor:pointer;margin:0}
 .bmk{display:inline-flex;margin:0}
 .bpin,.brev{font:inherit;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;border:1px solid var(--fg);
@@ -1078,21 +1222,24 @@ BOARD_CSS = """
 .bpin:hover,.brev:hover{transform:translateY(-1px)}
 .bpin.on{background:#d4af6a;border-color:var(--fg);color:#1c1710}
 .brev.on{background:#2fbf71;border-color:var(--fg);color:#0e1a12}
-.bcell.mk-pinned .deal{border-color:var(--fg);box-shadow:3px 3px 0 #d4af6a}
-.bcell.mk-reviewed .deal{opacity:.72}
-.bcell.mk-reviewed .deal:hover{opacity:1}
-.bcell.picked .deal{outline:2px solid #2f6ce0;outline-offset:2px}
-.blabs{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
+.bcell.mk-pinned .btile{border-color:var(--fg);box-shadow:3px 3px 0 #d4af6a}
+.bcell.mk-reviewed .btile{opacity:.72}
+.bcell.mk-reviewed .btile:hover{opacity:1}
+.bcell.picked .btile{outline:2px solid #2f6ce0;outline-offset:2px}
+.blabs{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
 .blab{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;border:1px solid var(--fg);
  background:color-mix(in srgb,var(--lc,var(--fg)) 16%,var(--surface));color:var(--fg);padding:1px 4px 1px 8px}
 .blab::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--lc,var(--fg))}
 .blx{display:inline-flex;margin:0}
 .blx button{border:0;background:none;color:inherit;font:inherit;line-height:1;padding:1px 4px;cursor:pointer}
 .blx button:hover{color:#e05252}
-body.b-tight .bgrid{grid-template-columns:repeat(auto-fill,minmax(min(360px,100%),1fr));gap:10px}
-body.b-tight .deal{padding:10px;grid-template-columns:84px minmax(0,1fr);gap:10px}
-body.b-tight .dwhy,body.b-tight .dmore,body.b-tight .dsub{display:none}
-body.b-tight .dtitle{font-size:14px}
+body.b-tight .bgrid{grid-template-columns:repeat(auto-fill,minmax(min(178px,31%),1fr));gap:14px 12px}
+body.b-tight .btile{padding:8px;border-radius:12px}
+body.b-tight .bt-sub,body.b-tight .bt-spark,body.b-tight .bt-check{display:none}
+body.b-tight .bt-name{font-size:12.5px}
+body.b-tight .bt-price b{font-size:15px}
+body.b-tight .bt-peek{padding:9px;gap:4px}
+body.b-tight .bt-why{font-size:11px}
 .bpager{display:flex;align-items:center;gap:6px;justify-content:center;margin:20px 0 8px;font-size:13.5px}
 .bpager a,.bpager b{display:inline-grid;place-items:center;min-width:30px;height:30px;padding:0 7px;
  border:1px solid var(--fg);text-decoration:none;color:var(--fg);background:var(--surface)}
@@ -1137,7 +1284,6 @@ body.b-sel .bbulk{display:flex}
  padding:9px 14px;font-size:13.5px;max-width:92vw}
 .btoast button{font:inherit;font-size:12.5px;border:1px solid var(--fg);background:var(--fg);color:var(--bg);padding:3px 10px;cursor:pointer}
 .btoast button:hover{background:#2fbf71;border-color:var(--fg);color:#0e1a12}
-.bmeta{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin:0 0 6px}
 body{overflow-x:clip}
 html{overflow-x:clip}
 .rhint{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border:1px solid var(--fg);
@@ -1146,7 +1292,7 @@ html{overflow-x:clip}
 .bsec-toggle{display:inline-flex;border:1px solid var(--fg)}
 .bsec-toggle .fchip{border:0;margin:0;padding:5px 9px;font-size:12.5px;color:var(--fg);text-decoration:none}
 .bsec-toggle .fchip.on{background:var(--fg);color:var(--bg)}
-.bcell.b-pcdeal .deal{border-color:#2fbf71;box-shadow:3px 3px 0 color-mix(in srgb,#2fbf71 45%,transparent)}
+.bcell.b-pcdeal .btile{border-color:#2fbf71;box-shadow:3px 3px 0 color-mix(in srgb,#2fbf71 45%,transparent)}
 .ssum{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 12px}
 .ssum-c{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--fg);padding:4px 10px;text-decoration:none;
  color:var(--fg);font-size:12.5px;background:var(--surface)}
@@ -1192,10 +1338,10 @@ body.b-tight .sgap,body.b-tight .swhy{display:none}
 .bgrp{display:inline-flex;align-items:center;font-size:11px;border:1px solid var(--fg);background:var(--surface);
  color:var(--fg);text-decoration:none;padding:1px 7px;white-space:nowrap}
 .bgrp:hover{background:#d4af6a;color:#1c1710}
-.bart{position:absolute;left:14px;top:44px;z-index:4;font-size:9px;text-transform:uppercase;letter-spacing:.07em;
- background:var(--fg);color:var(--bg);padding:1px 5px;pointer-events:none;opacity:.92}
-.bcell.b-new .deal{border-style:dashed}
-.bcell.b-new .dpill{display:none}
+.bart{display:inline-block;font-size:9px;text-transform:uppercase;letter-spacing:.07em;
+ background:var(--fg);color:var(--bg);padding:2px 6px;border-radius:4px;pointer-events:none;opacity:.92}
+.bcell.b-new .btile{border-style:dashed}
+.bcell.b-new .bt-pill{display:none}
 .dpill.p-new{display:inline-flex;align-items:center;gap:5px;border:1px dashed var(--fg);background:var(--surface);
  color:var(--fg);font-size:12px;padding:2px 8px}
 .dpill.p-new svg{width:13px;height:13px}
@@ -1208,7 +1354,6 @@ body.b-tight .sgap,body.b-tight .swhy{display:none}
 .bgrp-toggle .fchip.on{background:var(--fg);color:var(--bg)}
 .bprintnote{margin:0 0 10px;font-size:13px}
 .bprintnote a{color:var(--fg)}
-body.b-tight .bmeta{margin-bottom:4px}
 body.b-tight .bart{display:none}
 @media(max-width:900px){
  .blayout{grid-template-columns:1fr}
@@ -1442,6 +1587,12 @@ BOARD_JS = """
     u.searchParams.delete('page');
     location.href=u.pathname+u.search;
   });
+
+  var sb=$('b-sortby');
+  if(sb){
+    var gb=sb.form.querySelector('button[type="submit"]');if(gb)gb.hidden=true;
+    sb.addEventListener('change',function(){this.form.requestSubmit()});
+  }
 
   /* find box: enter or a short pause */
   var qin=$('b-q'),qT=null;
