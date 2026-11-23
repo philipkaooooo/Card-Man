@@ -231,20 +231,29 @@ def _engine_line(st, now: datetime, base: str, token: str = "") -> str:
         row = st.db.execute("SELECT at, data_json FROM engine_run ORDER BY at DESC LIMIT 1").fetchone()
     except Exception:
         row = None
-    ago = _ago(row[0], now) if row else ""
+    at = row[0] if row else None
     new = 0
     if row:
         try:
             new = int(json.loads(row[1]).get("new_listings") or 0)
         except Exception:
             new = 0
+    try:   # a manual quick pass counts as the last check when it is the fresher arrival
+        qp = st.db.execute("SELECT v FROM engine_meta WHERE k='quick_pass'").fetchone()
+        if qp and qp[0]:
+            q = json.loads(qp[0])
+            if at is None or datetime.fromisoformat(q["at"]) > datetime.fromisoformat(at):
+                at, new = q["at"], int(q.get("new") or 0)
+    except Exception:
+        pass
+    ago = _ago(at, now) if at else ""
     txt = ("last check " + ago) if ago else "engine idle"
     if new and ago:
         txt += " · +{} new".format(new)
     sec = None
-    if row:
+    if at:
         try:
-            t = datetime.fromisoformat(row[0])
+            t = datetime.fromisoformat(at)
             if (t.tzinfo is None) != (now.tzinfo is None):
                 t = t.replace(tzinfo=now.tzinfo)
             sec = (now - t).total_seconds()
@@ -423,7 +432,7 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
                             e(code))))
     entries.sort(key=lambda x: x[1], reverse=True)
     entries.sort(key=lambda x: x[0])
-    tiles = [h for _r, _s, h in entries[:12]]
+    tiles = [h for _r, _s, h in entries[:30]]
     grid = (f'<div class="hungrid">{"".join(tiles)}</div>' if tiles else
             '<p class="empty">' + ("Nothing matches this filter yet — widen it above, or the collector has not reached this signal today."
                                    if v != "all" or t != "all" else
@@ -1628,6 +1637,7 @@ if(s.fresh_at&&s.fresh_at!==seen){seen=s.fresh_at;swap()}else paint();
 if((!s.scanning&&(seen||Date.now()-t0>45000))||Date.now()-t0>240000){clearInterval(iv);running=false;swap()}})},6000)}
 async function run(auto){if(running)return;running=true;sync();try{var before=await st();last=before;paint();
 if(auto&&before&&before.age_s!==null&&before.age_s<480){await swap();running=false;sync();return}
+if(!auto&&before&&before.scanning){livePoll();return}
 var b=document.querySelector('.hun-scan')||{dataset:{}};var fd=new FormData();fd.append('back',b.dataset.back||'/');fd.append('t',b.dataset.t||'');
 if(!auto)fd.append('quick','1');
 try{await fetch('/engine/tick',{method:'POST',body:fd})}catch(e){}

@@ -327,33 +327,44 @@ class EbayAdapter:
         search's listings, and the pass position, while the next one is still in flight."""
         if not self.status().on:
             return [], []
+        from concurrent.futures import ThreadPoolExecutor, as_completed
         from .ebay_browse import EbayBrowse, SourceUnavailable
         client = EbayBrowse(self.raw)
         out, errors, seen = [], [], set()
         qn = len(self.queries)
-        for qi, (q, game) in enumerate(self.queries):
-            try:
-                res = (client.search(q, catalog=None, category_ids=self.CATEGORY, aspect_filter=self.ASPECT["pkm"], now=now) if game == "pkm"
-                       else client.search(q, catalog=self.catalog, now=now))
-            except SourceUnavailable as x:
-                errors.append(f"ebay '{q}': {x}")
-                continue
-            batch = []
-            for o in res.observations:
-                if o.id in seen:      # the same item matched an earlier search this pass
-                    continue
-                seen.add(o.id)
-                batch.append(RawListing(source=o.source, listing_id=o.listing_id or o.id, title=res.titles.get(o.id) or q,
-                                        price=o.original_amount, currency=o.currency,
-                                        kind="bid" if o.evidence_type == EvidenceType.OBSERVED_BID else "ask", url=o.source_url,
-                                        shipping=o.shipping_amount, seller=o.seller_ref, condition=o.observed_condition, raw_ref=o.raw_ref,
-                                        game=game, photo_urls=tuple(res.photos.get(o.id) or ())))
-            out += batch
-            if on_batch is not None:
+
+        def fetch(q, game):      # network and parse only: workers never touch the engine db
+            if game == "pkm":
+                return client.search(q, catalog=None, category_ids=self.CATEGORY, aspect_filter=self.ASPECT["pkm"], now=now)
+            return client.search(q, catalog=self.catalog, now=now)
+
+        done = 0
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            futs = {ex.submit(fetch, q, game): (q, game) for q, game in self.queries}
+            for fut in as_completed(futs):
+                q, game = futs[fut]
+                done += 1        # progress counts completions, so it only ever moves forward
                 try:
-                    on_batch(batch, qi, qn)
-                except Exception as x:   # a sink failure must not cost the collection
-                    errors.append(f"ebay batch '{q}': {type(x).__name__}: {x}")
+                    res = fut.result()
+                except SourceUnavailable as x:
+                    errors.append(f"ebay '{q}': {x}")
+                    continue
+                batch = []
+                for o in res.observations:
+                    if o.id in seen:      # the same item matched an earlier search this pass
+                        continue
+                    seen.add(o.id)
+                    batch.append(RawListing(source=o.source, listing_id=o.listing_id or o.id, title=res.titles.get(o.id) or q,
+                                            price=o.original_amount, currency=o.currency,
+                                            kind="bid" if o.evidence_type == EvidenceType.OBSERVED_BID else "ask", url=o.source_url,
+                                            shipping=o.shipping_amount, seller=o.seller_ref, condition=o.observed_condition, raw_ref=o.raw_ref,
+                                            game=game, photo_urls=tuple(res.photos.get(o.id) or ())))
+                out += batch
+                if on_batch is not None:
+                    try:
+                        on_batch(batch, done - 1, qn)
+                    except Exception as x:   # a sink failure must not cost the collection
+                        errors.append(f"ebay batch '{q}': {type(x).__name__}: {x}")
         return out, errors
 
 

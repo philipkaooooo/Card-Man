@@ -2050,6 +2050,7 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                 except OSError:
                     pass
                 out = {"scanning": scanning, "at": None, "age_s": None, "new": 0, "fresh_at": None, "progress": None, "interval_min": None}
+                qp = None
                 try:
                     import sqlite3 as _sq3
                     db = _sq3.connect("file://{}?mode=ro".format(_quote(str(Path(store_path).resolve()))), uri=True)
@@ -2064,6 +2065,7 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                         im = db.execute("SELECT v FROM engine_meta WHERE k='loop_interval_min'").fetchone()
                         if im:
                             out["interval_min"] = float(im[0])
+                        qp = db.execute("SELECT v FROM engine_meta WHERE k='quick_pass'").fetchone()
                     except Exception:
                         pass
                     db.close()
@@ -2077,6 +2079,16 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                             t = datetime.fromisoformat(row[0])
                             out["age_s"] = max(0, int((datetime.now(t.tzinfo) - t).total_seconds()))
                         except ValueError:
+                            pass
+                    if qp and qp[0]:
+                        try:
+                            q = json.loads(qp[0])
+                            qt = datetime.fromisoformat(q["at"])
+                            if out["at"] is None or qt > datetime.fromisoformat(out["at"]):
+                                out["at"] = q["at"]
+                                out["new"] = int(q.get("new") or 0)
+                                out["age_s"] = max(0, int((datetime.now(qt.tzinfo) - qt).total_seconds()))
+                        except Exception:
                             pass
                 except Exception:
                     pass

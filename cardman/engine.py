@@ -573,6 +573,9 @@ class Engine:
             rep.routes.append(asdict(self.reference.status()))
         if quick:   # a preview pass: the board has the new listings and their lasers; the rest can wait for the loop
             rep.seconds = round(time.monotonic() - started, 3)
+            with self.db:   # a manual pass shows on the clock too: the board must not look like nothing landed
+                self.db.execute("INSERT OR REPLACE INTO engine_meta VALUES ('quick_pass', ?)",
+                                (json.dumps({"at": rep.at, "new": rep.new_listings}),))
             return rep
         if self.ebay.status().on:
             # Sales seen through eBay's own API: sold counts that rose on tracked fixed-price listings.
