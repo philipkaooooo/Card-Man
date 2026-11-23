@@ -206,7 +206,8 @@ def _filters(qs: dict, sort: str, min_sales: str, counts: dict) -> str:
         f'<div class="fsec"><span class="flab">{e(name)}</span>{"".join(ch)}</div>' for name, ch in groups)
         + '</div><p class="fnote">Every row uses the same rule: the middle of its newest sales against the middle '
         'of the sales just before them, same number on each side. Climbing: up 5% or more. Slipping: down 5% or '
-        'more. Holding: inside 5%. Thin: fewer than 4 sales, so there is no second half to compare.</p>')
+        'more. Holding: inside 5%. Too few sales here, PriceCharting\'s own 12-month series for the same grade '
+        'supplies the call; Thin means neither could.</p>')
 
 
 def vals_default(key: str) -> str:
@@ -348,7 +349,8 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
             f'<p class="mk-sub">One row per exact printing and grade. <b>Typical</b> is the middle of what this version '
             f'actually sold for, with raw sales restated to Near Mint. <b>Ask</b> is the cheapest copy on sale now - '
             f'click it to open the listing. <b>Trend</b> puts the middle of the newest sales against the middle of the '
-            f'sales just before them, same count each side, so every row uses one rule.</p>'
+            f'sales just before them; where sales are too few, PriceCharting\'s 12-month series for the same grade '
+            f'answers instead.</p>'
             + pulse)
     chips = _filters({**qs, "sort": sort, "min": str(min_sales)}, sort, str(min_sales),
                      {"series": s["series"], "rising": s["rising"], "falling": s["falling"],
@@ -366,7 +368,8 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
             'months. The line under it is the year change. A verdict from a second market, not a copy of ours.">'
             '1 yr · PC</span>'
             '<span title="The middle of this row\'s newest sales against the middle of the sales just before them - '
-            'same count on each side, up to 5. Climbing 5%+, Slipping 5%-, else Holding. Fewer than 4 sales: too thin to call.">'
+            'same count on each side, up to 5. Climbing 5%+, Slipping 5%-, else Holding. Too few sales, '
+            'PriceCharting\'s 12-month series for that grade answers instead; Thin means neither could.">'
             'Trend</span>'
             '</div>')
     name_of = _name_of(cards, pkm)
@@ -616,16 +619,23 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
         grade = _grade(gkey)
         pill = f'<span class="mgrade{" raw" if not grade else ""}">{e(grade or "Raw")}</span>'
         # One rule for every row: the middle of the newest sales against the middle of the ones just before them,
-        # same count on each side. Fewer than four sales and there is no second half to compare.
+        # same count on each side. Too thin for that, PriceCharting's weekly series for the same grade; too thin
+        # for both, the row says so.
         if r.get("move_recent") is not None:
             lab, pct = r["move_recent_label"], r["move_recent"]
             k = r["move_n"] or 0
             ev = f"newest {k} vs {k} before"
             why = (f'The middle of the newest {k} sales against the middle of the {k} before them: {pct:+.0f}%.')
+        elif r.get("pc_move") is not None:
+            lab, pct = r["pc_move_label"], r["pc_move"]
+            k = 0
+            ev = f'{r["n_sales"]} sales · PC 12 mo'
+            why = (f'Only {r["n_sales"]} sales here. PriceCharting\'s weekly sold series for this grade moved '
+                   f'{pct:+.0f}% over 12 months.')
         else:
             lab, pct, k = None, None, 0
             ev = f"{r['n_sales']} sales · need 4"
-            why = "Fewer than four sales: no newest half to set against an older half yet."
+            why = "Fewer than four sales and no PriceCharting series: nothing to compare."
         word = {"rising": "Climbing", "falling": "Slipping", "steady": "Holding"}.get(lab)
         cls = lab if lab in ("rising", "falling", "steady") else "none"
         row_cls = {"rising": "up", "falling": "down", "steady": "hold"}.get(lab, "none")

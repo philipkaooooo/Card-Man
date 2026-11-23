@@ -123,6 +123,41 @@ def test_board_trend_cell_names_the_direction_and_its_evidence(tmp_path):
     assert '<a href="/market?' in h                                  # the pulse key filters the board it describes
 
 
+def test_thin_sales_take_pricechartings_year_as_the_call(tmp_path):
+    """Two sales cannot make a trend; PriceCharting's weekly series for the same grade can, and it says so."""
+    import json
+    from cardman.pc import SCHEMA as PC_SCHEMA
+    from cardman.ui_market import view_market
+    st = Store(tmp_path / "e.sqlite")
+    add(st, 0, 100, 30)
+    add(st, 1, 100, 20)
+    st.db.executescript(PC_SCHEMA)
+    weeks = [[1740812400000, 10.0], [1760000000000, 11.0], [1770000000000, 12.0], [1780000000000, 18.0]]
+    with st.db:
+        st.db.execute(
+            "INSERT INTO pc_card (printing_id, game, url, title, query, match_note, grades, series, pop, fetched, status) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (P, "ygo", "https://www.pricecharting.com/game/yugioh/blue-eyes", "Blue-Eyes LOB-EN001", "q", "test",
+             json.dumps({"Ungraded": {"p": 18.0, "c": 0.0, "vol": "1 sale per week"}}),
+             json.dumps({"Ungraded": weeks}), json.dumps({}), NOW.isoformat(), "ok"))
+    trends.refresh(st, NOW, "TWD")
+    r = trends.board(st, game="ygo", limit=1)[0]
+    assert r["move_recent"] is None and r["pc_move_label"] == "rising" and abs(r["pc_move"] - 80.0) < 1e-9
+    h = view_market(st, NOW, "TWD", "TWD", {}, game="ygo")
+    assert 'class="mtrend rising"' in h and "Climbing" in h and "+80%" in h and "2 sales · PC 12 mo" in h
+
+
+def test_board_without_pricecharting_stays_thin(tmp_path):
+    from cardman.ui_market import view_market
+    st = Store(tmp_path / "e.sqlite")
+    add(st, 0, 100, 30)
+    add(st, 1, 100, 20)
+    trends.refresh(st, NOW, "TWD")
+    r = trends.board(st, game="ygo", limit=1)[0]
+    assert r["pc_move"] is None and r["move_recent"] is None
+    assert "Thin" in view_market(st, NOW, "TWD", "TWD", {}, game="ygo")
+
+
 def test_no_sales_no_row(tmp_path):
     st = Store(tmp_path / "e.sqlite")
     assert trends.refresh(st, NOW, "TWD") == 0

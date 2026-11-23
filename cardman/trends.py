@@ -18,7 +18,7 @@ import argparse
 import statistics
 from datetime import date, datetime, timedelta, timezone
 
-from . import conditions
+from . import conditions, pc
 
 from .history import card_sales, plain_trend, summarize, Converter
 
@@ -112,7 +112,8 @@ def refresh(st, now: datetime | None = None, home: str = "TWD") -> int:
     st.db.executescript(SCHEMA)
     cols = {r[1] for r in st.db.execute("PRAGMA table_info(price_trend)")}
     for c, t in (("short_move", "REAL"), ("short_days", "INTEGER"), ("move_label", "TEXT"), ("change_span", "REAL"),
-                 ("move_recent", "REAL"), ("move_n", "INTEGER"), ("move_past", "INTEGER"), ("move_recent_label", "TEXT")):
+                 ("move_recent", "REAL"), ("move_n", "INTEGER"), ("move_past", "INTEGER"), ("move_recent_label", "TEXT"),
+                 ("pc_move", "REAL"), ("pc_move_label", "TEXT")):
         if c not in cols:
             st.db.execute(f"ALTER TABLE price_trend ADD COLUMN {c} {t}")
     pids = [r[0] for r in st.db.execute(
@@ -122,6 +123,10 @@ def refresh(st, now: datetime | None = None, home: str = "TWD") -> int:
         with st.db:
             st.db.execute("DELETE FROM price_trend")
         return 0
+    try:
+        pcrows = pc.rows_for(st, pids)
+    except Exception:
+        pcrows = {}
     groups = card_sales(st, pids)
     conv = Converter(st, home, home)
     asks = _asks(st, now)
@@ -165,8 +170,12 @@ def refresh(st, now: datetime | None = None, home: str = "TWD") -> int:
             if first > 0:
                 span_pct = (last / first - 1) * 100
         gkey = f"{gc}|{gr}"
-        ask = asks.get((pid, gkey))
+        # PriceCharting's own weekly sold series for the same printing and grade: the fallback trend when our
+        # sales are too thin to split, and the year context the card page shows alongside ours. The change is
+        # relative, so it stands even where the two markets disagree on the level.
         med = statistics.median(prices)
+        pcm, pcm_label, _pc_last = _pc_change(pcrows.get(pid), gkey)
+        ask = asks.get((pid, gkey))
         ask_now = (ask["low"] if ask.get("low") is not None else ask["median"]) if ask else None
         spread = (ask_now / med - 1) * 100 if ask_now and med else None
         rows.append((
@@ -177,20 +186,38 @@ def refresh(st, now: datetime | None = None, home: str = "TWD") -> int:
             tr.get("why"), ch.get("pct"), ch.get("why"), span_pct, plain,
             m, 7 if m is not None else None, move_label,
             ask["n"] if ask else None, ask["low"] if ask else None, ask["median"] if ask else None, ask["day"] if ask else None,
-            spread, now.isoformat(), mrec, nrec, npast, mrec_label))
+            spread, now.isoformat(), mrec, nrec, npast, mrec_label, pcm, pcm_label))
     with st.db:
         st.db.execute("DELETE FROM price_trend")
         st.db.executemany(
             "INSERT INTO price_trend (printing_id, gkey, game, label, n_sales, n_30, last_sale, first_sale, sales_month, "
             "median, median_30, low, high, p25, p75, trend_label, trend_pct, trend_ci_lo, trend_ci_hi, trend_why, "
             "change_90, change_why, change_span, plain, short_move, short_days, move_label, ask_n, ask_low, ask_median, ask_day, "
-            "spread, updated, move_recent, move_n, move_past, move_recent_label) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+            "spread, updated, move_recent, move_n, move_past, move_recent_label, pc_move, pc_move_label) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
     return len(rows)
 
 
-_MOVE = "move_recent_label"
-_SORTS = {"move": "ABS(COALESCE(move_recent, 0)) DESC, ABS(COALESCE(change_90, 0)) DESC, ABS(COALESCE(trend_pct, 0)) DESC",
+def _pc_change(pc_row: dict | None, gkey: str) -> tuple[float | None, str | None]:
+    """PriceCharting's 12-month change for the series matching this grade, plus its latest point (USD)."""
+    gs = pc.grade_series(pc_row, gkey)
+    if not gs:
+        return None, None, None
+    pts = [(t, float(v)) for t, v in gs[1] if v and float(v) > 0]
+    if len(pts) < 4:
+        return None, None, None
+    first, last = pts[0][1], pts[-1][1]
+    if first <= 0:
+        return None, None, None
+    chg = (last / first - 1) * 100
+    # A jump with no sales behind it (a zero week kept as a placeholder) is noise, not a trend.
+    if abs(chg) > 400:
+        return None, None, None
+    return chg, ("rising" if chg >= 5 else "falling" if chg <= -5 else "steady"), last
+
+
+_MOVE = "COALESCE(move_recent_label, pc_move_label)"
+_SORTS = {"move": "ABS(COALESCE(move_recent, pc_move, 0)) DESC, ABS(COALESCE(change_90, 0)) DESC",
           "edge": "(COALESCE(median_30, median) - ask_low) / NULLIF(COALESCE(median_30, median), 0) DESC",
           "sales": "n_sales DESC, last_sale DESC",
           "spread": "ABS(COALESCE(spread, 0)) DESC",
@@ -220,7 +247,7 @@ def board(st, *, game: str = "ygo", label: str | None = None, min_sales: int = 0
         where.append(f"{_MOVE}=?")
         args.append(label)
     elif label == "none":
-        where.append("move_recent_label IS NULL")
+        where.append("move_recent_label IS NULL AND pc_move_label IS NULL")
     if min_sales:
         where.append("n_sales>=?")
         args.append(min_sales)
