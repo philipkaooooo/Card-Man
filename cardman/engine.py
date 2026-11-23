@@ -521,8 +521,14 @@ class Engine:
         book = PriceBook(self.store, self.fx, self.profile, now, bias=cal.resale_bias, reference=self.reference)
         from .games import guess_game
 
-        def ingest(raws):
+        def ingest(raws, qi=0, qn=0):
             """One batch, end to end: remember, evidence, opportunity. The board shows it in seconds."""
+            if qn:
+                try:
+                    with self.db:
+                        self.db.execute("INSERT OR REPLACE INTO engine_meta VALUES ('scan_progress', ?)", (f"{qi + 1}/{qn}",))
+                except Exception:
+                    pass
             fresh = []
             for r in raws:
                 if r.source not in ("ebay_browse:EBAY_US",) and not r.source.startswith("ebay_browse") and r.game == "ygo":

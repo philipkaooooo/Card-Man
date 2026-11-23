@@ -323,14 +323,15 @@ class EbayAdapter:
         return RouteStatus(self.name, True, f"{len(self.queries)} search(es)", self.capability)
 
     def poll(self, now: datetime, on_batch=None) -> tuple[list[RawListing], list[str]]:
-        """on_batch(raws), when given, runs after every query: the board sees each search's listings while the next
-        one is still in flight, instead of everything at the end of the pass."""
+        """on_batch(raws, query_index, query_count), when given, runs after every query: the board sees each
+        search's listings, and the pass position, while the next one is still in flight."""
         if not self.status().on:
             return [], []
         from .ebay_browse import EbayBrowse, SourceUnavailable
         client = EbayBrowse(self.raw)
         out, errors, seen = [], [], set()
-        for q, game in self.queries:
+        qn = len(self.queries)
+        for qi, (q, game) in enumerate(self.queries):
             try:
                 res = (client.search(q, catalog=None, category_ids=self.CATEGORY, aspect_filter=self.ASPECT["pkm"], now=now) if game == "pkm"
                        else client.search(q, catalog=self.catalog, now=now))
@@ -350,7 +351,7 @@ class EbayAdapter:
             out += batch
             if on_batch is not None:
                 try:
-                    on_batch(batch)
+                    on_batch(batch, qi, qn)
                 except Exception as x:   # a sink failure must not cost the collection
                     errors.append(f"ebay batch '{q}': {type(x).__name__}: {x}")
         return out, errors

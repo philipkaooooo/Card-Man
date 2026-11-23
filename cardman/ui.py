@@ -349,6 +349,20 @@ SUBS = {"cards": (("pile", "Card Pile", "/pile"), ("characters", "Characters", "
 NAV_OF = {"home": "home", "opportunities": "listings", "market": "market", "search": "cards", "pile": "cards", "import": "add",
           "costs": "settings", "settings": "settings", "characters": "cards",
           "deals": "settings", "scan": "settings", "evidence": "settings", "results": "settings", "engine": "settings"}
+PRINT_CSS = """
+/* analog street print: paper grain, misregistration, hand-inked edges. decoration only, never data */
+body::after{content:"";position:fixed;inset:0;z-index:9;pointer-events:none;opacity:.04;
+background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E")}
+main h1,main h2,.hun-h{text-shadow:1.5px 0 rgba(224,82,82,.14),-1.5px 0 rgba(47,108,224,.12)}
+.huntitle{text-shadow:2px 0 rgba(224,82,82,.18),-2px 0 rgba(47,108,224,.14)}
+a.hun{border:2px solid color-mix(in srgb,var(--fg2) 62%,transparent);border-radius:15px 10px 16px 9px/10px 16px 9px 15px;
+box-shadow:3px 4px 0 rgba(0,0,0,.10)}
+a.hun:hover{transform:translate(-1px,-4px);box-shadow:6px 9px 0 rgba(224,82,82,.13),5px 7px 0 rgba(0,0,0,.12)}
+.hunzone{border-radius:22px 16px 24px 14px}
+.hun-deal{border:1.5px solid currentColor;border-radius:7px 11px 6px 12px;transform:rotate(-2deg);background:transparent}
+.hun-stats a,.hun-fresh a{border-radius:10px 7px 12px 8px}
+@media(prefers-reduced-motion:reduce){a.hun,a.hun:hover{transform:none}}
+"""
 SHELL_CSS = """
 body{display:flex;flex-direction:column;min-height:100vh}
 header.top{position:sticky;top:0;z-index:30;background:color-mix(in srgb,var(--surface) 86%,transparent);backdrop-filter:saturate(1.5) blur(12px);
@@ -423,7 +437,7 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     tz = datetime.now().astimezone().strftime("UTC%z")
     return (f'<!doctype html><html lang="en" data-theme="{"vault" if theme == "vault" else "auto"}"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)} · CardMan</title>'
-            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{CHART_CSS}{ICON_CSS}{EFFECTS_CSS}{SHELL_CSS}{DECIDE_CSS}{CHAR_CSS}{MARKET_CSS}</style></head><body>{SPRITE}'
+            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{CHART_CSS}{ICON_CSS}{EFFECTS_CSS}{PRINT_CSS}{SHELL_CSS}{DECIDE_CSS}{CHAR_CSS}{MARKET_CSS}</style></head><body>{SPRITE}'
             + scope_links(f'<header class="top"><a class="logo" href="/">CardMan</a><nav class="main" aria-label="Main">{links}</nav>{hsearch}'
                           f'{games}{curs}</header><main class="page">{crumb}{flash}{body}</main>', game) +
             f'<footer class="foot">Private to this Mac · times {e(tz)} · press <kbd>/</kbd> to search</footer>'
@@ -2018,7 +2032,7 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     scanning = False
                 except OSError:
                     pass
-                out = {"scanning": scanning, "at": None, "age_s": None, "new": 0, "fresh_at": None}
+                out = {"scanning": scanning, "at": None, "age_s": None, "new": 0, "fresh_at": None, "progress": None, "interval_min": None}
                 try:
                     import sqlite3 as _sq3
                     db = _sq3.connect("file://{}?mode=ro".format(_quote(str(Path(store_path).resolve()))), uri=True)
@@ -2026,6 +2040,15 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     fr = db.execute("SELECT MAX(first_seen) FROM listing").fetchone()
                     if fr and fr[0]:
                         out["fresh_at"] = fr[0]
+                    try:
+                        pr = db.execute("SELECT v FROM engine_meta WHERE k='scan_progress'").fetchone()
+                        if pr and scanning:
+                            out["progress"] = pr[0]
+                        im = db.execute("SELECT v FROM engine_meta WHERE k='loop_interval_min'").fetchone()
+                        if im:
+                            out["interval_min"] = float(im[0])
+                    except Exception:
+                        pass
                     db.close()
                     if row:
                         out["at"] = row[0]

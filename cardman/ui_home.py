@@ -254,7 +254,19 @@ def _engine_line(st, now: datetime, base: str, token: str = "") -> str:
     scan = ('<button class="hun-scan" id="hun-scan" type="button" data-back="' + e(base) + '" data-t="' + e(token) + '" '
             'title="run a collector pass now"><img class="hun-wiz" src="/static/hunt-still.png" alt="" draggable="false">'
             '<span>Scan now</span></button>')
-    return scan, '<span class="hun-live {}" id="hun-live"><i></i>{}</span>'.format(cls, e(txt))
+    if row is None:
+        l1, l2 = "SCANNER IDLE", "no pass on record yet; the loop posts new asks here as it finds them"
+    else:
+        l1 = "SCANNER LIVE" if cls == "ok" else ("SCANNER SLOW" if cls == "slow" else "SCANNER OFFLINE")
+        l2 = "last pass " + ago + (" · +" + str(new) + " new" if new else "")
+        try:
+            iv = st.db.execute("SELECT v FROM engine_meta WHERE k='loop_interval_min'").fetchone()
+            if iv and float(iv[0]) >= 1:
+                l2 += " · auto every {} min".format(int(round(float(iv[0]))))
+        except Exception:
+            pass
+    return scan, ('<span class="hun-live {}" id="hun-live"><i></i><span class="hun-status">'
+                  '<b id="hun-status1">{}</b><small id="hun-status2">{}</small></span></span>').format(cls, e(l1), e(l2))
 
 
 def _hun_head(base: str, v: str, t: str, counts: dict, scan: str = "", live: str = "", chips: str = "", x: str = "") -> str:
@@ -266,18 +278,17 @@ def _hun_head(base: str, v: str, t: str, counts: dict, scan: str = "", live: str
     fresh = "".join('<a{} href="{}?v={}&t={}{}">{}</a>'.format(
         ' class="on"' if t == code else "", base, v, code, xs, lab) for code, lab in (
         ("1h", "Last hour"), ("24h", "Last 24 hours"), ("all", "Any time")))
-    stats = '<div class="hun-rail"><div class="hun-stats">' + cells + "</div></div>"
     head = ('<div class="hun-head"><div><p class="hun-kick">Freshest asks on the market, ranked by the read</p>'
-            '<h2 class="hun-h">New listings</h2></div></div>'
+            '<h2 class="hun-h">New listings</h2></div><div class="hun-stats">' + cells + '</div></div>'
             '<div class="hun-tools"><span class="hun-fresh">' + fresh + "</span>" + chips + scan + live +
             '<a class="hun-all" href="/opportunities">All listings →</a></div>')
-    return stats, head
+    return head
 
 
 def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, base: str = "/", token: str = "") -> str:
     """The newest things actually posted, wherever they were posted: one tile per fresh listing, laser-coded."""
     if "listing" not in _tables(st):
-        return "", ""
+        return ""
     f = f or {}
     v, t, x = _q1(f, "v", "all"), _q1(f, "t", "all"), _q1(f, "x", "", ("drop", "end"))
     if x not in ("drop", "end"):
@@ -379,8 +390,8 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
             (("on" if x == code else "") + (" zero" if not D[code] else "")).strip(), base, v, t, "&x=" + code, tip, lab, D[code]) for code, lab, tip in (
         ("drop", "Price drops", "asking less than before, last 24 hours"),
         ("end", "Ending soon", "auctions and offers that close within six hours"))) + "</span>"
-    stats, head = _hun_head(base, v, t, counts, scan, live, chips, x)
-    return stats, ('<section class="hunzone">' + head + grid +
+    head = _hun_head(base, v, t, counts, scan, live, chips, x)
+    return ('<section class="hunzone">' + head + grid +
             '<p class="hun-note small">Signal is the read on the price: green under what to pay, amber worth a '
             'second look, red above it; unrated has no sales history yet. Most asks sit above what a card really '
             'sells for, so red is the common read and green is rare on purpose.</p></section>')
@@ -392,7 +403,7 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", a
     M = Money(st, home, cur, now)
     letters = "".join(f'<span style="--i:{i}">{c if c != " " else "&nbsp;"}</span>' for i, c in enumerate(_HUNT))
     out = [f'<section class="hero hunt"><h1 class="huntitle" aria-label="{e(_HUNT)}">{letters}</h1>' + _search_box(big=True, game=game) + "</section>"]
-    stats, feed = _just_posted(st, now, game, M, qs or {}, "/pkm/" if game == "pkm" else "/", token)
+    feed = _just_posted(st, now, game, M, qs or {}, "/pkm/" if game == "pkm" else "/", token)
     out.append(feed)
     wash = ('<style>main.page{max-width:min(95vw,1500px)}'
             'body{background:var(--bg)}'
@@ -407,7 +418,7 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", a
             '100%{transform:translate3d(3%,-2%,0) rotate(-2.5deg) scale(1.04)}}'
             '@media(prefers-reduced-motion:reduce){body::before{animation:none}}'
             'header.top{background:color-mix(in srgb,var(--surface) 62%,transparent)}</style>')
-    return wash + stats + "".join(out)
+    return wash + "".join(out)
 
 
 def view_search(idx, q: str, st=None, M=None) -> str:
@@ -1240,7 +1251,6 @@ background:radial-gradient(110% 140% at 6% 0%,rgba(47,191,113,.07),transparent 5
 radial-gradient(90% 130% at 100% 6%,rgba(230,162,60,.06),transparent 50%),
 radial-gradient(120% 150% at 88% 100%,rgba(224,82,82,.05),transparent 55%),var(--surface);
 box-shadow:var(--shadow-hi)}
-.hun-rail{display:flex;justify-content:center;padding:20px 14px 0}
 .hun-head{display:flex;align-items:flex-end;justify-content:space-between;gap:22px;flex-wrap:wrap;margin:0 0 18px}
 .hun-kick{margin:0 0 6px;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
 .hun-h{font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;font-weight:800;font-size:clamp(30px,3.6vw,46px);
@@ -1260,13 +1270,16 @@ border-radius:14px;background:var(--surface);text-decoration:none;transition:bor
 .hun-fresh a b{font-variant-numeric:tabular-nums;font-weight:750}
 .hun-fresh a.zero{opacity:.45}
 .hun-shown{color:var(--muted)}
-.hun-scan{display:inline-flex;align-items:center;gap:7px;padding:6px 14px 7px;font:inherit;font-size:13px;font-weight:650;color:var(--fg2);
-border:1px solid var(--axis);border-radius:999px;background:var(--surface);cursor:pointer;transition:color .15s,border-color .15s,transform .12s}
-.hun-scan:hover{color:var(--fg);border-color:var(--fg2)}
-.hun-scan:active{transform:scale(.96)}
-.hun-wiz{width:28px;height:28px;border-radius:50%;object-fit:cover;margin:-4px 0;flex:none}
+.hun-scan{display:inline-flex;flex-direction:column;align-items:center;gap:3px;padding:0;border:0;background:none;cursor:pointer;
+font:inherit;font-size:11.5px;font-weight:750;letter-spacing:.12em;text-transform:uppercase;color:var(--fg2);transition:color .15s,transform .12s}
+.hun-scan:hover{color:var(--accent)}
+.hun-scan:active{transform:scale(.97)}
+.hun-wiz{width:84px;height:84px;object-fit:contain;flex:none;filter:drop-shadow(0 6px 14px rgba(0,0,0,.25))}
 .hun-scan.busy{color:var(--accent)}
-.hun-scan.busy .hun-wiz{box-shadow:0 0 0 2px var(--accent),0 0 18px rgba(47,191,113,.4)}
+.hun-scan.busy .hun-wiz{filter:drop-shadow(0 0 18px rgba(47,191,113,.5))}
+.hun-status{display:flex;flex-direction:column;gap:2px;line-height:1.3}
+.hun-status b{font-size:11px;letter-spacing:.16em;color:var(--fg2)}
+.hun-status small{font-size:12px;color:var(--muted);font-weight:400;letter-spacing:0;text-transform:none}
 .hun-live{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
 .hun-live i{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
 .hun-live.ok i{background:#2fbf71;animation:hunpulse 2.6s ease-in-out infinite}
@@ -1345,30 +1358,42 @@ inp.addEventListener('keydown',function(ev){if(box.hidden)return;if(ev.key==='Ar
 else if(ev.key==='ArrowUp'){ev.preventDefault();mark(Math.max(sel-1,-1))}else if(ev.key==='Enter'&&sel>=0){ev.preventDefault();location.href=items[sel].href}
 else if(ev.key==='Escape'){box.hidden=true}});
 document.addEventListener('click',function(ev){if(!f.contains(ev.target))box.hidden=true})})})();
-(function(){if(!document.querySelector('.hunzone'))return;var running=false;
+(function(){if(!document.querySelector('.hunzone'))return;
+var running=false,landed=0,last=null;
 function st(){return fetch('/engine/status').then(function(r){return r.json()}).catch(function(){return null})}
+function ago(s){if(s==null)return'';if(s<60)return'just now';if(s<3600)return Math.round(s/60)+'m ago';if(s<86400)return Math.round(s/3600)+'h ago';return Math.round(s/86400)+'d ago'}
+function paint(){var b=document.getElementById('hun-status1'),m=document.getElementById('hun-status2'),lv=document.getElementById('hun-live');
+var age=last?last.age_s:null,ok=age!=null&&age<1200;
+if(b)b.textContent=running?('SCANNING'+(last&&last.progress?' '+last.progress:'\u2026')):(age==null?'SCANNER IDLE':(ok?'SCANNER LIVE':(age<86400?'SCANNER SLOW':'SCANNER OFFLINE')));
+if(m){var seg=[];
+if(running)seg.push('+'+landed+' landed this pass','new asks appear the moment they are found');
+else{if(landed)seg.push('+'+landed+' landed since load');if(age!=null)seg.push('last pass '+ago(age));if(last&&last.new)seg.push('+'+last.new+' new');
+if(last&&last.interval_min>=1)seg.push('auto every '+Math.round(last.interval_min)+' min')}
+m.textContent=seg.length?seg.join(' \u00b7 '):(running?'working':'run a scan anytime')}
+if(lv)lv.className='hun-live '+(running?'ok':(age==null?'off':(ok?'ok':(age<86400?'slow':'off'))))}
 function sync(){var btn=document.querySelector('.hun-scan');
-if(btn){btn.classList.toggle('busy',running);var s=btn.querySelector('span');if(s)s.textContent=running?'Scanning…':'Scan now';
-var im=btn.querySelector('img');if(im)im.src=running?'/static/hunt.gif?r='+((Date.now()/1000)|0):'/static/hunt-still.png'}}
+if(btn){btn.classList.toggle('busy',running);var s=btn.querySelector('span');if(s)s.textContent=running?'Scanning\u2026':'Scan now';
+var im=btn.querySelector('img');if(im)im.src=running?'/static/hunt.gif?r='+((Date.now()/1000)|0):'/static/hunt-still.png'}paint()}
 function swap(){var had={};document.querySelectorAll('.hun[data-key]').forEach(function(n){had[n.getAttribute('data-key')]=1});
 return fetch(location.pathname+location.search).then(function(r){return r.text()}).then(function(html){
 var d=new DOMParser().parseFromString(html,'text/html');
-['.hun-rail','.hunzone'].forEach(function(sel){var n=d.querySelector(sel),o=document.querySelector(sel);if(n&&o)o.replaceWith(n)});
-var land=0;document.querySelectorAll('.hun[data-key]').forEach(function(n){if(!had[n.getAttribute('data-key')]){land++;n.classList.add('landed');
-setTimeout(function(){n.classList.remove('landed')},1700)}});
-if(land&&!running){var lv=document.getElementById('hun-live');if(lv){var b=document.createElement('b');b.textContent=' · +'+land+' landed';lv.appendChild(b)}}
-sync()})}
-function livePoll(){var seen=null,t0=Date.now();var iv=setInterval(function(){st().then(function(s){if(!s)return;
-if(s.fresh_at&&s.fresh_at!==seen){seen=s.fresh_at;swap()}
+var n=d.querySelector('.hunzone'),o=document.querySelector('.hunzone');if(n&&o)o.replaceWith(n);
+var land=0;document.querySelectorAll('.hun[data-key]').forEach(function(t){if(!had[t.getAttribute('data-key')]){land++;t.classList.add('landed');
+setTimeout(function(){t.classList.remove('landed')},1700)}});
+if(land)landed+=land;sync()})}
+function livePoll(){var seen=null,t0=Date.now();var iv=setInterval(function(){st().then(function(s){if(!s)return;last=s;
+if(s.fresh_at&&s.fresh_at!==seen){seen=s.fresh_at;swap()}else paint();
 if((!s.scanning&&(seen||Date.now()-t0>45000))||Date.now()-t0>240000){clearInterval(iv);running=false;swap()}})},6000)}
-async function run(auto){if(running)return;running=true;sync();try{var before=await st();
+async function run(auto){if(running)return;running=true;sync();try{var before=await st();last=before;paint();
 if(auto&&before&&before.age_s!==null&&before.age_s<480){await swap();running=false;sync();return}
 var b=document.querySelector('.hun-scan')||{dataset:{}};var fd=new FormData();fd.append('back',b.dataset.back||'/');fd.append('t',b.dataset.t||'');
 if(!auto)fd.append('quick','1');
 try{await fetch('/engine/tick',{method:'POST',body:fd})}catch(e){}
 livePoll()}catch(e){running=false;sync()}}
 document.addEventListener('click',function(ev){var b=ev.target.closest&&ev.target.closest('.hun-scan');if(b)run(false)});
-st().then(function(s){if(s&&s.scanning){running=true;sync();livePoll()}});
+st().then(function(s){last=s;if(s&&s.scanning){running=true}sync();if(running)livePoll()});
+setInterval(function(){if(running)return;st().then(function(s){if(!s)return;var fresh=last&&s.fresh_at&&s.fresh_at!==last.fresh_at;last=s;
+if(s.scanning){running=true;sync();livePoll()}else if(fresh)swap();else paint()})},15000);
 (function t10(){setTimeout(function(){if(document.visibilityState==='visible')run(true);t10()},600000)})();
 })();
 """
