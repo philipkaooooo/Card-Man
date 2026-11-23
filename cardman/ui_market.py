@@ -539,9 +539,9 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
             'when 3+ sales sit there, otherwise all stored sales. The line under it is the middle half (p25-p75).">Typical sold</span>'
             '<span class="cc pace" title="Copies sold per month. The line under it: newest sale and how many sales back '
             'the number.">Sales pace</span>'
-            '<span class="cc ask" title="Cheapest live listing in the newest snapshot (up to 3 days old), the listing '
-            'itself one click away, and its gap to the typical price. Supply: listed count divided by the monthly sales '
-            'pace.">Cheapest ask</span>'
+            '<span class="cc ask" title="Cheapest live listing in this version\'s newest snapshot (dated on the row), '
+            'the listing itself one click away, and its gap to the typical price. Supply: listed count divided by '
+            'the monthly sales pace.">Cheapest ask</span>'
             '<span class="cc pc" title="PriceCharting\'s own monthly sold points for this grade (Ungraded for raw rows), '
             'last 12 months. The line under it is the year change. A verdict from a second market, not a copy of ours.">'
             '1 yr · PC</span>'
@@ -615,6 +615,9 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
                     f"{abs(edge):.0f}% above typical" if ecls == "over" else "at typical")
             asub = f'{r["ask_n"]} listed {sup_txt}' if r["ask_n"] and sup_txt else (
                 f'{r["ask_n"]} listed' if r["ask_n"] else _short_day(r["ask_day"]))
+            seen_age = _days_since(r["ask_day"], now)
+            if seen_age is not None and seen_age > 2:
+                asub += f' · seen {seen_age}d ago'
             atitle = (f'Cheapest of {r["ask_n"]} live listings in the {_short_day(r["ask_day"])} snapshot; '
                       f'{"under a day" if supd < 1 else f"about {supd:.0f} days"} of supply at the current sales pace'
                       if supd is not None else
@@ -658,7 +661,7 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
     shown = (f'<p class="muted small">Showing {len(rows)} of {s["series"]:,} versions'
              + (", the top 200 for this sort" if len(rows) >= 200 else "") + '.</p>')
     note = ('<p class="muted small">Typical sold is sold evidence only; asks are each version\'s newest snapshot '
-            'within the last week, dated on the row, and never move it. 1 yr · PC is PriceCharting\'s monthly sold '
+            'in the last month, dated on the row, and never move it. 1 yr · PC is PriceCharting\'s monthly sold '
             'points for the same grade, in your currency at today\'s rate.</p>')
     return (head + chips
             + f'<div class="mksboard"><h2>Every printing we can price</h2>'
