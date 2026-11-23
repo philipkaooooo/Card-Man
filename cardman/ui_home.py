@@ -261,9 +261,9 @@ def _engine_line(st, now: datetime, base: str, token: str = "") -> str:
         except (ValueError, TypeError):
             sec = None
     cls = "ok" if sec is not None and sec < 1200 else ("slow" if sec is not None and sec < 86400 else "off")
-    scan = ('<button class="hun-scan" id="hun-scan" type="button" data-back="' + e(base) + '" data-t="' + e(token) + '" '
+    scan = ('<button class="hun-scan wizfloat" id="hun-scan" type="button" data-back="' + e(base) + '" data-t="' + e(token) + '" '
             'title="run a collector pass now"><img class="hun-wiz" src="/static/hunt.gif?v=2" alt="the hunt wizard, investigating" draggable="false">'
-            '<span>Run the hunt</span></button>')
+            '<span class="wizlab">Run the hunt</span></button>')
     if row is None:
         l1, l2 = "FEED IDLE", "no pass on record yet; the loop posts new asks here as it finds them"
     else:
@@ -273,7 +273,7 @@ def _engine_line(st, now: datetime, base: str, token: str = "") -> str:
                   '<b id="hun-status1">{}</b><small id="hun-status2">{}</small></span></span>').format(cls, e(l1), e(l2))
 
 
-def _hun_head(base: str, v: str, t: str, counts: dict, stats: str = "", chips: str = "", x: str = "", wiz: str = "") -> str:
+def _hun_head(base: str, v: str, t: str, counts: dict, stats: str = "", chips: str = "", x: str = "", live: str = "") -> str:
     sig = (("all", "All", "hsn"), ("good", "Good", "hsg"), ("avg", "Average", "hsa"), ("bad", "Bad", "hsb"),
            ("none", "Unrated", "hsn"))
     xs = "&x=" + x if x in ("drop", "end") else ""
@@ -282,14 +282,14 @@ def _hun_head(base: str, v: str, t: str, counts: dict, stats: str = "", chips: s
     fresh = "".join('<a{} href="{}?v={}&t={}{}">{}</a>'.format(
         ' class="on"' if t == code else "", base, v, code, xs, lab) for code, lab in (
         ("1h", "Last hour"), ("24h", "Last 24 hours"), ("all", "Any time")))
-    head = ('<div class="hun-head">' + wiz + '<div><p class="hun-kick">Freshest asks on the market, ranked by the read</p>'
-            '<h2 class="hun-h">New listings</h2></div><div class="hun-stats">' + cells + '</div></div>'
+    head = ('<div class="hun-head"><div><p class="hun-kick">Freshest asks on the market, ranked by the read</p>'
+            '<h2 class="hun-h">Newest listings</h2></div>' + live + '<div class="hun-stats">' + cells + '</div></div>'
             '<div class="hun-tools"><span class="hun-fresh">' + fresh + "</span>" + chips + stats +
             '<a class="hun-all" href="/opportunities">All listings →</a></div>')
     return head
 
 
-def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, base: str = "/", token: str = "", pulse: str = "", wiz: str = "") -> str:
+def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, base: str = "/", token: str = "", pulse: str = "", wiz: str = "", live: str = "") -> str:
     """The newest things actually posted, wherever they were posted: one tile per fresh listing, laser-coded."""
     if "listing" not in _tables(st):
         return ""
@@ -468,8 +468,8 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
             (("on" if x == code else "") + (" zero" if not D[code] else "")).strip(), base, v, t, "&x=" + code, tip, lab, D[code]) for code, lab, tip in (
         ("drop", "Price drops", "asking less than before, last 24 hours"),
         ("end", "Ending soon", "auctions and offers that close within six hours"))) + "</span>"
-    head = _hun_head(base, v, t, counts, pulse, chips, x, wiz)
-    return ('<section class="hunzone home"><span class="reg" aria-hidden="true"><i></i><i></i><i></i><i></i></span>' + head + grid +
+    head = _hun_head(base, v, t, counts, pulse, chips, x, live)
+    return ('<section class="hunzone home">' + wiz + '<span class="reg" aria-hidden="true"><i></i><i></i><i></i><i></i></span>' + head + grid +
             '<p class="hun-note small">Signal is the read on the price: green under what to pay, amber worth a '
             'second look, red above it; unrated has no sales history yet. Most asks sit above what a card really '
             'sells for, so red is the common read and green is rare on purpose.</p></section>')
@@ -552,11 +552,10 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", a
     base = "/pkm/" if game == "pkm" else "/"
     scan, live = _engine_line(st, now, base, token)
     letters = "".join(f'<span style="--i:{i};--c:{_PAL[i % 6]}" data-c="{c if c != " " else "&nbsp;"}">{c if c != " " else "&nbsp;"}</span>' for i, c in enumerate(_HUNT))
-    wiz = '<section class="wizstrip" aria-label="the hunt">' + scan + live + '</section>'
     out = [f'<section class="hero hunt"><h1 class="huntitle" aria-label="{e(_HUNT)}">{letters}</h1>'
             '<p class="huntag">Collect Wisely</p>'
             '<div class="huntline">' + _search_box(big=True, game=game) + '</div></section>']
-    feed = _just_posted(st, now, game, M, qs or {}, base, token, _pulse(st, now, game, M), wiz)
+    feed = _just_posted(st, now, game, M, qs or {}, base, token, _pulse(st, now, game, M), scan, live)
     out.append(feed)
     wash = ('<style>main.page{max-width:min(95vw,1500px)}'
             'body{background:var(--bg)}'
@@ -1554,17 +1553,24 @@ filter:drop-shadow(0 7px 16px rgba(0,0,0,.28));transition:transform .18s var(--e
 .hun-status b{font-size:11px;letter-spacing:.14em;color:var(--fg);text-transform:uppercase;font-weight:750}
 .hun-status small::before{content:"\00b7";margin-right:9px;color:var(--muted)}
 .hun-status small{font-size:12px;color:var(--muted);font-weight:400;letter-spacing:0;text-transform:none}
-.wizstrip{display:flex;flex-direction:column;align-items:center;gap:8px;flex:none;margin:0;min-width:150px}
-.hun-head .wizstrip{align-self:flex-start;margin-right:4px}
-.wizstrip .hun-wiz{width:88px;height:120px}
-.wizstrip .hun-scan span{display:block;font-size:15px;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:var(--fg)}
+.wizfloat{position:absolute;left:clamp(12px,2.6vw,38px);top:calc(-1*var(--wizup));z-index:3;display:block;padding:0;border:0;
+background:none;cursor:pointer;line-height:0}
+.wizfloat .hun-wiz{width:calc(var(--wizh)*.668);height:var(--wizh);object-fit:contain;
+filter:drop-shadow(0 10px 18px rgba(0,0,0,.30));transition:transform .18s var(--ease)}
+.wizfloat:hover .hun-wiz{transform:translateY(-4px) rotate(-1.5deg)}
+.wizfloat:focus-visible{outline:2px solid var(--accent);outline-offset:5px;border-radius:14px}
+.wizfloat .wizlab{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.hun-head .hun-live{align-self:flex-end;margin-bottom:7px}
 .hun-live{display:inline-flex;align-items:center;gap:9px;font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums;padding:4px 0}
 .hun-live i{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
 .hun-live.ok i{background:#2fbf71;animation:hunpulse 2.6s ease-in-out infinite}
 .hun-live.slow i{background:#e6a23c}
 @keyframes hunpulse{0%,100%{box-shadow:0 0 0 0 rgba(47,191,113,.35)}50%{box-shadow:0 0 0 6px rgba(47,191,113,0)}}
 .hunzone{transition:opacity .25s}
-.hunzone.home{margin-top:14px}
+.hunzone.home{--wizh:clamp(120px,16vw,232px);--wizup:calc(var(--wizh)*.9);overflow:visible;
+margin-top:calc(var(--wizup) + 14px)}
+.hunzone.home .reg i:nth-child(1){opacity:0}
+@media(max-width:640px){.hunzone.home{--wizh:112px}}
 .hunzone.home::before{content:"";position:absolute;top:0;left:0;right:0;height:4px;border-radius:26px 26px 0 0;
 background:linear-gradient(90deg,#e05252 0 16.66%,#2f6ce0 16.66% 33.33%,#d4af6a 33.33% 50%,#2fbf71 50% 66.66%,#e6a23c 66.66% 83.33%,var(--fg) 83.33%)}
 .hunzone.home .hun-h{position:relative;padding-bottom:9px}
