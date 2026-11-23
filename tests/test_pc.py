@@ -136,26 +136,59 @@ def test_board_shows_the_year_line_and_the_grading_play(tmp_path):
     assert "Ungraded · -21%" in h                          # 3.00 -> 2.38 is a fall
     # no live ask: the strip names the most the raw card may cost, after grading, shipping and fees
     assert "Buy raw → grade → sell PSA 10" in h
-    assert "no ask under" in h and "max raw" in h and "all-in" in h
+    assert "wait for" in h and "pay at most" in h and "all-in" in h
 
 
 def test_grading_strip_buys_at_the_live_ask_and_counts_its_costs(tmp_path):
+    from cardman.card_market import _SCHEMA as CARD_SCHEMA
+    from cardman.engine import _SCHEMA as ENGINE_SCHEMA
     from cardman.history import ASK_SCHEMA
     from cardman.ui_market import view_market
     st = Store(tmp_path / "e.sqlite")
     add_sales(st, P, (100, 100, 100), (2, 5, 9))
     st.add_fx(FxRate("USD", "TWD", D("32"), NOW - timedelta(hours=1), "test"), now=NOW)
-    st.db.executescript(ASK_SCHEMA)
+    st.db.executescript(ENGINE_SCHEMA + CARD_SCHEMA + ASK_SCHEMA)
     with st.db:
         st.db.execute("INSERT INTO ask_daily VALUES (?,?,?,?,?,?,?)",
                       (P, "|", NOW.date().isoformat(), 300.0, 300.0, 1, "TWD"))
+        st.db.execute("INSERT INTO listing (key, kind, price, currency, url, title, last_seen) "
+                      "VALUES ('l1', 'ask', '300', 'TWD', 'https://www.ebay.com/itm/1', 'Blue-Eyes LOB-EN001', ?)",
+                      (NOW.isoformat(),))
+        st.db.execute("INSERT INTO card_listing (passcode, key, card_prob, printing_id, printing_prob, lot, status) "
+                      "VALUES ('89631139', 'l1', 0.97, ?, 0.94, 0, 'SEEN')", (P,))
     trends.refresh(st, NOW, "TWD")
     row = pc.parse_product(payload("https://www.pricecharting.com/game/yugioh-legend-of-blue-eyes/blue-eyes"))
     store_row(st, P, row, game="ygo")
     h = view_market(st, NOW, "TWD", "TWD", {}, game="ygo")
-    assert "buy now" in h and "no ask under" not in h
+    assert "buy now" in h and "Open the raw listing" in h
     # 4520 PSA 10 - 16.75% fees - 300 shipping = 3462.9 net; 1.015 * 300 + 2100 fixed = 2404.5 all-in
     assert "NT$1,058" in h and "all-in" in h
+
+
+def test_under_section_carries_image_values_and_sold_proof(tmp_path):
+    from cardman.card_market import _SCHEMA as CARD_SCHEMA
+    from cardman.engine import _SCHEMA as ENGINE_SCHEMA
+    from cardman.history import ASK_SCHEMA
+    from cardman.ui_market import view_market
+    st = Store(tmp_path / "e.sqlite")
+    add_sales(st, P, (2000, 2000, 2000), (2, 5, 9))
+    st.add_fx(FxRate("USD", "TWD", D("32"), NOW - timedelta(hours=1), "test"), now=NOW)
+    st.db.executescript(ENGINE_SCHEMA + CARD_SCHEMA + ASK_SCHEMA)
+    with st.db:
+        st.db.execute("INSERT INTO ask_daily VALUES (?,?,?,?,?,?,?)",
+                      (P, "|", NOW.date().isoformat(), 700.0, 700.0, 1, "TWD"))
+        st.db.execute("INSERT INTO listing (key, kind, price, currency, url, title, last_seen) "
+                      "VALUES ('l1', 'ask', '700', 'TWD', 'https://www.ebay.com/itm/1', 'Blue-Eyes LOB-EN001', ?)",
+                      (NOW.isoformat(),))
+        st.db.execute("INSERT INTO card_listing (passcode, key, card_prob, printing_id, printing_prob, lot, status) "
+                      "VALUES ('89631139', 'l1', 0.97, ?, 0.94, 0, 'SEEN')", (P,))
+    trends.refresh(st, NOW, "TWD")
+    h = view_market(st, NOW, "TWD", "TWD", {}, game="ygo")
+    under = h.split('id="under"')[1].split("</section>")[0]
+    assert "Under typical now" in under and 'class="mkimg"' in under
+    assert "NT$700" in under and "NT$2,000" in under and "65% under" in under
+    assert 'class="sp"' in under and "marketplace marked sold" in under   # sold listings as proof
+    assert "Open the listing" in under
 
 
 def test_card_page_section_draws_all_six_grades(tmp_path):
@@ -177,4 +210,4 @@ def test_unswept_rows_say_so_instead_of_guessing(tmp_path):
     add_sales(st, P, (100, 100, 100), (2, 5, 9))
     trends.refresh(st, NOW, "TWD")
     h = view_market(st, NOW, "TWD", "TWD", {}, game="ygo")
-    assert "not swept" in h and "Buy raw → grade" not in h
+    assert "not swept" in h and "No raw ask clears" in h and 'class="mkcard grade"' not in h
