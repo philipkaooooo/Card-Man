@@ -44,12 +44,13 @@ def test_entries_merge_every_spelling_under_one_dex_number(cat):
     assert {"base1-4", "sv3pt5-199", "sv3pt5-6", "sv4pt5-234", "sma-SV49"} <= set(char["cids"])
 
 
-def test_macro_sums_priced_printings_and_counts_the_history_honestly(cat, tmp_path):
+def test_macro_counts_one_product_per_card_and_the_history_honestly(cat, tmp_path):
     st = _store(tmp_path)
     by_dex = {e["dex"]: e["cids"] for e in entries(cat)}
     stats = macro(st, cat, by_dex, NOW)
-    char = next(s for s in stats.values() if s["versions"] and s["priced"] == 2)
-    assert char["cap"] == 250 and char["top"] == 200            # 200 (1st ed) + 50 (unlimited)
+    char = next(s for s in stats.values() if s["priced"])
+    assert char["cards"] == 5 and char["priced"] == 1           # one PC product per card; base1-4 answers on unlimited holo
+    assert char["cap"] == 50 and char["top"] == 50              # the 1st-edition row is a different printing and is not summed in
     assert char["move"] is None                                 # two points from 1970 are not a 12-month move
     assert char["pace"] == 3.0                                  # raw rows only; the PSA 10 row on Pikachu is not double-counted
     ray = next(s for s in stats.values() if s["priced"] == 0)
@@ -65,8 +66,8 @@ def test_view_sorts_by_cap_and_lists_unpriced_last(cat, tmp_path):
     first = h.index('class="zd"')
     assert 'data-name="charizard"' in h[first:first + 300]
     assert "no PC yet" in h
-    assert f'<b>$250</b>' in h
-    assert "<b>0</b> of 3 fully priced" in h and "<b>1</b> partial" in h
+    assert f'<b>$50</b>' in h
+    assert "<b>0</b> of 3 fully priced" in h and "<b>1</b> partial" in h and "<b>9</b> cards tracked" in h
     assert "Umbreon" not in h                                  # dex 197 sits outside the first 151
 
 

@@ -123,21 +123,18 @@ def _week(points, now) -> tuple[float | None, float | None, bool]:
     return last, move, fresh
 
 
-_VERS: dict[int, tuple[object, dict[str, list[str]]]] = {}
+_CANS: dict[int, tuple[object, dict[str, str]]] = {}
 
 
-def _vers(cat) -> dict[str, list[str]]:
-    """Card id -> every printing id the catalog holds for it. Built once per catalog instance."""
-    hit = _VERS.get(id(cat))
+def _cans(cat) -> dict[str, str]:
+    """Card id -> the printing PriceCharting's one product per card answers for. Built once per catalog."""
+    hit = _CANS.get(id(cat))
     if hit is not None and hit[0] is cat:
         return hit[1]
-    out: dict[str, list[str]] = {}
-    if getattr(cat, "by_card", None):
-        out = {cid: [p.id for p in ps] for cid, ps in cat.by_card.items()}
-    else:
-        for cid in cat._cards:
-            out[cid] = [v.id for v in cat.versions(cid)]
-    _VERS[id(cat)] = (cat, out)   # keep cat referenced so its id cannot be reused by another object
+    from .pc import canonical
+    cids = cat.by_card.keys() if getattr(cat, "by_card", None) else cat._cards.keys()
+    out = {cid: pid for cid in cids for pid in [canonical(cat, cid)] if pid}
+    _CANS[id(cat)] = (cat, out)   # keep cat referenced so its id cannot be reused by another object
     return out
 
 
@@ -149,13 +146,13 @@ def macro(st, cat, by_dex: dict[int, list[str]], now) -> dict[int, dict]:
     move     - cap-weighted change from a year before the newest point to the newest point, in percent.
                Only series whose newest point is current (FRESH_DAYS) carry a move, so stale captures do not vote.
     pace     - copies of this character's cards sold per month, from our own sales ledger.
-    priced   - printings with a usable series; versions is every printing the catalog holds.
+    priced   - cards with a usable series; cards is every card the catalog holds. One PC product per card.
     """
     if st is None or cat is None:
         return {}
     from . import pc
-    vers = _vers(cat)
-    pids = sorted({pid for cids in by_dex.values() for cid in cids for pid in vers.get(cid, [])})
+    cans = _cans(cat)
+    pids = sorted({cans[c] for cids in by_dex.values() for c in cids if c in cans})
     row_of: dict[str, dict] = {}
     for i in range(0, len(pids), _CHUNK):
         row_of.update(pc.rows_for(st, pids[i:i + _CHUNK]))
@@ -168,7 +165,7 @@ def macro(st, cat, by_dex: dict[int, list[str]], now) -> dict[int, dict]:
             pace[_pkm_series(pid)] = pace.get(_pkm_series(pid), 0.0) + float(month)
     out: dict[int, dict] = {}
     for dex, cids in by_dex.items():
-        prints = sorted({pid for cid in cids for pid in vers.get(cid, [])})
+        prints = sorted({cans[c] for c in cids if c in cans})
         lasts: list[float] = []
         moves: list[tuple[float, float]] = []
         newest = 0
@@ -189,7 +186,7 @@ def macro(st, cat, by_dex: dict[int, list[str]], now) -> dict[int, dict]:
         move = sum(v * m for v, m in moves) / wsum if wsum else None
         monthly = sum(pace.get(cid, 0.0) for cid in cids)
         out[dex] = {"cap": cap, "top": top, "move": move, "pace": monthly or None,
-                    "priced": len(lasts), "versions": len(prints),
+                    "priced": len(lasts), "cards": len(prints),
                     "seen": newest / 1000.0 if newest else None}
     return out
 
@@ -263,11 +260,11 @@ def view_zone(st, cat, now, cur: str, home: str, qs: dict) -> str:
 
     found.sort(key=rank)
     priced = [stats[f["dex"]] for f in found if stats.get(f["dex"], {}).get("priced")]
-    full = [s for s in priced if s["versions"] and s["priced"] >= s["versions"]]
+    full = [s for s in priced if s["cards"] and s["priced"] >= s["cards"]]
     partial = len(priced) - len(full)
     cap_all = sum(s["cap"] for s in priced)
     cards_all = sum(len(f["cids"]) for f in found)
-    prints_all = sum((stats.get(f["dex"]) or {}).get("versions") or 0 for f in found)
+    cards_tracked = len({cid for f in found for cid in f["cids"]})   # tag-team cards sit under both characters
 
     tiles = []
     for f in found:
@@ -284,7 +281,7 @@ def view_zone(st, cat, now, cur: str, home: str, qs: dict) -> str:
         else:
             meta.append('<span class="znone">no PC yet</span>')
         if s.get("priced"):
-            tip_bits = [f'PriceCharting: {s["priced"]} of {s.get("versions") or 0} printings priced.',
+            tip_bits = [f'PriceCharting: {s["priced"]} of {s.get("cards") or 0} cards priced.',
                         f'Cap {money(s.get("cap")) or "$0"}, top card {money(s.get("top")) or "$0"}.']
             if s.get("move") is not None:
                 tip_bits.append(f'12-month move {s["move"]:+.0f}%.')
@@ -324,10 +321,10 @@ def view_zone(st, cat, now, cur: str, home: str, qs: dict) -> str:
              + chip("pace", "Sales pace", "Copies of this character's cards sold per month, from our own ledger."))
 
     tape = (f'<b>{len(full)}</b> of {len(found)} fully priced · <b>{partial}</b> partial · '
-            f'<b>{prints_all:,}</b> printings tracked · <b>{money(cap_all)}</b> market cap'
+            f'<b>{cards_tracked:,}</b> cards tracked · <b>{money(cap_all)}</b> market cap'
             if priced else
             f'<b>{cards_all:,}</b> cards across {len(found)} characters. No PriceCharting row yet - '
-            f'the sweep is filling every printing of the first {DEX_MAX}.')
+            f'the sweep is filling every card of the first {DEX_MAX}.')
 
     empty = '<p class="empty">The Pokémon card list is still loading.</p>' if cat is None else ""
     return (f'<style>main.page{{max-width:min(96vw,1840px)}}</style>'

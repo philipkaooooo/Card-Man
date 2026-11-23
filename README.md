@@ -39,11 +39,15 @@ Pricing rules: `docs/pricing-method.md` — a price comes from real sales of one
   DevTools pipe (the site's Cloudflare challenge passes in the real browser, not in a scripted client),
   resolves each product through the site search once, and stores the six grade prices, the sales-volume note
   and the monthly points in `pc_card` (~2 KB a card). Scope is the first 151 Pokémon by National Dex, every
-  printing the catalog holds (~9.4k): uncaptured rows first, then by sales demand. Those characters refresh
-  daily and the rest of the board weekly; `--ttl-days` overrides, `--dex-max` widens the scope, `--pid`
-  narrows to one, `--refetch` re-checks a set, and `python -m cardman.pc cover` prints priced / partial /
-  missing per character. A product page parsed once serves every printing that resolves to it in the same
-  pass, and edition words from the printing id (1st edition, unlimited) score the product match. History is
+  card of those characters (~5.6k): uncaptured rows first, then by sales demand. PriceCharting ships one
+  edition-blind product per card, so each catalog card binds to one product - its standard printing
+  (holo/normal/unlimited, `canonical`) - and a 1st-edition, reverse or jumbo print is not summed in beside
+  it. Those characters refresh daily and the rest of the board weekly; `--ttl-days` overrides, `--dex-max`
+  widens the scope, `--pid` narrows to one, `--refetch` re-checks a set, and `python -m cardman.pc cover`
+  prints priced / partial / missing per character. A product page parsed once serves every row that
+  resolves to it in the same pass, the set name in the card name scores the match against the whole href
+  path (two sets ship the same `charizard-4`), and a link with the right shape but the wrong card is
+  refused as nomatch instead of stored. History is
   anchored to the grade cells on read (`_fix_units`): a capture written in cents is corrected against the
   dollar cell, so a card cannot read 100x high. The market board's `1 yr · PC` column reads it against our
   sold medians; a card whose PriceCharting raw price sits more than 3x from ours is treated as a different

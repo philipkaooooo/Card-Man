@@ -43,6 +43,10 @@ def _year_change(pts: list) -> float | None:
 
 def section(st, printing_id: str, cur: str, now: datetime) -> str:
     row = pc.rows_for(st, [printing_id]).get(printing_id) if printing_id else None
+    if not row and printing_id:
+        alt = pc.canonical_for(printing_id)
+        if alt and alt != printing_id:
+            row = pc.rows_for(st, [alt]).get(alt)
     if not row:
         return ""
     k = _fx_usd(st, cur, now)
@@ -87,7 +91,7 @@ def section(st, printing_id: str, cur: str, now: datetime) -> str:
     payload = {"cur": cur, "sym": SYM.get(cur, ""), "grades": out,
                "url": row.get("url"), "title": row.get("title")}
     return ('<section id="pcsheet"><h2>Graded prices on PriceCharting</h2>'
-            '<p class="hnote">Monthly sold prices for this exact printing at each grade PC tracks. Every point on the '
+            '<p class="hnote">Monthly sold prices for this card at each grade PC tracks. PC runs one product per card, so the line spans the sales it records across editions. Every point on the '
             "line is one month's price - stop on a dot for the date, the price and the move since the month before. "
             'Dots run warm when the price rose, cold when it fell.</p>'
             f'<div data-pcsheet><script type="application/json" class="pcjson">{json.dumps(payload).replace("</", "<\\/")}</script>'

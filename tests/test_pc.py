@@ -336,7 +336,28 @@ def test_rows_for_fixes_one_stray_cents_point_inside_a_dollar_series(tmp_path):
     assert got[1740812400000] == 3.0 and got[1780293600000] == 2.0 and got[1793512800000] == 2.38
 
 
-def test_scope_is_every_printing_of_the_first_151_and_nothing_past_it():
+def test_pick_link_discriminates_the_set_in_the_path():
+    links = [{"h": "/game/pokemon-30th-celebration/charizard-4", "t": "Charizard #4 Prices | Pokemon 30th Celebration"},
+             {"h": "/game/pokemon-base-set/charizard-4", "t": "Charizard #4 Prices | Pokemon Base Set"}]
+    url, _ = pc.pick_link(links, name="Charizard Base Set", number="4")
+    assert url == "/game/pokemon-base-set/charizard-4"
+
+
+def test_canonical_binds_the_standard_print_not_a_premium_variant():
+    class Pr:
+        def __init__(self, pid):
+            self.id = pid
+
+    class Cat:
+        def versions(self, cid):
+            return [Pr("pk:EN:base1-4:1st-edition-holo@pkm-base1-4"),
+                    Pr("pk:EN:base1-4:shadowless@pkm-base1-4"),
+                    Pr("pk:EN:base1-4:unlimited-holo@pkm-base1-4")]
+
+    assert pc.canonical(Cat(), "base1-4") == "pk:EN:base1-4:unlimited-holo@pkm-base1-4"
+
+
+def test_scope_is_every_card_of_the_first_151_and_nothing_past_it():
     class Pr:
         def __init__(self, pid):
             self.id = pid
@@ -354,5 +375,5 @@ def test_scope_is_every_printing_of_the_first_151_and_nothing_past_it():
             return {"Charizard": 6, "Chikorita": 152}.get(name)
 
     sc = pc.pkm_scope(Cat(), Who(), 151)
-    assert sorted(sc) == ["pk:EN:a:holo@pkm-a", "pk:EN:a:reverse-holo@pkm-a"]
+    assert sorted(sc) == ["a"]                                  # one card is one product, whatever the printings
     assert set(sc.values()) == {6}

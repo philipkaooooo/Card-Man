@@ -219,7 +219,7 @@ def pick_link(links: list[dict], *, name: str = "", number: str = "", code: str 
     """Best product href for a card. Exact number suffix and set code first, then name tokens; a bracketed
     variant beats the base page only when its bracket names the rarity we track."""
     words = [w for w in re.split(r"[^a-z0-9]+", name.lower()) if len(w) >= 4]
-    generic = {"rare", "holo", "holofoil", "foil", "card", "edition"}
+    generic = {"rare", "holo", "holofoil", "foil", "card", "edition", "pokemon"}
     rwords = {w for w in re.split(r"[^a-z0-9]+", (rarity or "").lower()) if w and w not in generic}
     best, best_t, why, top = None, "", "", float("-inf")
     for i, x in enumerate(links[:12]):
@@ -228,12 +228,13 @@ def pick_link(links: list[dict], *, name: str = "", number: str = "", code: str 
         if not h or not t:
             continue                   # image-only anchors repeat a product with no name to judge it by
         slug = _slug(h)
+        path = h.lower()               # the set lives in the path, not the slug: two sets ship the same charizard-4
         score = 0.0
         if number and re.search(rf"-{re.escape(str(number))}$", slug):
             score += 4
-        if code and code != "-" and code.lower().replace("-", "") in slug.replace("-", ""):
+        if code and code != "-" and code.lower().replace("-", "") in path.replace("-", ""):
             score += 4
-        score += sum(1 for w in words if w in slug)
+        score += sum(1 for w in words if w in path)
         score += 0.5 * sum(1 for w in words if w in t.lower())
         m = re.search(r"\[([^\]]+)\]", t)
         if m:
@@ -249,8 +250,8 @@ def pick_link(links: list[dict], *, name: str = "", number: str = "", code: str 
     # nomatch instead of a confident wrong product.
     slug = _slug(best)
     num_ok = bool(number) and bool(re.search(rf"-{re.escape(str(number))}$", slug))
-    code_ok = bool(code) and code != "-" and code.lower().replace("-", "") in slug.replace("-", "")
-    name_ok = any(w in slug or w in best_t.lower() for w in words)
+    code_ok = bool(code) and code != "-" and code.lower().replace("-", "") in best.lower().replace("-", "")
+    name_ok = any(w in best.lower() or w in best_t.lower() for w in words)
     if not (num_ok or code_ok or name_ok):
         return None, "no confident match"
     return best, why
@@ -463,8 +464,48 @@ def _query_for(pid: str, name: str, number: str, code: str) -> str:
 
 
 
+EDITION_ORDER = ("holo", "normal", "unlimited-holo", "unlimited")
+VARIANT = ("1st", "first", "reverse", "shadowless", "jumbo")
+
+
+def canonical(cat, cid: str) -> str | None:
+    """The printing PriceCharting's one product per card answers for. PC does not split editions - its
+    product mixes every print of that number - so the row binds to the standard print (holo, normal,
+    unlimited) and the premium variants keep their own guide instead of borrowing a number PC never sold."""
+    ps = list(cat.versions(cid)) if getattr(cat, "versions", None) else []
+    if not ps:
+        return None
+
+    def rank(p):
+        ed = (p.id.split(":")[3].split("@")[0] if len(p.id.split(":")) > 3 else "").lower()
+        if ed in EDITION_ORDER:
+            return EDITION_ORDER.index(ed)
+        return 9 if any(v in ed for v in VARIANT) else 4
+
+    return min(ps, key=rank).id
+
+
+_PKM = None
+
+
+def canonical_for(pid: str) -> str | None:
+    """The card's one PC printing, from any printing id of that card. A 1st-edition copy still answers
+    on the standard print, because PC sells one edition-blind product for the card."""
+    global _PKM
+    parts = (pid or "").split(":")
+    if len(parts) < 3 or parts[0] != "pk":
+        return None
+    if _PKM is None:
+        from .pkm_catalog import DB, PkmCatalog
+        _PKM = PkmCatalog(DB)
+    try:
+        return canonical(_PKM, parts[2])
+    except Exception:
+        return None
+
+
 def pkm_scope(cat, who, dex_max: int = DEX_MAX) -> dict[str, int]:
-    """printing id -> dex, for every printing the catalog holds of the in-scope characters."""
+    """card id -> dex, for every card of the in-scope characters. One card is one product."""
     from .character import species_index
     out: dict[str, int] = {}
     for name, cids in species_index(cat).items():
@@ -472,8 +513,7 @@ def pkm_scope(cat, who, dex_max: int = DEX_MAX) -> dict[str, int]:
         if not d or d > dex_max:
             continue
         for cid in cids:
-            for pr in cat.versions(cid):
-                out[pr.id] = d
+            out[cid] = d
     return out
 
 
@@ -487,15 +527,25 @@ def _scope(dex_max: int = DEX_MAX) -> dict[str, int]:
 
 
 def _pkm_targets(st, dex_max: int = DEX_MAX) -> list[tuple[str, str]]:
-    """Every in-scope printing, uncaptured first, then by the sales demand the board already knows."""
+    """The standard printing of every in-scope card, uncaptured first, then by the demand the board knows."""
     scope = _scope(dex_max)
     if not scope:
         return [(pid, "pkm") for (pid,) in st.db.execute(
             "SELECT printing_id FROM price_trend WHERE game='pkm' ORDER BY n_sales DESC, last_sale DESC")]
+    from .pkm_catalog import DB, PkmCatalog
+    cat = PkmCatalog(DB)
     demand = {pid: (n or 0) for pid, n in st.db.execute(
         "SELECT printing_id, n_sales FROM price_trend WHERE game='pkm'")}
     have = {r[0] for r in st.db.execute("SELECT printing_id FROM pc_card")}
-    return [(pid, "pkm") for pid in sorted(scope, key=lambda x: (1 if x in have else 0, -(demand.get(x) or 0), x))]
+    rows = []
+    for cid in scope:
+        pid = canonical(cat, cid)
+        if not pid:
+            continue
+        need = sum(demand.get(p.id, 0) for p in cat.versions(cid))
+        rows.append((pid, need))
+    rows.sort(key=lambda r: (1 if r[0] in have else 0, -r[1], r[0]))
+    return [(pid, "pkm") for pid, _need in rows]
 
 
 def cover(st, dex_max: int = DEX_MAX) -> str:
@@ -504,16 +554,21 @@ def cover(st, dex_max: int = DEX_MAX) -> str:
     scope = _scope(dex_max)
     if not scope:
         return "pkm catalog unavailable; coverage unknown"
+    from .pkm_catalog import DB, PkmCatalog
+    cat = PkmCatalog(DB)
     have = {r[0]: r[1] for r in st.db.execute("SELECT printing_id, status FROM pc_card")}
     total: dict[int, int] = {}
     got: dict[int, int] = {}
-    for pid, d in scope.items():
+    for cid, d in scope.items():
+        pid = canonical(cat, cid)
+        if not pid:
+            continue
         total[d] = total.get(d, 0) + 1
         if have.get(pid) == "ok":
             got[d] = got.get(d, 0) + 1
     priced = sum(got.values())
     full = sum(1 for d, n in total.items() if got.get(d, 0) >= n)
-    lines = [f"dex 1-{dex_max}: {len(total)} characters, {len(scope)} printings",
+    lines = [f"dex 1-{dex_max}: {len(total)} characters, {len(scope)} cards",
              f"{priced} priced, {len(scope) - priced} missing, {full} of {len(total)} characters complete"]
     gaps = [(d, got.get(d, 0), n) for d, n in sorted(total.items()) if got.get(d, 0) < n]
     for d, g, n in gaps[:20]:
