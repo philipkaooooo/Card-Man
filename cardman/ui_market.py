@@ -6,7 +6,8 @@ series, never mixed in. A printing with no real sales does not appear.
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+import json
+from datetime import date, datetime, timedelta
 from urllib.parse import urlencode
 
 from . import trends
@@ -37,6 +38,15 @@ ul.mini li:last-child{border-bottom:0}.up{color:var(--teal-deep);font-weight:600
 .mk-pulse-k i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:middle}
 .mk-pulse-k i.p-up,.mk-pulse-k i.p-down,.mk-pulse-k i.p-hold,.mk-pulse-k i.p-none{display:inline-block}
 .mkstat{margin-left:auto;color:var(--muted)}.mkstat b{color:var(--fg);font-variant-numeric:tabular-nums}
+.mk-best{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;margin:0 0 12px;padding:8px 14px;
+background:color-mix(in srgb,var(--teal) 8%,var(--surface));border:1px solid color-mix(in srgb,var(--teal) 25%,var(--line));
+border-radius:12px}
+.mk-best .bb-h{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--teal-deep);font-weight:700}
+.mk-best .bb{font-size:13.5px;color:var(--fg);text-decoration:none;white-space:nowrap;overflow:hidden;
+text-overflow:ellipsis;max-width:min(340px,100%)}
+.mk-best .bb b{font-variant-numeric:tabular-nums}
+.mk-best .bb i{font-style:normal;color:var(--teal-deep);font-weight:700}
+.mk-best .bb:hover{color:var(--teal-deep)}
 .mlist{list-style:none;margin:0 0 10px;padding:0;display:grid;gap:10px}
 .mrow{display:grid;grid-template-columns:minmax(0,1.7fr) 128px 128px 172px 100px;gap:14px;align-items:center;
 background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--line);border-radius:14px;padding:10px 16px 10px 13px;
@@ -65,6 +75,8 @@ font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-s
 .edge{display:inline-block;font-size:11.5px;font-weight:700;margin-left:6px;vertical-align:2px}
 .edge.under{color:var(--teal-deep)}.edge.over{color:#b3261e}.edge.at{color:var(--muted)}
 .mask .none{font-size:13px;color:var(--muted)}
+.mask b a{color:inherit;text-decoration:none;border-bottom:1px dashed color-mix(in srgb,var(--fg2) 45%,transparent)}
+.mask b a:hover{color:var(--teal-deep);border-color:var(--teal-deep)}
 .mtick .mchip{display:inline-block;font-size:12.5px;font-weight:600;border-radius:999px;padding:3px 10px;
 font-variant-numeric:tabular-nums;white-space:nowrap}
 .mchip.up{background:color-mix(in srgb,var(--teal) 14%,transparent);color:var(--teal-deep)}
@@ -101,6 +113,13 @@ def vals_default(key: str) -> str:
     return {"label": "all", "sort": "move", "min": "0"}.get(key, "")
 
 
+def _card_key(pid: str):
+    if pid.startswith("pk:"):
+        parts = pid.split(":")
+        return "pkm-" + parts[2] if len(parts) > 2 else None
+    return passcode_of(pid)
+
+
 def _name_of(cards, pkm):
     def name(pid: str) -> str:
         try:
@@ -130,6 +149,51 @@ def _days_since(iso, now: datetime) -> int | None:
         return max(0, (now.date() - d).days)
     except (ValueError, TypeError):
         return None
+
+
+def _ask_links(st, now: datetime, home: str, pids: list[str]) -> dict[tuple[str, str], str]:
+    """The cheapest live listing behind each ask, same evidence rules as the nightly snapshot: engine 95% on the
+    card, 90% on the printing, no lots, no ended listings, nothing unseen for three days."""
+    from decimal import Decimal
+
+    from .fx import FxTable
+    from .history import ASK_CARD_PROB, ASK_PRINTING_PROB
+    from .listing_parser import _GRADE_RE
+    if not pids or not {"card_listing", "listing"} <= _tables(st):
+        return {}
+    try:
+        fx = FxTable(st.fx_rates(), max_age=timedelta(days=3))
+    except Exception:
+        fx = None
+    fresh = (now - timedelta(days=3)).isoformat()
+    marks = ",".join("?" * len(pids))
+    rows = st.db.execute(
+        "SELECT c.printing_id, l.price, l.currency, l.data_json, l.title, l.url FROM card_listing c "
+        f"JOIN listing l ON l.key=c.key WHERE c.printing_id IN ({marks}) AND c.card_prob>=? AND c.printing_prob>=? "
+        "AND c.lot=0 AND l.kind='ask' AND c.status<>'REJECTED' AND l.ended_at IS NULL AND l.last_seen>=?",
+        (*pids, ASK_CARD_PROB, ASK_PRINTING_PROB, fresh))
+    best: dict[tuple[str, str], tuple[float, str]] = {}
+    for pid, price, cur, dj, title, url in rows:
+        if not url:
+            continue
+        try:
+            v = float(price) if cur == home else (float(fx.convert(Decimal(str(price)), cur, home, now)) if fx else None)
+        except Exception:
+            continue
+        if v is None:
+            continue
+        data = json.loads(dj or "{}")
+        gc, gr = data.get("grade_company"), data.get("grade")
+        if not gc:
+            m = _GRADE_RE.search(title or "")
+            if m:
+                gc, gr = m.group(1).upper().replace("BECKETT", "BGS"), m.group(2)
+            elif "grad" in (data.get("condition") or "").lower():
+                continue
+        key = (pid, f"{gc or ''}|{gr or ''}")
+        if key not in best or v < best[key][0]:
+            best[key] = (v, url)
+    return {k: url for k, (_v, url) in best.items()}
 
 
 def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "ygo",
@@ -169,38 +233,61 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
                       f'{e(lab)}</a>' for g, lab in (("ygo", "Yu-Gi-Oh!"), ("pkm", "Pokémon")))
             + '</div>')
     head = (f'<h1>The {e(name)} market</h1>' + tabs +
-            f'<p class="mk-sub">One row per exact printing and grade. <b>Fair</b> is the middle of this version\'s real '
-            f'sales. <b>Ask</b> is the cheapest live copy. The distance between them is the edge you get today.</p>'
+            f'<p class="mk-sub">One row per exact printing and grade. <b>Typical</b> is the middle of what this version '
+            f'actually sold for. <b>Ask</b> is the cheapest copy on sale now - click it to open the listing.</p>'
             + pulse)
     chips = _chips({**qs, "sort": sort, "min": str(min_sales)}, {
         "label": [("all", "Everything"), ("rising", "Climbing"), ("falling", "Slipping"), ("steady", "Holding"),
                   ("none", "Too new to call")],
         "min": [("0", "Any history"), ("3", "3+ sales"), ("6", "6+ sales")],
-        "sort": [("move", "Biggest move"), ("edge", "Below fair"), ("sales", "Bestsellers"), ("recent", "Newest sale")],
+        "sort": [("move", "Biggest move"), ("edge", "Below typical"), ("sales", "Bestsellers"), ("recent", "Newest sale")],
     })
-    if not rows:
-        return (head + chips + '<p class="empty">Nothing matches those filters yet. A version shows up once real sales of '
-                'that exact printing and grade are stored.</p>')
     cols = ('<div class="mhead">'
             '<span>Card</span>'
-            '<span title="Middle sold price of this exact version, in your currency. Uses the last 30 days when 3+ sales '
-            'sit there, otherwise all stored sales. The line under it is the middle half (p25-p75).">Fair now</span>'
+            '<span title="Median of this exact version\'s sales, in your currency. Uses the last 30 days when 3+ sales '
+            'sit there, otherwise all stored sales. The line under it is the middle half (p25-p75).">Typical sold</span>'
             '<span title="Copies sold per month. The line under it: newest sale and how many sales back the number.">'
             'Sales pace</span>'
-            '<span title="Cheapest live listing in the newest snapshot (up to 3 days old) and its gap to fair. Under fair '
-            'means the copy is cheaper than what copies actually sell for. Supply: listed count divided by the monthly '
-            'sales pace.">Cheapest ask</span>'
+            '<span title="Cheapest live listing in the newest snapshot (up to 3 days old), the listing itself one click '
+            'away, and its gap to the typical price. Supply: listed count divided by the monthly sales pace.">'
+            'Cheapest ask</span>'
             '<span title="90-day change when 3+ sales sit at each end of the window; otherwise the last week; otherwise '
-            'steady or too new.">Trend</span>'
+            'newest three sales against earliest three; otherwise steady or too new.">Trend</span>'
             '</div>')
     name_of = _name_of(cards, pkm)
+
+    def fair_of(r):
+        return r["median_30"] if (r["n_30"] or 0) >= 3 else r["median"]
+
+    deals = []
+    for d in trends.board(st, game=game, sort="edge", min_sales=3, limit=80):
+        f = fair_of(d)
+        if d["ask_low"] and f and (f - d["ask_low"]) / f >= 0.02:
+            deals.append(d)
+            if len(deals) >= 3:
+                break
+    links = _ask_links(st, now, home, sorted({r["printing_id"] for r in rows} | {d["printing_id"] for d in deals}))
+    best = ""
+    if deals:
+        items = []
+        for d in deals:
+            pid = d["printing_id"]
+            k = _card_key(pid)
+            url = links.get((pid, d["gkey"] or "|"))
+            f = fair_of(d)
+            pct = (f - d["ask_low"]) / f * 100
+            nm = name_of(pid) or d["label"].split(" · ")[0]
+            ext = ' target="_blank" rel="noreferrer noopener"' if url else ""
+            items.append(f'<a class="bb" href="{e(url or (card_href(k) if k else "/market"))}"{ext}>'
+                         f'<b>{M(d["ask_low"])}</b> {e(nm)} <i>{pct:.0f}% under</i></a>')
+        best = ('<div class="mk-best"><span class="bb-h">Under typical now</span>' + "".join(items) + '</div>')
+    if not rows:
+        return (head + chips + best + '<p class="empty">Nothing matches those filters yet. A version shows up once real '
+                'sales of that exact printing and grade are stored.</p>')
     body = []
     for r in rows:
         pid, gkey = r["printing_id"], r["gkey"] or "|"
-        if pid.startswith("pk:"):
-            key = "pkm-" + pid.split(":")[2] if len(pid.split(":")) > 2 else None
-        else:
-            key = passcode_of(pid)
+        key = _card_key(pid)
         nm = name_of(pid) or r["label"].split(" · ")[0]
         nm_html = (f'<a class="mname" href="{e(card_href(key))}">{e(nm)}</a>' if key
                    else f'<span class="mname">{e(nm)}</span>')
@@ -248,22 +335,25 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
         if askv:
             edge = (fair - askv) / fair * 100 if fair else None
             ecls = ("under" if edge >= 2 else "over" if edge <= -2 else "at") if edge is not None else "at"
-            etxt = (f"{edge:.0f}% under fair" if ecls == "under" else f"{abs(edge):.0f}% above fair" if ecls == "over"
-                    else "at fair")
+            etxt = (f"{edge:.0f}% under typical" if ecls == "under" else
+                    f"{abs(edge):.0f}% above typical" if ecls == "over" else "at typical")
             asub = f'{r["ask_n"]} listed {sup_txt}' if r["ask_n"] and sup_txt else (
                 f'{r["ask_n"]} listed' if r["ask_n"] else _short_day(r["ask_day"]))
             atitle = (f'Cheapest of {r["ask_n"]} live listings in the {_short_day(r["ask_day"])} snapshot; '
                       f'{"under a day" if supd < 1 else f"about {supd:.0f} days"} of supply at the current sales pace'
                       if supd is not None else
                       f'Cheapest live listing in the {_short_day(r["ask_day"])} snapshot')
-            ask_html = (f'<b title="{e(atitle)}">{M(askv)}<span class="edge {ecls}">{e(etxt)}</span></b>'
+            lur = links.get((pid, gkey))
+            num = (f'<a href="{e(lur)}" target="_blank" rel="noreferrer noopener" '
+                   f'title="Open the listing">{M(askv)}</a>' if lur else M(askv))
+            ask_html = (f'<b title="{e(atitle)}">{num}<span class="edge {ecls}">{e(etxt)}</span></b>'
                         f'<small>{e(asub)}</small>')
         else:
             ask_html = '<span class="none">no live ask</span>'
         body.append(
             f'<li class="mrow {cls}"><div class="mmain">{thumb}'
             f'<span class="mid">{nm_html}<span class="mmeta"><span class="mcode">{e(r["label"])}</span>{pill}</span></span></div>'
-            f'<div class="mfair"><small class="cl">Fair now</small>'
+            f'<div class="mfair"><small class="cl">Typical sold</small>'
             f'<b title="Middle of the {"last 30 days of" if use30 else ""} sales of this exact version: {n} sold between '
             f'{M(r["low"])} and {M(r["high"])}">{M(fair)}</b>'
             f'<small title="Middle half of all sales of this version">{n} sold · {rng}</small></div>'
@@ -275,9 +365,9 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
             f'<span class="mchip {cls}" title="{why}">{chip}</span></div></li>')
     shown = (f'<p class="muted small">Showing {len(rows)} of {s["series"]:,} versions'
              + (", the top 200 for this sort" if len(rows) >= 200 else "") + '.</p>')
-    note = ('<p class="muted small">Prices in your display currency, each sale converted at its own date. Fair is sold '
-            'evidence only; asks come from the newest nightly snapshot and never move it.</p>')
-    return head + chips + cols + f'<ul class="mlist">{"".join(body)}</ul>' + shown + note
+    note = ('<p class="muted small">Prices in your display currency, each sale converted at its own date. Typical sold is '
+            'sold evidence only; asks come from the newest nightly snapshot and never move it.</p>')
+    return head + chips + best + cols + f'<ul class="mlist">{"".join(body)}</ul>' + shown + note
 
 
 def movement_strip(st, game: str, M: Money) -> str:

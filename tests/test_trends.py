@@ -77,7 +77,7 @@ def test_market_page_carries_both_games_and_a_column_header_instead_of_a_legend(
     trends.refresh(st, NOW, "TWD")
     h = view_market(st, NOW, "TWD", "TWD", {}, game="ygo")
     assert 'role="tab"' in h and "Yu-Gi-Oh!" in h and "Pokémon" in h      # both games reachable from either board
-    assert ('class="mhead"' in h and "Fair now" in h and "Sales pace" in h and "Cheapest ask" in h
+    assert ('class="mhead"' in h and "Typical sold" in h and "Sales pace" in h and "Cheapest ask" in h
             and "Trend" in h)
     assert "Sells for" not in h                                          # the column names the job; no per-row caption
     assert "How to read a row" not in h                                  # the header strip does that job now
