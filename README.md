@@ -38,17 +38,35 @@ Pricing rules: `docs/pricing-method.md` — a price comes from real sales of one
 - `pc.py`: the PriceCharting cross-market. `python -m cardman.pc sweep` launches a headed Chrome over the
   DevTools pipe (the site's Cloudflare challenge passes in the real browser, not in a scripted client),
   resolves each product through the site search once, and stores the six grade prices, the sales-volume note
-  and a year of weekly points in `pc_card` (~2 KB a card). Paced at about one card every few seconds, skips
-  rows younger than ten days; `--refetch` re-checks a set. The market board's `1 yr · PC` column reads it
-  against our sold medians; a card whose PriceCharting raw price sits more than 3x from ours is treated as a
-  different printing. The grading strip buys raw at the cheapest live ask (linking the listing), adds inbound
-  shipping and the PSA fee from `data/profile.json`, and nets the PSA 10 after selling fees: it names the
-  profit in currency and the most the raw may cost when no ask is low enough. Each card page carries a
-  PriceCharting section of its own (`ui_pc.py`): all six grades selectable; every weekly sold point is its
-  own dot and hover snaps to the nearest one, naming the date, the price and the move since the week
-  before - warm dots on a rise, cold on a fall. A 3/6/9/12-month switch rescales plot and table
+  and the monthly points in `pc_card` (~2 KB a card). Scope is the first 151 Pokémon by National Dex, every
+  card of those characters (~5.6k): uncaptured rows first, then by sales demand. PriceCharting ships one
+  edition-blind product per card, so each catalog card binds to one product - its standard printing
+  (holo/normal/unlimited, `canonical`) - and a 1st-edition, reverse or jumbo print is not summed in beside
+  it. Those characters refresh daily and the rest of the board weekly; `--ttl-days` overrides, `--dex-max`
+  widens the scope, `--pid` narrows to one, `--refetch` re-checks a set, and `python -m cardman.pc cover`
+  prints priced / partial / missing per character. A product page parsed once serves every row that
+  resolves to it in the same pass, the set name in the card name scores the match against the whole href
+  path (two sets ship the same `charizard-4`), and a link with the right shape but the wrong card is
+  refused as nomatch instead of stored. History is
+  anchored to the grade cells on read (`_fix_units`): a capture written in cents is corrected against the
+  dollar cell, so a card cannot read 100x high. The market board's `1 yr · PC` column reads it against our
+  sold medians; a card whose PriceCharting raw price sits more than 3x from ours is treated as a different
+  printing. The grading strip buys raw at the cheapest live ask (linking the listing), adds inbound shipping
+  and the PSA fee from `data/profile.json`, and nets the PSA 10 after selling fees: it names the profit in
+  currency and the most the raw may cost when no ask is low enough. Each card page carries a PriceCharting
+  section of its own (`ui_pc.py`): all six grades selectable; every monthly sold point is its own dot and
+  hover snaps to the nearest one, naming the month, the price and the move since the month before - warm
+  dots on a rise, cold on a fall - under the capture date. A 3/6/9/12-month switch rescales plot and table
   together, the change column recomputes client-side, and end tags price each live line, plus PSA/CGC
-  population.
+  population. Every capture's points also go into `pc_point`, so the series deepens sweep over sweep. The
+  Characters tab (`zone.py`) covers the same first 151: one tile per Pokémon, cap from the latest Ungraded
+  price of every priced printing, a 12-month move only when a year of stored history exists and only from
+  current captures, sales pace from our ledger, and a tape counting fully priced and partial characters.
+  sweep and the 9/12-month views fill out instead of stopping at one capture's window.
+- `pile.py` is a board: new additions land in a full-width staging pile at the top (fanned, draggable),
+  and each card sorts left into Set aside or right into Chases - drag it across the zones or press its
+  buttons. A chase opens at the sold typical, the live ask when there is no comp; the card stays put when
+  neither exists.
 - `alerts.py` catches asks under the typical sold price the moment they land: the engine scans each batch
   right after it is analyzed and sweeps the whole board at the end of every pass, writing one `ASK_UNDER`
   signal per printing per price point (fee math identical to the under-typical section: raw in, raw out).

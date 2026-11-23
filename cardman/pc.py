@@ -1,4 +1,4 @@
-"""PriceCharting cross-market: per-card grade prices and a year of weekly points, swept from the real site.
+"""PriceCharting cross-market: per-card grade prices and years of monthly points, swept from the real site.
 
 The site sits behind a Cloudflare managed challenge. Plain HTTP clients are fingerprinted and refused, and
 headless Chrome is too, so the sweep drives a headed Chrome it launches itself over the DevTools pipe
@@ -7,7 +7,7 @@ clearance cookie warm, so most pages load on the first try after the first chall
 
 One card costs two page loads: a search to resolve the product URL, then the product page. The product URL is
 stored, so later sweeps go straight to it. Rows go into `pc_card` in the evidence store - the grade strip
-(price, change, sales volume note), a year of weekly points per grade series, and the slab population. No
+(price, change, sales volume note), the monthly points per grade series, and the slab population. No
 listing URLs, no page snapshots: roughly 2 KB per card.
 
     python -m cardman.pc sweep [--limit 40] [--game ygo|pkm] [--refetch] [--pid ID ...]
@@ -37,7 +37,16 @@ CREATE TABLE IF NOT EXISTS pc_card (
   grades TEXT, series TEXT, pop TEXT,
   fetched TEXT NOT NULL, status TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS pc_game ON pc_card(game);
+CREATE TABLE IF NOT EXISTS pc_point (
+  printing_id TEXT NOT NULL, name TEXT NOT NULL, x INTEGER NOT NULL, v REAL NOT NULL,
+  PRIMARY KEY (printing_id, name, x));
+CREATE INDEX IF NOT EXISTS pc_point_pid ON pc_point(printing_id);
 """
+
+POINT_KEEP_DAYS = 3400     # every capture adds its newest points; a few years of monthly history is the ceiling
+
+DEX_MAX = 151              # sweep scope: the first 151 Pokémon, complete. Later this moves to 300, no further.
+FRESH_DAYS = {"pkm": 1, "ygo": 10}   # the scoped characters refresh daily; the rest of the board weekly
 
 GRADES = ("Ungraded", "Grade 7", "Grade 8", "Grade 9", "Grade 9.5", "PSA 10")
 SERIES_TO_GRADE = {"used": "Ungraded", "cib": "Grade 7", "new": "Grade 8", "graded": "Grade 9",
@@ -92,6 +101,48 @@ def _cell(cell: str) -> tuple[float | None, float | None] | None:
     return p, c
 
 
+GRADE_FOR_SERIES = {"BGS 9.5": "Grade 9.5"}
+
+
+def _usd_pts(pts, ref: float | None) -> list[list]:
+    """Monthly price points in dollars. A zero is a month with no sale, not a price of zero, so it drops.
+    PriceCharting ships two feeds and they disagree on units - the Highcharts series is dollars, VGPC's
+    chart_data is cents - so the grade cell anchors the scale and an off-by-100 series is corrected."""
+    clean = [[int(t), round(float(v), 2)] for t, v in (pts or []) if v is not None and float(v) > 0]
+    if not clean or not ref or ref <= 0:
+        return clean
+    last = clean[-1][1]
+    if last / ref > 20:
+        return [[t, round(v / 100, 2)] for t, v in clean]
+    if ref / last > 20:
+        return [[t, round(v * 100, 2)] for t, v in clean]
+    return clean
+
+
+def _fix_units(ser: dict, grades: dict) -> dict:
+    """History anchored to the grade cells. Older captures wrote cents where the cell is dollars, and a series
+    can hold both, so the scale is fixed per series and then per stray point. A real price never sits 20x off
+    the cell for the same grade."""
+    out: dict[str, list] = {}
+    for name, pts in (ser or {}).items():
+        ref = (grades.get(name) or grades.get(GRADE_FOR_SERIES.get(name, "")) or {}).get("p")
+        try:
+            clean = [[int(x), float(v)] for x, v in (pts or []) if v is not None]
+        except (TypeError, ValueError):
+            continue
+        if ref and ref > 0 and clean:
+            last = clean[-1][1]
+            if last > 0 and last / ref > 20:
+                clean = [[x, v / 100.0] for x, v in clean]
+            elif last > 0 and ref / last > 20:
+                clean = [[x, v * 100.0] for x, v in clean]
+            clean = [[x, v / 100.0] if v / ref > 20 else [x, v] for x, v in clean]
+        clean = sorted([x, round(v, 2)] for x, v in clean if v > 0)
+        if clean:
+            out[name] = clean
+    return out
+
+
 def _vol(v) -> str | None:
     v = " ".join(re.sub(r"^\s*volume:\s*", "", (v or "").strip()).split())
     return v or None
@@ -140,7 +191,7 @@ def _series_name(name: str) -> str:
 
 
 def parse_product(payload: dict) -> dict:
-    """Turn a captured product page into the stored row: grades, grade-named weekly series, population."""
+    """Turn a captured product page into the stored row: grades, grade-named monthly series in dollars, population."""
     cells = payload.get("cells")
     grades = (cells_to_grades(cells, payload.get("vols") or []) if cells
               else parse_price_data(payload.get("pd") or ""))
@@ -149,9 +200,10 @@ def parse_product(payload: dict) -> dict:
         raw_series = {SERIES_TO_GRADE[k]: v for k, v in (payload.get("chart") or {}).items() if k in SERIES_TO_GRADE}
     series: dict[str, list] = {}
     for name, pts in raw_series.items():
-        clean = [[int(t), round(float(v), 2)] for t, v in (pts or []) if v is not None]
-        if clean and any(v > 0 for _t, v in clean):
-            series[name] = clean[-26:]
+        cell = grades.get(name) or grades.get(GRADE_FOR_SERIES.get(name, "")) or {}
+        clean = _usd_pts(pts, cell.get("p"))
+        if clean:
+            series[name] = clean[-62:]
     product = payload.get("product") or {}
     return {"title": (payload.get("title") or "").strip(), "url": payload.get("url"),
             "vid": product.get("id"), "grades": grades, "series": series,
@@ -163,31 +215,49 @@ def _slug(path_or_url: str) -> str:
 
 
 def pick_link(links: list[dict], *, name: str = "", number: str = "", code: str = "",
-              rarity: str = "") -> tuple[str | None, str]:
+              rarity: str = "", set_name: str = "") -> tuple[str | None, str]:
     """Best product href for a card. Exact number suffix and set code first, then name tokens; a bracketed
     variant beats the base page only when its bracket names the rarity we track."""
     words = [w for w in re.split(r"[^a-z0-9]+", name.lower()) if len(w) >= 4]
-    generic = {"rare", "holo", "holofoil", "foil", "card", "edition"}
+    compact = re.sub(r"[^a-z0-9]+", "", name.lower())
+    generic = {"rare", "holo", "holofoil", "foil", "card", "edition", "pokemon"}
     rwords = {w for w in re.split(r"[^a-z0-9]+", (rarity or "").lower()) if w and w not in generic}
-    best, why, top = None, "", float("-inf")
+    set_words = [w for w in re.split(r"[^a-z0-9]+", (set_name or "").lower()) if len(w) >= 4 and w != "pokemon"]
+    best, best_t, why, top = None, "", "", float("-inf")
     for i, x in enumerate(links[:12]):
         h = x.get("h") or ""
-        if not h or not (x.get("t") or "").strip():
+        t = (x.get("t") or "").strip()
+        if not h or not t:
             continue                   # image-only anchors repeat a product with no name to judge it by
         slug = _slug(h)
+        path = h.lower()               # the set lives in the path, not the slug: two sets ship the same charizard-4
         score = 0.0
         if number and re.search(rf"-{re.escape(str(number))}$", slug):
             score += 4
-        if code and code != "-" and code.lower().replace("-", "") in slug.replace("-", ""):
+        if code and code != "-" and code.lower().replace("-", "") in path.replace("-", ""):
             score += 4
-        score += sum(1 for w in words if w in slug)
-        m = re.search(r"\[([^\]]+)\]", x.get("t") or "")
+        score += sum(1 for w in words if w in path)
+        score += 0.5 * sum(1 for w in words if w in t.lower())
+        m = re.search(r"\[([^\]]+)\]", t)
         if m:
             bracket = {w for w in re.split(r"[^a-z0-9]+", m.group(1).lower()) if w and w not in generic}
             score += 1.5 if (rwords and bracket & rwords) else -1.5
         score -= i * 0.15
         if score > top:
-            best, top, why = h, score, f"score {score:g}"
+            best, best_t, top, why = h, t, score, f"score {score:g}"
+    if best is None:
+        return None, "no candidates"
+    # A confident product needs both halves: the right card (name in the slug, the compact name, or the set it
+    # belongs to) and the right printing (the number on the page, or the set code). Same-name cards in other sets
+    # scored on the name alone - Minccino #182 for BW13 - so a name without a number is not evidence.
+    slug, tl = _slug(best), best_t.lower()
+    num_ok = bool(number) and (bool(re.search(rf"-{re.escape(str(number))}$", slug))
+                               or f"#{str(number).lower()}" in tl)
+    code_ok = bool(code) and code != "-" and code.lower().replace("-", "") in best.lower().replace("-", "")
+    name_ok = any(w in slug or w in tl for w in words) or (len(compact) >= 3 and compact in slug)
+    set_ok = bool(set_words) and any(w in slug or w in tl for w in set_words)
+    if not (num_ok or code_ok) or not (name_ok or set_ok or code_ok):
+        return None, "no confident match"
     return best, why
 
 
@@ -341,12 +411,12 @@ def find_product(b: Browser, query: str) -> tuple[str | None, list[dict]]:
 
 
 def fetch_card(b: Browser, *, query: str, name: str = "", number: str = "", code: str = "",
-               rarity: str = "", url: str | None = None) -> dict:
+               rarity: str = "", url: str | None = None, set_name: str = "") -> dict:
     """One card: resolve the product page if needed, then read it. Returns the row pieces or a status."""
     note = ""
     if not url:
         _title, links = find_product(b, query)
-        url, note = pick_link(links, name=name, number=number, code=code, rarity=rarity)
+        url, note = pick_link(links, name=name, number=number, code=code, rarity=rarity, set_name=set_name)
         if not url:
             return {"status": "nomatch"}
         if url.startswith("/"):
@@ -360,35 +430,184 @@ def fetch_card(b: Browser, *, query: str, name: str = "", number: str = "", code
     return row
 
 
+def _keep_points(st, pid: str, series: dict) -> int:
+    """Every capture's monthly points go into pc_point; a capture only carries its own window, so the store is
+    where a year or three of history accumulates. Same x restated: the newer value wins."""
+    rows = [(pid, name, int(x), round(float(v), 2)) for name, pts in (series or {}).items()
+            for x, v in (pts or []) if v is not None]
+    if not rows:
+        return 0
+    with st.db:
+        st.db.executemany(
+            "INSERT INTO pc_point (printing_id, name, x, v) VALUES (?,?,?,?) "
+            "ON CONFLICT(printing_id, name, x) DO UPDATE SET v=excluded.v", rows)
+        for name in {r[1] for r in rows}:
+            newest = max(r[2] for r in rows if r[1] == name)
+            st.db.execute("DELETE FROM pc_point WHERE printing_id=? AND name=? AND x<?",
+                          (pid, name, newest - POINT_KEEP_DAYS * 86_400_000))
+    return len(rows)
+
+
+def _seed(st) -> int:
+    """Old stores: copy each stored capture's series into pc_point once, so history starts from what is held."""
+    n = 0
+    for pid, series in st.db.execute("SELECT printing_id, series FROM pc_card WHERE status='ok'"):
+        if st.db.execute("SELECT 1 FROM pc_point WHERE printing_id=? LIMIT 1", (pid,)).fetchone():
+            continue
+        try:
+            n += _keep_points(st, pid, json.loads(series or "{}"))
+        except ValueError:
+            continue
+    return n
+
+
 def _query_for(pid: str, name: str, number: str, code: str) -> str:
     if code and code != "-":
         return code
     return " ".join(x for x in (name, number) if x)
 
 
-def sweep(st, *, limit: int = 40, game: str | None = None, refetch: bool = False, ttl_days: int = 10,
+
+EDITION_ORDER = ("holo", "normal", "unlimited-holo", "unlimited")
+VARIANT = ("1st", "first", "reverse", "shadowless", "jumbo")
+
+
+def canonical(cat, cid: str) -> str | None:
+    """The printing PriceCharting's one product per card answers for. PC does not split editions - its
+    product mixes every print of that number - so the row binds to the standard print (holo, normal,
+    unlimited) and the premium variants keep their own guide instead of borrowing a number PC never sold."""
+    ps = list(cat.versions(cid)) if getattr(cat, "versions", None) else []
+    if not ps:
+        return None
+
+    def rank(p):
+        ed = (p.id.split(":")[3].split("@")[0] if len(p.id.split(":")) > 3 else "").lower()
+        if ed in EDITION_ORDER:
+            return EDITION_ORDER.index(ed)
+        return 9 if any(v in ed for v in VARIANT) else 4
+
+    return min(ps, key=rank).id
+
+
+_PKM = None
+
+
+def canonical_for(pid: str) -> str | None:
+    """The card's one PC printing, from any printing id of that card. A 1st-edition copy still answers
+    on the standard print, because PC sells one edition-blind product for the card."""
+    global _PKM
+    parts = (pid or "").split(":")
+    if len(parts) < 3 or parts[0] != "pk":
+        return None
+    if _PKM is None:
+        from .pkm_catalog import DB, PkmCatalog
+        _PKM = PkmCatalog(DB)
+    try:
+        return canonical(_PKM, parts[2])
+    except Exception:
+        return None
+
+
+def pkm_scope(cat, who, dex_max: int = DEX_MAX) -> dict[str, int]:
+    """card id -> dex, for every card of the in-scope characters. One card is one product."""
+    from .character import species_index
+    out: dict[str, int] = {}
+    for name, cids in species_index(cat).items():
+        d = who.dex(name)
+        if not d or d > dex_max:
+            continue
+        for cid in cids:
+            out[cid] = d
+    return out
+
+
+def _scope(dex_max: int = DEX_MAX) -> dict[str, int]:
+    try:
+        from .pkm_catalog import DB, PkmCatalog
+        from . import zone as Z
+        return pkm_scope(PkmCatalog(DB), Z.book(), dex_max)
+    except Exception:
+        return {}
+
+
+def _pkm_targets(st, dex_max: int = DEX_MAX) -> list[tuple[str, str]]:
+    """The standard printing of every in-scope card, uncaptured first, then by the demand the board knows."""
+    scope = _scope(dex_max)
+    if not scope:
+        return [(pid, "pkm") for (pid,) in st.db.execute(
+            "SELECT printing_id FROM price_trend WHERE game='pkm' ORDER BY n_sales DESC, last_sale DESC")]
+    from .pkm_catalog import DB, PkmCatalog
+    cat = PkmCatalog(DB)
+    demand = {pid: (n or 0) for pid, n in st.db.execute(
+        "SELECT printing_id, n_sales FROM price_trend WHERE game='pkm'")}
+    have = {r[0] for r in st.db.execute("SELECT printing_id FROM pc_card")}
+    rows = []
+    for cid in scope:
+        pid = canonical(cat, cid)
+        if not pid:
+            continue
+        need = sum(demand.get(p.id, 0) for p in cat.versions(cid))
+        rows.append((pid, need))
+    rows.sort(key=lambda r: (1 if r[0] in have else 0, -r[1], r[0]))
+    return [(pid, "pkm") for pid, _need in rows]
+
+
+def cover(st, dex_max: int = DEX_MAX) -> str:
+    """How complete the in-scope PriceCharting coverage is, character by character. This is the scoreboard."""
+    st.db.executescript(SCHEMA)
+    scope = _scope(dex_max)
+    if not scope:
+        return "pkm catalog unavailable; coverage unknown"
+    from .pkm_catalog import DB, PkmCatalog
+    cat = PkmCatalog(DB)
+    have = {r[0]: r[1] for r in st.db.execute("SELECT printing_id, status FROM pc_card")}
+    total: dict[int, int] = {}
+    got: dict[int, int] = {}
+    for cid, d in scope.items():
+        pid = canonical(cat, cid)
+        if not pid:
+            continue
+        total[d] = total.get(d, 0) + 1
+        if have.get(pid) == "ok":
+            got[d] = got.get(d, 0) + 1
+    priced = sum(got.values())
+    full = sum(1 for d, n in total.items() if got.get(d, 0) >= n)
+    lines = [f"dex 1-{dex_max}: {len(total)} characters, {len(scope)} cards",
+             f"{priced} priced, {len(scope) - priced} missing, {full} of {len(total)} characters complete"]
+    gaps = [(d, got.get(d, 0), n) for d, n in sorted(total.items()) if got.get(d, 0) < n]
+    for d, g, n in gaps[:20]:
+        lines.append(f"  #{d:03d} {g}/{n}")
+    if len(gaps) > 20:
+        lines.append(f"  ... {len(gaps) - 20} more characters with gaps")
+    return "\n".join(lines)
+
+
+def sweep(st, *, limit: int = 40, game: str | None = None, refetch: bool = False, ttl_days: int | None = None,
           pids: list[str] | None = None, profile: Path | None = None, chrome: str | None = None,
-          headless: bool = False, pacing: tuple[float, float] = (1.1, 2.2), log=print) -> dict:
+          headless: bool = False, dex_max: int = DEX_MAX, pacing: tuple[float, float] = (1.1, 2.2),
+          log=print) -> dict:
     """Walk the board's best-sold versions and fill `pc_card`. Two page loads per unmapped card, one per refresh."""
     st.db.executescript(SCHEMA)
+    _seed(st)
     now = datetime.now(UTC)
     if pids:
         targets = [(p, "pkm" if p.startswith("pk:") else "ygo") for p in pids]
     else:
-        where = "SELECT printing_id, game FROM price_trend"
-        args: list = []
-        if game:
-            where += " WHERE game=?"
-            args.append(game)
-        where += " ORDER BY n_sales DESC, last_sale DESC"
-        targets = list(st.db.execute(where, args))
+        targets = []
+        if game in (None, "pkm"):
+            targets += _pkm_targets(st, dex_max)
+        if game in (None, "ygo"):
+            targets += list(st.db.execute(
+                "SELECT printing_id, game FROM price_trend WHERE game='ygo' "
+                "ORDER BY n_sales DESC, last_sale DESC"))
     known = {r[0]: r for r in st.db.execute("SELECT printing_id, url, fetched, status FROM pc_card")}
     queue: list[tuple[str, str]] = []
     for pid, g in targets:
         k = known.get(pid)
         if k and not refetch:
+            ttl = FRESH_DAYS.get(g, 10) if ttl_days is None else ttl_days
             try:
-                fresh = (now - datetime.fromisoformat(k[2])).days < ttl_days
+                fresh = (now - datetime.fromisoformat(k[2])).days < ttl
             except (TypeError, ValueError):
                 fresh = False
             if fresh:
@@ -399,26 +618,34 @@ def sweep(st, *, limit: int = 40, game: str | None = None, refetch: bool = False
     if not queue:
         return {"done": 0, "note": "nothing due"}
 
-    names, numbers, codes, rarities = _identify(st, queue)
+    names, numbers, codes, rarities, sets = _identify(st, queue)
     out = {"done": 0, "ok": 0, "nomatch": 0, "empty": 0, "failed": 0}
+    seen: dict[str, dict] = {}     # one navigation per product page; printings of it reuse the parse
     with Browser(profile=profile, chrome=chrome, headless=headless) as b:
         for pid, g in queue:
             name, number, code = names.get(pid, ""), numbers.get(pid, ""), codes.get(pid, "")
-            query = _query_for(pid, name, number, code)
+            query = _query_for(pid, " ".join(x for x in (name, sets.get(pid, "")) if x), number, code)
             prior = known.get(pid)
             url = prior[1] if prior and prior[1] and not refetch else None
-            try:
-                row = fetch_card(b, query=query, name=name, number=number, code=code,
-                                 rarity=rarities.get(pid, ""), url=url)
-            except Challenge:
-                log(f"challenge on {pid}; stopping this pass")
-                out["failed"] += 1
-                break
-            except (TimeoutError, RuntimeError, OSError) as exc:
-                log(f"{pid}: {type(exc).__name__} {exc}"[:120])
-                out["failed"] += 1
-                time.sleep(8)
-                continue
+            hit = seen.get(url) if url else None
+            if hit is not None:
+                row = dict(hit)
+                row["url"] = url
+            else:
+                try:
+                    row = fetch_card(b, query=query, name=name, number=number, code=code,
+                                     rarity=rarities.get(pid, ""), url=url, set_name=sets.get(pid, ""))
+                except Challenge:
+                    log(f"challenge on {pid}; stopping this pass")
+                    out["failed"] += 1
+                    break
+                except (TimeoutError, RuntimeError, OSError) as exc:
+                    log(f"{pid}: {type(exc).__name__} {exc}"[:120])
+                    out["failed"] += 1
+                    time.sleep(8)
+                    continue
+                if row.get("status") == "ok" and row.get("url"):
+                    seen[row["url"]] = {k: v for k, v in row.items() if k != "status"}
             status = row.pop("status")
             out["done"] += 1
             out[status] = out.get(status, 0) + 1
@@ -429,17 +656,20 @@ def sweep(st, *, limit: int = 40, game: str | None = None, refetch: bool = False
                     (pid, g, row.get("url") or url, row.get("title"), query, row.get("match_note"),
                      _dump(row.get("grades") or {}), _dump(row.get("series") or {}), _dump(row.get("pop") or {}),
                      now.isoformat(), status))
+            if status == "ok":
+                _keep_points(st, pid, row.get("series") or {})
             log(f"{status:7} {pid}")
             time.sleep(random.uniform(*pacing))
     return out
 
 
-def _identify(st, queue: list[tuple[str, str]]) -> tuple[dict, dict, dict, dict]:
-    """Card name, printed number, set code and rarity, from the local catalogs only - never a second request."""
+def _identify(st, queue: list[tuple[str, str]]) -> tuple[dict, dict, dict, dict, dict]:
+    """Card name, printed number, set code, rarity and set name, from the local catalogs only - never a second request."""
     names: dict[str, str] = {}
     numbers: dict[str, str] = {}
     codes: dict[str, str] = {}
     rarities: dict[str, str] = {}
+    sets: dict[str, str] = {}
     cards = None
     pkm = None
     for pid, g in queue:
@@ -459,8 +689,12 @@ def _identify(st, queue: list[tuple[str, str]]) -> tuple[dict, dict, dict, dict]
                 r = pkm.execute("SELECT c.name, c.number, s.name FROM pkm_card c LEFT JOIN pkm_set s ON s.id=c.set_id "
                                 "WHERE c.id=?", (cid,)).fetchone()
                 if r:
-                    names[pid] = " ".join(x for x in (r[0], r[2]) if x)
+                    names[pid] = r[0] or ""
                     numbers[pid] = (r[1] or "").split("/")[0]
+                    sets[pid] = r[2] or ""
+                    ed = (parts[3].split("@")[0] if len(parts) > 3 else "").replace("-", " ")
+                    if ed:
+                        rarities[pid] = ed     # 1st edition, unlimited, holo: the variant, not a rarity
         else:
             body = pid.split(":", 1)[1] if ":" in pid else ""
             seg = body.split(":")
@@ -478,23 +712,35 @@ def _identify(st, queue: list[tuple[str, str]]) -> tuple[dict, dict, dict, dict]
                 if cards and pc:
                     c = cards.card(pc.group(1)) or {}
                     names[pid] = c.get("name_en") or ""
-    return names, numbers, codes, rarities
+    return names, numbers, codes, rarities, sets
 
 
 def rows_for(st, pids: list[str]) -> dict[str, dict]:
-    """Stored cross-market rows for a set of printings, ready for the UI. Missing table means no rows."""
+    """Stored cross-market rows for a set of printings, ready for the UI. Missing table means no rows.
+    Series are the union of the latest capture and every point pc_point has accumulated."""
     if not pids:
         return {}
     have = {r[0] for r in st.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     if "pc_card" not in have:
         return {}
     marks = ",".join("?" * len(pids))
+    hist: dict[str, dict[str, dict[int, float]]] = {}
+    if "pc_point" in have:
+        for pid, name, x, v in st.db.execute(
+                f"SELECT printing_id, name, x, v FROM pc_point WHERE printing_id IN ({marks})", pids):
+            hist.setdefault(pid, {}).setdefault(name, {})[int(x)] = float(v)
     out = {}
     for pid, url, grades, series, pop, fetched in st.db.execute(
             f"SELECT printing_id, url, grades, series, pop, fetched FROM pc_card WHERE printing_id IN ({marks}) "
             "AND status='ok'", pids):
         try:
-            out[pid] = {"url": url, "grades": json.loads(grades or "{}"), "series": json.loads(series or "{}"),
+            cells = json.loads(grades or "{}")
+            ser = json.loads(series or "{}")
+            for name, pts in (hist.get(pid) or {}).items():
+                merged = {int(x): float(v) for x, v in (ser.get(name) or [])}
+                merged.update(pts)
+                ser[name] = [[x, merged[x]] for x in sorted(merged)]
+            out[pid] = {"url": url, "grades": cells, "series": _fix_units(ser, cells),
                         "pop": json.loads(pop or "{}"), "fetched": fetched}
         except ValueError:
             continue
@@ -540,17 +786,34 @@ def current(pc_row: dict | None, name: str) -> dict | None:
     return (pc_row.get("grades") or {}).get(name) if pc_row else None
 
 
+def year_change(pts: list) -> float | None:
+    """Percent change from the point nearest twelve months before the newest. Points are monthly, so a chart
+    spans years; comparing the endpoints would report a five-year move under a one-year label. None unless a
+    point sits within 45 days of the year mark - a shorter span would be a guess wearing a year's name."""
+    clean = sorted((int(t), float(v)) for t, v in (pts or []) if v and float(v) > 0)
+    if len(clean) < 4:
+        return None
+    last_t, last = clean[-1]
+    year = 365 * 86_400_000
+    base_t, base = min(clean[:-1], key=lambda p: abs(p[0] - (last_t - year)))
+    if abs(base_t - (last_t - year)) > 45 * 86_400_000 or base <= 0:
+        return None
+    return (last / base - 1) * 100
+
+
 def stats(st) -> str:
     st.db.executescript(SCHEMA)
     rows = st.db.execute("SELECT status, COUNT(*), MAX(fetched) FROM pc_card GROUP BY status").fetchall()
     n = sum(r[1] for r in rows)
     lines = [f"{r[1]:5} {r[0]:8} last {r[2] or '-'}" for r in rows]
-    return f"{n} cards stored\n" + "\n".join(lines)
+    pts, deep = st.db.execute("SELECT COUNT(*), COUNT(DISTINCT printing_id) FROM pc_point").fetchone()
+    return f"{n} cards stored\n" + "\n".join(lines) + f"\n{pts} monthly points kept across {deep} cards"
 
 
 def ingest(st, path: str) -> int:
     """Import captured product pages: [{printing_id, game?, url?, payload:{...}}]. No network, same parse."""
     st.db.executescript(SCHEMA)
+    _seed(st)
     data = json.loads(Path(path).read_text())
     now = datetime.now(UTC).isoformat()
     n = 0
@@ -564,19 +827,21 @@ def ingest(st, path: str) -> int:
                 (pid, item.get("game") or ("pkm" if pid.startswith("pk:") else "ygo"),
                  row.get("url"), row.get("title"), item.get("query"), item.get("match_note"),
                  _dump(row["grades"]), _dump(row["series"]), _dump(row["pop"]), now, "ok"))
+            _keep_points(st, pid, row["series"])
             n += 1
     return n
 
 
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(prog="python -m cardman.pc")
-    ap.add_argument("cmd", choices=["sweep", "ingest", "stats"])
+    ap.add_argument("cmd", choices=["sweep", "ingest", "stats", "cover"])
     ap.add_argument("path", nargs="?")
     ap.add_argument("--store", default="data/store/evidence.sqlite")
     ap.add_argument("--limit", type=int, default=40)
     ap.add_argument("--game", default=None, choices=["ygo", "pkm"])
     ap.add_argument("--refetch", action="store_true")
-    ap.add_argument("--ttl-days", type=int, default=10)
+    ap.add_argument("--ttl-days", type=int, default=None)
+    ap.add_argument("--dex-max", type=int, default=DEX_MAX)
     ap.add_argument("--pid", action="append", default=None)
     ap.add_argument("--profile", default=None)
     ap.add_argument("--chrome", default=None)
@@ -586,12 +851,14 @@ def main(argv: list[str] | None = None) -> None:
     st = Store(a.store)
     if a.cmd == "stats":
         print(stats(st))
+    elif a.cmd == "cover":
+        print(cover(st, a.dex_max))
     elif a.cmd == "ingest":
         print(f"{ingest(st, a.path)} cards ingested")
     else:
         print(sweep(st, limit=a.limit, game=a.game, refetch=a.refetch, ttl_days=a.ttl_days,
                     pids=a.pid, profile=Path(a.profile) if a.profile else None,
-                    chrome=a.chrome, headless=a.headless))
+                    chrome=a.chrome, headless=a.headless, dex_max=a.dex_max))
 
 
 if __name__ == "__main__":

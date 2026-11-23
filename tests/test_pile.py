@@ -2,7 +2,7 @@
 import json
 from datetime import datetime, timezone
 
-from cardman.pile import add, keys, remove, resolve, view
+from cardman.pile import add, chase_add, chases, keys, remove, resolve, set_side, sort, view
 from cardman.store import Store
 
 NOW = datetime(2026, 11, 22, tzinfo=timezone.utc)
@@ -74,11 +74,58 @@ def test_view_prices_from_sales_and_flags_the_ones_without_a_comp(tmp_path):
     assert "Best return per dollar" in page
     assert "Dark Magician LOB no comps" in page
     assert page.count('action="/pile/remove"') == 2
-    assert "2 listings set aside" in page
+    assert "2 waiting in the pile, 0 set aside" in page
     assert "0 chases running" in page
 
 
 def test_view_with_an_empty_pile_says_so(tmp_path):
     page = view(seed(tmp_path), None, M(), NOW, "tok")
-    assert "Nothing set aside yet." in page
-    assert "0 listings set aside" in page
+    assert "Nothing in the pile yet." in page
+    assert "0 waiting in the pile, 0 set aside" in page
+    assert 'data-zone="pile"' in page and 'data-zone="set"' in page and 'data-zone="chase"' in page
+
+
+def test_new_additions_land_in_the_pile_and_sort_left(tmp_path):
+    st = seed(tmp_path)
+    add(st, KEY, NOW)
+    page = view(st, None, M(), NOW, "tok")
+    assert "1 waiting in the pile, 0 set aside" in page
+    assert 'class="zone zone-pile"' in page and 'action="/pile/sort"' in page
+    set_side(st, KEY, "set")
+    page = view(st, None, M(), NOW, "tok")
+    assert "0 waiting in the pile, 1 set aside" in page
+    assert "← Set aside" in page and "Chases →" in page
+
+
+def test_sort_right_starts_a_chase_at_the_sold_typical(tmp_path):
+    st = seed(tmp_path)
+    st.db.executescript(
+        "CREATE TABLE card_listing (passcode TEXT, key TEXT, card_prob REAL, printing_id TEXT, "
+        "printing_prob REAL, lot INT, status TEXT);")
+    with st.db:
+        st.db.execute("INSERT INTO card_listing VALUES ('89631139', ?, 0.97, 'p:LOB-EN001:UR:1st', 0.94, 0, 'SEEN')",
+                      (KEY,))
+    add(st, KEY, NOW)
+    assert sort(st, KEY, "chase", NOW, "USD") == "ok"
+    c = chases(st)[0]
+    assert c["passcode"] == "89631139" and c["threshold"] == 800.0     # sold typical, not the ask
+    assert keys(st) == []
+    assert "Chase under" in view(st, None, M(), NOW, "tok")
+
+
+def test_sort_right_without_a_card_stays_in_the_pile(tmp_path):
+    st = seed(tmp_path)
+    add(st, KEY, NOW)
+    assert sort(st, KEY, "chase", NOW, "USD") == "nocard"
+    assert keys(st) == [KEY]
+    assert sort(st, KEY, "sideways", NOW, "USD") == "bad"
+
+
+def test_old_pile_rows_keep_their_place_after_the_side_column_lands(tmp_path):
+    st = Store(tmp_path / "s.sqlite")
+    with st.db:
+        st.db.execute("CREATE TABLE card_pile (key TEXT PRIMARY KEY, added_at TEXT NOT NULL)")
+        st.db.execute("INSERT INTO card_pile VALUES ('old', 't')")
+    assert add(st, "new", NOW) is True
+    side = dict(st.db.execute("SELECT key, side FROM card_pile"))
+    assert side == {"old": "set", "new": "pile"}

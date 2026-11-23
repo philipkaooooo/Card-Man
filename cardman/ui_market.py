@@ -184,7 +184,7 @@ def _slope(lab: str | None, pct: float | None) -> str:
 
 
 def _spark(points: list, label: str, tip: str, href: str | None = None) -> str:
-    """One year of PriceCharting weekly points, drawn small. Colour is the direction of the year, the dot is today."""
+    """One year of PriceCharting monthly sold points, drawn small. Colour is the direction of the year, the dot is today."""
     vs = [v for _t, v in points]
     if len(vs) < 2:
         return ""
@@ -513,7 +513,7 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
                  ("falling", "down", "p-down", s["falling"], "Slipping"),
                  ("steady", "hold", "p-hold", s["steady"], "Holding"),
                  ("none", "none", "p-none", s["no_trend"], "Thin"))
-        rule = ("One rule on every row: PriceCharting's weekly sold series for the same grade over 12 months. "
+        rule = ("One rule on every row: PriceCharting's monthly sold points for the same grade over 12 months. "
                 "Climbing: up 5% or more. Slipping: down 5% or more. Holding: inside 5%. A series too young "
                 "for a year is Thin, and says how many points it has.")
         pulse = ('<div class="mkph-bar" role="img" aria-label="Market split by trend" title="' + e(rule) + '">'
@@ -550,10 +550,10 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
             '<span class="cc ask" title="Cheapest live listing in the newest snapshot (up to 3 days old), the listing '
             'itself one click away, and its gap to the typical price. Supply: listed count divided by the monthly sales '
             'pace.">Cheapest ask</span>'
-            '<span class="cc pc" title="PriceCharting\'s own weekly sold prices for this grade (Ungraded for raw rows), '
+            '<span class="cc pc" title="PriceCharting\'s own monthly sold points for this grade (Ungraded for raw rows), '
             'last 12 months. The line under it is the year change. A verdict from a second market, not a copy of ours.">'
             '1 yr · PC</span>'
-            '<span class="cc trend" title="PriceCharting\'s weekly sold series for this grade, first point to last '
+            '<span class="cc trend" title="PriceCharting\'s monthly sold points for this grade, first point to last '
             'over 12 months. Climbing 5%+, Slipping 5%-, else Holding. A series too young for a year reads Thin '
             'and names its point count.">Trend</span>'
             '</div>')
@@ -585,12 +585,12 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
         pcr = pcrows.get(pid)
         gs = pc.grade_series(pcr, gkey)
         kpts = len([p for p in gs[1] if p[1]]) if gs else 0
-        # One rule for every row: PriceCharting's weekly sold series for this grade over 12 months. It is a
+        # One rule for every row: PriceCharting's monthly sold points for this grade over 12 months. It is a
         # second market's own sales, so every row with a series gets the same call, however thin ours are.
         if r.get("pc_move") is not None:
             lab, pct = r["pc_move_label"], r["pc_move"]
             ev = f'{r["n_sales"]} sales · PC 12 mo'
-            why = (f'PriceCharting\'s weekly sold series for this grade moved {pct:+.0f}% over 12 months, '
+            why = (f'PriceCharting\'s monthly sold points for this grade moved {pct:+.0f}% over 12 months, '
                    f'against {r["n_sales"]} sales of our own.')
         elif kpts:
             lab, pct = None, None
@@ -644,19 +644,13 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
         if gs and kpts >= 2:
             gname, gpts = gs
             cur_pc = pc.current(pcr, gname) or {}
-            gchg = (gpts[-1][1] / gpts[0][1] - 1) * 100 if gpts[0][1] else None
-            pc_v = usd_home(cur_pc.get("p")) if cur_pc.get("p") is not None else None
-            if pc_v and fair and not (fair / 3 <= pc_v <= fair * 3):
-                # The two markets are more than 3x apart: name the gap, do not draw it as this card's price history.
-                pc_html = (f'<span class="mpc"><span class="pcnone">≠</span><small title="PriceCharting\'s '
-                           f'{e(gname)} price is {M(pc_v)} against our {M(fair)} typical - more than 3x apart, so the '
-                           f'line is not drawn">far from ours</small></span>')
-            else:
-                vol = (cur_pc.get("vol") or "").replace(" per ", "/")
-                tip = (f"PriceCharting {gname}: {pc_money(gpts[-1][1])} now"
-                       + (f", {gchg:+.0f}% over the year" if gchg is not None else "")
-                       + (f"; {vol} recently" if vol else "") + ". Weekly points, 12 months.")
-                pc_html = _spark(gpts, f"{gname} · {gchg:+.0f}%" if gchg is not None else gname, tip, pcr.get("url"))
+            gchg = pc.year_change(gpts)
+            now_usd = cur_pc.get("p") if cur_pc.get("p") is not None else gpts[-1][1]
+            vol = (cur_pc.get("vol") or "").replace(" per ", "/")
+            tip = (f"PriceCharting {gname}: {pc_money(now_usd)} now"
+                   + (f", {gchg:+.0f}% over the year" if gchg is not None else "")
+                   + (f"; {vol} recently" if vol else "") + ". Monthly sold points, 12 months.")
+            pc_html = _spark(gpts, f"{gname} · {gchg:+.0f}%" if gchg is not None else gname, tip, pcr.get("url"))
         else:
             short = f'{kpts} point' if kpts else ("no series" if pcr else "not swept")
             pc_html = f'<span class="mpc"><span class="pcnone">—</span><small>{short}</small></span>'
@@ -690,9 +684,9 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
             f'<span class="sr">{word}</span></b><span>{e(pct_txt)}</span><small>{e(ev)}</small></span></div></li>')
     shown = (f'<p class="muted small">Showing {len(rows)} of {s["series"]:,} versions'
              + (", the top 200 for this sort" if len(rows) >= 200 else "") + '.</p>')
-    note = ('<p class="muted small">Typical sold is sold evidence only; asks are the newest 3-day snapshot and never '
-            'move it. 1 yr · PC is PriceCharting\'s weekly sold series for the same grade, in your currency at '
-            'today\'s rate.</p>')
+    note = ('<p class="muted small">Typical sold is sold evidence only; asks are each version\'s newest snapshot '
+            'within the last week, dated on the row, and never move it. 1 yr · PC is PriceCharting\'s monthly sold '
+            'points for the same grade, in your currency at today\'s rate.</p>')
     return (head + chips
             + f'<div class="mksboard"><h2>Every printing we can price</h2>'
             f'<a href="{now_href}">Deals and grading →</a></div>'

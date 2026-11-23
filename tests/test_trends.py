@@ -118,7 +118,7 @@ def test_board_trend_cell_names_the_direction_and_its_evidence(tmp_path):
     for i in range(2):
         add(st, f"r{i}", 120, 4 + i)
     st.db.executescript(PC_SCHEMA)
-    weeks = [[1740812400000, 10.0], [1760000000000, 11.0], [1770000000000, 12.0], [1780000000000, 12.0]]
+    weeks = [[1761955200000, 10.0], [1769904000000, 11.0], [1780272000000, 12.0], [1793512800000, 12.0]]
     with st.db:
         st.db.execute(
             "INSERT INTO pc_card (printing_id, game, url, title, query, match_note, grades, series, pop, fetched, status) "
@@ -149,7 +149,7 @@ def test_thin_sales_take_pricechartings_year_as_the_call(tmp_path):
     add(st, 0, 100, 30)
     add(st, 1, 100, 20)
     st.db.executescript(PC_SCHEMA)
-    weeks = [[1740812400000, 10.0], [1760000000000, 11.0], [1770000000000, 12.0], [1780000000000, 18.0]]
+    weeks = [[1761955200000, 10.0], [1769904000000, 11.0], [1780272000000, 12.0], [1793512800000, 18.0]]
     with st.db:
         st.db.execute(
             "INSERT INTO pc_card (printing_id, game, url, title, query, match_note, grades, series, pop, fetched, status) "

@@ -186,6 +186,7 @@ def _own_guides(idx, passcode: str) -> str:
 
 
 _HUNT = "And The Hunt Begins..."
+_PAL = ("#e05252", "#2f6ce0", "#b8862f", "#2fbf71", "#e6a23c", "#8a7ef0")
 
 _CLS_OF = {"BUY": "good", "CHECK": "avg", "WATCH": "avg", "PASS": "bad"}
 _WINDOW = {"1h": timedelta(hours=1), "24h": timedelta(hours=24)}
@@ -261,7 +262,7 @@ def _engine_line(st, now: datetime, base: str, token: str = "") -> str:
             sec = None
     cls = "ok" if sec is not None and sec < 1200 else ("slow" if sec is not None and sec < 86400 else "off")
     scan = ('<button class="hun-scan" id="hun-scan" type="button" data-back="' + e(base) + '" data-t="' + e(token) + '" '
-            'title="run a collector pass now"><img class="hun-wiz" src="/static/hunt.gif" alt="the hunt wizard, investigating" draggable="false">'
+            'title="run a collector pass now"><img class="hun-wiz" src="/static/hunt.gif?v=2" alt="the hunt wizard, investigating" draggable="false">'
             '<span>Run the hunt</span></button>')
     if row is None:
         l1, l2 = "FEED IDLE", "no pass on record yet; the loop posts new asks here as it finds them"
@@ -272,7 +273,7 @@ def _engine_line(st, now: datetime, base: str, token: str = "") -> str:
                   '<b id="hun-status1">{}</b><small id="hun-status2">{}</small></span></span>').format(cls, e(l1), e(l2))
 
 
-def _hun_head(base: str, v: str, t: str, counts: dict, stats: str = "", chips: str = "", x: str = "") -> str:
+def _hun_head(base: str, v: str, t: str, counts: dict, stats: str = "", chips: str = "", x: str = "", wiz: str = "") -> str:
     sig = (("all", "All", "hsn"), ("good", "Good", "hsg"), ("avg", "Average", "hsa"), ("bad", "Bad", "hsb"),
            ("none", "Unrated", "hsn"))
     xs = "&x=" + x if x in ("drop", "end") else ""
@@ -281,14 +282,14 @@ def _hun_head(base: str, v: str, t: str, counts: dict, stats: str = "", chips: s
     fresh = "".join('<a{} href="{}?v={}&t={}{}">{}</a>'.format(
         ' class="on"' if t == code else "", base, v, code, xs, lab) for code, lab in (
         ("1h", "Last hour"), ("24h", "Last 24 hours"), ("all", "Any time")))
-    head = ('<div class="hun-head"><div><p class="hun-kick">Freshest asks on the market, ranked by the read</p>'
+    head = ('<div class="hun-head">' + wiz + '<div><p class="hun-kick">Freshest asks on the market, ranked by the read</p>'
             '<h2 class="hun-h">New listings</h2></div><div class="hun-stats">' + cells + '</div></div>'
             '<div class="hun-tools"><span class="hun-fresh">' + fresh + "</span>" + chips + stats +
             '<a class="hun-all" href="/opportunities">All listings →</a></div>')
     return head
 
 
-def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, base: str = "/", token: str = "", pulse: str = "") -> str:
+def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, base: str = "/", token: str = "", pulse: str = "", wiz: str = "") -> str:
     """The newest things actually posted, wherever they were posted: one tile per fresh listing, laser-coded."""
     if "listing" not in _tables(st):
         return ""
@@ -467,8 +468,8 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
             (("on" if x == code else "") + (" zero" if not D[code] else "")).strip(), base, v, t, "&x=" + code, tip, lab, D[code]) for code, lab, tip in (
         ("drop", "Price drops", "asking less than before, last 24 hours"),
         ("end", "Ending soon", "auctions and offers that close within six hours"))) + "</span>"
-    head = _hun_head(base, v, t, counts, pulse, chips, x)
-    return ('<section class="hunzone"><span class="reg" aria-hidden="true"><i></i><i></i><i></i><i></i></span>' + head + grid +
+    head = _hun_head(base, v, t, counts, pulse, chips, x, wiz)
+    return ('<section class="hunzone home"><span class="reg" aria-hidden="true"><i></i><i></i><i></i><i></i></span>' + head + grid +
             '<p class="hun-note small">Signal is the read on the price: green under what to pay, amber worth a '
             'second look, red above it; unrated has no sales history yet. Most asks sit above what a card really '
             'sells for, so red is the common read and green is rare on purpose.</p></section>')
@@ -548,14 +549,14 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", a
               qs: dict | None = None, token: str = "") -> str:
     """The hunt: the title, the search, and the newest postings. Every decision view lives on its own page."""
     M = Money(st, home, cur, now)
-    letters = "".join(f'<span style="--i:{i}">{c if c != " " else "&nbsp;"}</span>' for i, c in enumerate(_HUNT))
-    out = [f'<section class="hero hunt"><h1 class="huntitle" aria-label="{e(_HUNT)}">{letters}</h1>'
-            '<p class="huntag">Choose Wisely with CardMan</p>'
-            + _search_box(big=True, game=game) + "</section>"]
     base = "/pkm/" if game == "pkm" else "/"
     scan, live = _engine_line(st, now, base, token)
-    out.append('<section class="wizstrip" aria-label="the hunt">' + scan + live + "</section>")
-    feed = _just_posted(st, now, game, M, qs or {}, base, token, _pulse(st, now, game, M))
+    letters = "".join(f'<span style="--i:{i};--c:{_PAL[i % 6]}" data-c="{c if c != " " else "&nbsp;"}">{c if c != " " else "&nbsp;"}</span>' for i, c in enumerate(_HUNT))
+    wiz = '<section class="wizstrip" aria-label="the hunt">' + scan + live + '</section>'
+    out = [f'<section class="hero hunt"><h1 class="huntitle" aria-label="{e(_HUNT)}">{letters}</h1>'
+            '<p class="huntag">Collect Wisely</p>'
+            '<div class="huntline">' + _search_box(big=True, game=game) + '</div></section>']
+    feed = _just_posted(st, now, game, M, qs or {}, base, token, _pulse(st, now, game, M), wiz)
     out.append(feed)
     wash = ('<style>main.page{max-width:min(95vw,1500px)}'
             'body{background:var(--bg)}'
@@ -789,7 +790,7 @@ def _version_picker(passcode, all_v, chosen, seen, listed) -> str:
 
 
 def _trend_box(st, printing_id: str | None, cur: str, now: datetime, M) -> str:
-    """One year of PriceCharting weekly sold prices for this version, drawn large: the call, the shape, the
+    """One year of PriceCharting monthly sold prices for this version, drawn large: the call, the shape, the
     year's low and high, and what the call means for the next buy."""
     if not printing_id:
         return ""
@@ -822,7 +823,7 @@ def _trend_box(st, printing_id: str | None, cur: str, now: datetime, M) -> str:
     pct_txt = ("flat" if abs(pc_chg) < 1 else f"{pc_chg:+.0f}%") if pc_chg is not None else "—"
     call = {"rising": "A copy near typical is the buy; sellers won't take much less.",
             "falling": "Wait, or bid well under typical; the floor keeps moving.",
-            "steady": "Pay near typical; no rush to close."}.get(lab, "Too few weekly points to call a direction.")
+            "steady": "Pay near typical; no rush to close."}.get(lab, "Too few monthly points to call a direction.")
     lo, hi = min(v for _t, v in pts), max(v for _t, v in pts)
     w, h, pad = 360, 84, 4
     span = hi - lo or 1.0
@@ -831,7 +832,7 @@ def _trend_box(st, printing_id: str | None, cur: str, now: datetime, M) -> str:
     line = " ".join(f"{x:.1f},{y:.1f}" for x, y in xy)
     area = f"{xy[0][0]:.1f},{h - pad:.1f} " + line + f" {xy[-1][0]:.1f},{h - pad:.1f}"
     end = xy[-1]
-    tip = (f"PriceCharting {gs[0]}, weekly sold prices, {len(pts)} points over 12 months: "
+    tip = (f"PriceCharting {gs[0]}, monthly sold prices, {len(pts)} points over 12 months: "
            f"low {M(lo)}, high {M(hi)}, now {M(pts[-1][1])}")
     spark = (f'<svg class="tbx-line" viewBox="0 0 {w} {h}" preserveAspectRatio="none" role="img" '
              f'aria-label="{e(word)} {e(pct_txt)} over 12 months" data-tip="{e(tip)}">'
@@ -850,7 +851,7 @@ def _trend_box(st, printing_id: str | None, cur: str, now: datetime, M) -> str:
             f'<div><dt>Now</dt><dd>{M(pts[-1][1])}</dd></div>'
             f'<div><dt>12-mo low</dt><dd>{M(lo)}</dd></div>'
             f'<div><dt>12-mo high</dt><dd>{M(hi)}</dd></div>'
-            f'<div><dt>Weekly points</dt><dd>{len(pts)}</dd></div></dl>'
+            f'<div><dt>Monthly points</dt><dd>{len(pts)}</dd></div></dl>'
             f'<p class="tbx-call">{call}</p></section>')
 
 
@@ -1328,8 +1329,8 @@ form.search button{border:1.5px solid color-mix(in srgb,var(--fg2) 38%,transpare
 padding:8px 20px;background:var(--fg);color:var(--surface);font-weight:800;letter-spacing:.14em;text-transform:uppercase;font-size:12px;
 transition:background .15s}
 form.search button:hover{background:color-mix(in srgb,var(--fg) 86%,var(--accent))}form.search button:active{background:var(--fg)}
-form.search.big{max-width:620px;margin:0 auto}
-form.search.big input{font-size:17px;padding:15px 26px}form.search.big button{font-size:13px;padding:0 30px}
+form.search.big{max-width:720px;margin:0 auto}
+form.search.big input{font-size:20px;padding:20px 30px}form.search.big button{font-size:16px;padding:0 38px}
 .skbd{position:absolute;right:calc(9.2em + 26px);top:50%;transform:translateY(-50%);font:600 11px/1 ui-monospace,Menlo,monospace;
 color:var(--muted);border:1px solid var(--axis);border-bottom-width:2.5px;border-radius:5px 7px 6px 8px;padding:3px 6px;background:var(--bg);pointer-events:none}
 .sugg{position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:20;background:var(--surface);
@@ -1428,7 +1429,7 @@ border-radius:999px;padding:4px 16px;box-shadow:var(--shadow);font-variant-numer
 .shelf-h h2{font-size:19px;margin:0}.shelf-h a{font-size:13px}
 .tiles-l{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(250px,100%),1fr));gap:12px}
 @media(max-width:800px){.shell{grid-template-columns:minmax(0,1fr)!important}header{flex-wrap:wrap}header .hsearch{order:9;flex-basis:100%;max-width:none}
-header .store{display:none}form.search.big input{font-size:16px;padding:12px 16px}form.search.big button{padding:0 16px}}
+header .store{display:none}form.search.big input{font-size:16px;padding:12px 16px}form.search.big button{padding:0 16px}.huntline{display:flex;flex-direction:column}.huntline .hun-wiz{width:76px;height:104px}}
 .tile-l{display:flex;gap:12px;padding:12px;background:var(--surface);border:1px solid var(--line);border-radius:12px;color:var(--fg);
 text-decoration:none;transition:box-shadow .15s,transform .15s}.tile-l:hover{box-shadow:var(--shadow-hi);transform:translateY(-2px);border-color:var(--axis)}
 .tile-l .card{width:64px;height:93px;flex:none}.tl-body{display:flex;flex-direction:column;gap:3px;min-width:0}
@@ -1553,15 +1554,22 @@ filter:drop-shadow(0 7px 16px rgba(0,0,0,.28));transition:transform .18s var(--e
 .hun-status b{font-size:11px;letter-spacing:.14em;color:var(--fg);text-transform:uppercase;font-weight:750}
 .hun-status small::before{content:"\00b7";margin-right:9px;color:var(--muted)}
 .hun-status small{font-size:12px;color:var(--muted);font-weight:400;letter-spacing:0;text-transform:none}
-.wizstrip{display:flex;align-items:center;justify-content:space-between;gap:26px;flex-wrap:wrap;margin:10px 0 20px;
-padding:14px 22px;background:var(--surface);border:1.5px solid var(--fg2);border-radius:16px;box-shadow:3px 3px 0 rgba(0,0,0,.15)}
-.hun-live{display:inline-flex;align-items:center;gap:9px;font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums;
-border:1px solid var(--axis);border-radius:999px;padding:8px 15px;background:var(--surface)}
+.wizstrip{display:flex;flex-direction:column;align-items:center;gap:8px;flex:none;margin:0;min-width:150px}
+.hun-head .wizstrip{align-self:flex-start;margin-right:4px}
+.wizstrip .hun-wiz{width:88px;height:120px}
+.wizstrip .hun-scan span{display:block;font-size:15px;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:var(--fg)}
+.hun-live{display:inline-flex;align-items:center;gap:9px;font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums;padding:4px 0}
 .hun-live i{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
 .hun-live.ok i{background:#2fbf71;animation:hunpulse 2.6s ease-in-out infinite}
 .hun-live.slow i{background:#e6a23c}
 @keyframes hunpulse{0%,100%{box-shadow:0 0 0 0 rgba(47,191,113,.35)}50%{box-shadow:0 0 0 6px rgba(47,191,113,0)}}
 .hunzone{transition:opacity .25s}
+.hunzone.home{margin-top:14px}
+.hunzone.home::before{content:"";position:absolute;top:0;left:0;right:0;height:4px;border-radius:26px 26px 0 0;
+background:linear-gradient(90deg,#e05252 0 16.66%,#2f6ce0 16.66% 33.33%,#d4af6a 33.33% 50%,#2fbf71 50% 66.66%,#e6a23c 66.66% 83.33%,var(--fg) 83.33%)}
+.hunzone.home .hun-h{position:relative;padding-bottom:9px}
+.hunzone.home .hun-h::after{content:"";position:absolute;left:0;bottom:0;width:100%;height:3.5px;border-radius:2px;
+background:linear-gradient(90deg,#e05252 0 16.66%,#2f6ce0 16.66% 33.33%,#d4af6a 33.33% 50%,#2fbf71 50% 66.66%,#e6a23c 66.66% 83.33%,var(--fg) 83.33%)}
 .hun.landed{animation:hunland .9s cubic-bezier(.22,.9,.3,1.08) both;z-index:2}
 .hun.landed::after{content:"";position:absolute;inset:0;border-radius:16px;pointer-events:none;
 box-shadow:0 0 0 2px rgba(47,191,113,.6),0 10px 34px rgba(47,191,113,.3);animation:hunfade 1.7s ease both}
@@ -1586,24 +1594,32 @@ box-shadow:0 0 0 2px rgba(47,191,113,.6),0 10px 34px rgba(47,191,113,.3);animati
 @media(prefers-reduced-motion:reduce){.hungrid>.hun,.hun-live.ok i{animation:none}.hunzone{transition:none}.hun.landed{animation:none}.hun.landed::after,.hun.landed .laser{animation:none}}
 .hun-all{margin-left:auto;font-size:14px;font-weight:600}
 .hun-note{color:var(--muted);margin:24px 2px 0;line-height:1.5;max-width:88ch}
-section.hero.hunt{padding:26px 12px 10px}
+section.hero.hunt{padding:34px 4px 14px;max-width:none}
 .huntitle{font-family:"Avenir Next Condensed","Avenir Next","Avenir","Helvetica Neue",system-ui,-apple-system,"Segoe UI",sans-serif;
-font-style:normal;font-weight:800;font-size:clamp(36px,7.5vw,70px);letter-spacing:-.015em;text-transform:uppercase;margin:0 0 26px;cursor:default}
-.huntitle span{display:inline-block;white-space:pre;transition:transform .35s cubic-bezier(.2,1.8,.4,1),color .35s;transition-delay:calc(var(--i)*30ms)}
-.huntitle:hover span{transform:translateY(-8px) rotate(-5deg);color:var(--accent)}
+font-style:normal;font-weight:800;font-size:clamp(42px,8vw,80px);letter-spacing:-.02em;text-transform:uppercase;margin:0 0 18px;cursor:default;
+--grunge:url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='140'%20height='140'%3E%3Cfilter%20id='w'%3E%3CfeTurbulence%20type='fractalNoise'%20baseFrequency='0.3'%20numOctaves='3'%20seed='7'/%3E%3CfeColorMatrix%20type='matrix'%20values='0%200%200%200%200%200%200%200%200%200%200%200%200%200%200%200%200%200%201.2%200.4'/%3E%3C/filter%3E%3Crect%20width='140'%20height='140'%20fill='white'%20filter='url(%23w)'/%3E%3C/svg%3E")}
+.huntitle span{position:relative;display:inline-block;white-space:pre;color:var(--c,var(--fg));-webkit-text-stroke:2px #000;paint-order:stroke fill;
+transition:transform .35s cubic-bezier(.2,1.8,.4,1);transition-delay:calc(var(--i)*30ms)}
+.huntitle span::after{content:attr(data-c);position:absolute;inset:0;color:#fff;-webkit-text-stroke:2px #000;paint-order:stroke fill;
+transform:translate(1px,1px);pointer-events:none;
+-webkit-mask-image:var(--grunge);mask-image:var(--grunge);
+-webkit-mask-size:160px 160px;mask-size:160px 160px;
+-webkit-mask-position:calc(var(--i)*-9px) calc(var(--i)*3px);mask-position:calc(var(--i)*-9px) calc(var(--i)*3px)}
+.huntitle:hover span{transform:translateY(-8px) rotate(-5deg)}
 .hungrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:22px}
-a.hun{position:relative;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);border-radius:16px;
-overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06);text-decoration:none;color:inherit;transition:transform .15s,box-shadow .15s}
-a.hun:hover{transform:translateY(-4px);box-shadow:0 12px 28px rgba(0,0,0,.18)}
-.laser{height:3px;width:100%;flex:none}
+a.hun{position:relative;display:flex;flex-direction:column;background:none;border:0;border-radius:0;
+text-decoration:none;color:inherit;transition:transform .15s}
+a.hun:hover{transform:translateY(-3px)}
+a.hun:hover img.hun-img,a.hun:hover span.hun-img{box-shadow:0 12px 28px rgba(0,0,0,.22)}
+.laser{position:absolute;top:0;left:0;right:0;height:3px;z-index:2;border-radius:13px 13px 0 0}
 .l-good{background:linear-gradient(90deg,#2fbf71,#5ad79a);box-shadow:0 0 10px #2fbf7180}
 .l-avg{background:linear-gradient(90deg,#e6a23c,#f0c078)}
 .l-bad{background:linear-gradient(90deg,#e05252,#f08080)}
 .l-none{background:var(--line)}
-a.hun img.hun-img,a.hun span.hun-img{width:100%;height:230px;object-fit:cover;border-radius:0;background:var(--bg)}
+a.hun img.hun-img,a.hun span.hun-img{width:100%;height:230px;object-fit:cover;border-radius:14px;border:1px solid var(--line);background:var(--bg)}
 a.hun span.card.hun-img,a.hun img.card.hun-img{object-fit:contain;padding:10px;box-sizing:border-box}
-.hun-b{display:flex;flex-direction:column;gap:5px;padding:12px 14px 14px}
-.hun-name{font-size:14px;font-weight:600;color:var(--fg);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:2.7em}
+.hun-b{display:flex;flex-direction:column;gap:5px;padding:11px 4px 0}
+.hun-name{font-size:14.5px;font-weight:650;color:var(--fg);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:2.7em}
 .hun-price{font-size:19px;font-weight:700;color:var(--accent)}
 .hun-sub{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hun-deal{display:inline-block;margin-left:8px;padding:1px 8px;border-radius:999px;font-size:11.5px;font-weight:750;vertical-align:2px}
@@ -1613,12 +1629,16 @@ a.hun span.card.hun-img,a.hun img.card.hun-img{object-fit:contain;padding:10px;b
 .hun-meta{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);white-space:nowrap}
 .mkt{display:inline-flex;align-items:center;justify-content:center;width:19px;height:19px;border-radius:50%;flex:none;
 font:700 11px/1 "Helvetica Neue",Arial,sans-serif;color:#fff}
-.huntag{margin:0 auto 22px;display:flex;align-items:center;justify-content:center;gap:16px;
-font-family:"Avenir Next","Avenir",system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14px;font-weight:750;
-letter-spacing:.22em;color:var(--fg2);text-transform:uppercase}
+.huntag{margin:0 auto 20px;display:flex;align-items:center;justify-content:center;gap:16px;
+font-family:"Avenir Next","Avenir",system-ui,-apple-system,"Segoe UI",sans-serif;font-size:clamp(14px,1.8vw,18px);font-weight:800;
+letter-spacing:.24em;text-transform:uppercase;color:transparent;
+background:linear-gradient(90deg,#e05252,#2f6ce0,#b8862f,#2fbf71,#e6a23c,#8a7ef0);
+-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
 .huntag::before,.huntag::after{content:"";height:2px;width:clamp(30px,7vw,70px);border-radius:2px;flex:none}
-.huntag::before{background:linear-gradient(90deg,transparent,rgba(224,82,82,.7))}
-.huntag::after{background:linear-gradient(90deg,rgba(47,108,224,.7),transparent)}
+.huntag::before{background:linear-gradient(90deg,transparent,#e05252,#2f6ce0,#b8862f)}
+.huntag::after{background:linear-gradient(90deg,#2fbf71,#e6a23c,#8a7ef0,transparent)}
+.huntline{display:flex;justify-content:center;gap:20px}
+.huntline form.search.big{width:100%;max-width:720px;margin:0 auto}
 .reg{position:absolute;inset:0;pointer-events:none}
 .reg i{position:absolute;width:16px;height:16px;opacity:.5}
 .reg i::before,.reg i::after{content:"";position:absolute;background:var(--fg2)}
@@ -1631,12 +1651,9 @@ border-radius:9px 6px 10px 7px;overflow:hidden;box-shadow:2px 3px 0 rgba(0,0,0,.
 .cbar i{width:13px;align-self:stretch}
 .cbar i:nth-child(1){background:#e05252}.cbar i:nth-child(2){background:#2f6ce0}.cbar i:nth-child(3){background:#d4af6a}
 .cbar i:nth-child(4){background:#2fbf71}.cbar i:nth-child(5){background:#e6a23c}.cbar i:nth-child(6){background:var(--fg)}
-.huntitle{animation:regdrift 11s ease-in-out infinite alternate}
-@keyframes regdrift{0%{text-shadow:2px 0 rgba(224,82,82,.18),-2px 0 rgba(47,108,224,.14)}
-50%{text-shadow:3px 1px rgba(224,82,82,.20),-2.5px -1px rgba(47,108,224,.16)}
-100%{text-shadow:1.5px -1px rgba(224,82,82,.16),-3px 0 rgba(47,108,224,.18)}}
+
 .hun-stats a{background-image:radial-gradient(color-mix(in srgb,var(--fg2) 22%,transparent) .5px,transparent .6px);background-size:5px 5px}
-@media(prefers-reduced-motion:reduce){.huntitle{animation:none}}
+
 .pulserow{display:inline-flex;align-items:stretch;border:1px solid var(--axis);border-radius:999px;overflow:hidden;background:var(--surface)}
 .pulse-i{display:inline-flex;align-items:center;gap:7px;padding:7px 14px;border-left:1px solid color-mix(in srgb,var(--axis) 55%,transparent);white-space:nowrap}
 .pulse-i:first-child{border-left:0}
@@ -1688,7 +1705,7 @@ if(btn){btn.classList.toggle('busy',running);var s=btn.querySelector('span');if(
 function swap(){var had={};document.querySelectorAll('.hun[data-key]').forEach(function(n){had[n.getAttribute('data-key')]=1});
 return fetch(location.pathname+location.search).then(function(r){return r.text()}).then(function(html){
 var d=new DOMParser().parseFromString(html,'text/html');
-['.wizstrip','.hunzone'].forEach(function(sl){var n=d.querySelector(sl),o=document.querySelector(sl);if(n&&o)o.replaceWith(n)});
+['.hunzone'].forEach(function(sl){var n=d.querySelector(sl),o=document.querySelector(sl);if(n&&o)o.replaceWith(n)});
 var land=0;document.querySelectorAll('.hun[data-key]').forEach(function(t){if(!had[t.getAttribute('data-key')]){land++;t.classList.add('landed');
 setTimeout(function(){t.classList.remove('landed')},1700)}});
 if(land)landed+=land;sync()})}

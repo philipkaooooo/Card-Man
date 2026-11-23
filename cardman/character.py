@@ -97,11 +97,22 @@ def cards_of(cat, species: str) -> list[str]:
     return []
 
 
+def _norm(text: str) -> str:
+    t = (text or "").lower().replace("♀", " f").replace("♂", " m").replace("é", "e").replace("è", "e")
+    t = t.replace("'", "").replace("’", "").replace(".", "")
+    return re.sub(r"[^a-z0-9]+", " ", t).strip()
+
+
 def find_species(cat, slug_text: str) -> str | None:
-    """The character name whose slug is this, if any card uses it."""
-    want = slug_text.strip().lower()
-    for s in species_index(cat):
-        if slug(s) == want:
+    """The character name this slug names, if any card uses it. Sex glyphs survive as -f/-m so the two
+    Nidoran lines keep their own pages; apostrophes, dots and accents are ignored."""
+    want = _norm(slug_text)
+    names = species_index(cat)
+    for s in names:
+        if _norm(s) == want:
+            return s
+    for s in names:
+        if slug(s) == slug_text.strip().lower():
             return s
     return None
 
