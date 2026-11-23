@@ -7,10 +7,12 @@ series, never mixed in. A printing with no real sales does not appear.
 from __future__ import annotations
 
 import json
+import re
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 from urllib.parse import urlencode
 
-from . import trends
+from . import pc, trends
 from .games import card_href
 from .ui_home import Money, e, img, passcode_of, _tables
 
@@ -21,7 +23,7 @@ MARKET_CSS = """
 .mk-games a{padding:7px 16px;border-radius:999px;text-decoration:none;font-weight:700;font-size:14px;color:var(--fg2)}
 .mk-games a:hover{color:var(--fg)}
 .mk-games a.on{background:var(--surface);color:var(--fg);box-shadow:var(--shadow)}
-.mhead{display:grid;grid-template-columns:minmax(0,1.7fr) 128px 128px 172px 100px;gap:14px;padding:0 16px 6px;
+.mhead{display:grid;grid-template-columns:minmax(0,1.55fr) 118px 118px 160px 124px 100px;gap:12px;padding:0 16px 6px;
 font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
 .mhead span{cursor:help;border-bottom:1px dotted color-mix(in srgb,var(--muted) 45%,transparent);justify-self:start}
 @media(max-width:900px){.mhead{display:none}}
@@ -48,7 +50,7 @@ text-overflow:ellipsis;max-width:min(340px,100%)}
 .mk-best .bb i{font-style:normal;color:var(--teal-deep);font-weight:700}
 .mk-best .bb:hover{color:var(--teal-deep)}
 .mlist{list-style:none;margin:0 0 10px;padding:0;display:grid;gap:10px}
-.mrow{display:grid;grid-template-columns:minmax(0,1.7fr) 128px 128px 172px 100px;gap:14px;align-items:center;
+.mrow{display:grid;grid-template-columns:minmax(0,1.55fr) 118px 118px 160px 124px 100px;gap:12px;align-items:center;
 background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--line);border-radius:14px;padding:10px 16px 10px 13px;
 transition:box-shadow .2s,border-color .2s}
 .mrow:hover{box-shadow:var(--shadow)}
@@ -67,7 +69,7 @@ a.mname:hover{color:var(--teal-deep)}
 .mgrade{flex:none;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:.03em;
 background:color-mix(in srgb,var(--teal) 13%,transparent);color:var(--teal-deep)}
 .mgrade.raw{background:var(--soft);color:var(--fg2);font-weight:600}
-.mfair,.mturn,.mask,.mtick{min-width:0}
+.mfair,.mturn,.mask,.mtick,.mpcell{min-width:0}
 .mfair b,.mturn b,.mask b{font-size:17px;font-weight:800;font-variant-numeric:tabular-nums;display:block;color:var(--fg)}
 .mturn b span{font-size:11px;font-weight:600;color:var(--muted)}
 .mfair small,.mturn small,.mask small{display:block;font-size:11.5px;color:var(--muted);margin-top:3px;
@@ -82,6 +84,18 @@ font-variant-numeric:tabular-nums;white-space:nowrap}
 .mchip.up{background:color-mix(in srgb,var(--teal) 14%,transparent);color:var(--teal-deep)}
 .mchip.down{background:color-mix(in srgb,#c4553b 14%,transparent);color:#a2452f}
 .mchip.hold,.mchip.none{background:var(--soft);color:var(--fg2)}
+.mpc{min-width:0;display:block}.mpc svg{display:block;width:116px;height:34px;overflow:visible}
+a.mpcl{text-decoration:none;color:inherit;border-radius:6px}
+a.mpcl:hover small,a.mpcl:focus-visible small{color:var(--teal-deep)}
+.mpc .pline{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.mpc.up .pline{stroke:var(--teal)}.mpc.down .pline{stroke:#c4553b}
+.mpc .pdot{stroke:none}.mpc.up .pdot{fill:var(--teal)}.mpc.down .pdot{fill:#c4553b}
+.mpc small{display:block;font-size:11.5px;color:var(--muted);margin-top:2px;font-variant-numeric:tabular-nums;
+overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mpc .pcnone{font-size:13px;color:var(--muted)}
+.flip{background:color-mix(in srgb,#b98a1e 7%,var(--surface));border-color:color-mix(in srgb,#b98a1e 28%,var(--line))}
+.flip .bb-h{color:#8a6614}
+.flip .bb i{color:#8a6614;font-style:normal;font-weight:700}
 small.cl{display:none}
 @media(max-width:900px){.mrow{grid-template-columns:1fr 1fr;gap:10px 16px}
 .mmain{grid-column:1/-1}
@@ -93,6 +107,28 @@ font-weight:600}}
 def _grade(gkey: str) -> str:
     gc, _, gr = (gkey or "|").partition("|")
     return f"{gc} {gr}".strip() if gc else ""
+
+
+def _spark(points: list, label: str, tip: str, href: str | None = None) -> str:
+    """One year of PriceCharting weekly points, drawn small. Colour is the direction of the year, the dot is today."""
+    vs = [v for _t, v in points]
+    if len(vs) < 2:
+        return ""
+    lo, hi = min(vs), max(vs)
+    span = hi - lo or 1.0
+    w, h, pad = 116, 34, 3
+    step = (w - 2 * pad) / (len(vs) - 1)
+    xy = " ".join(f"{pad + i * step:.1f},{h - pad - (h - 2 * pad) * ((v - lo) / span):.1f}" for i, v in enumerate(vs))
+    y = h - pad - (h - 2 * pad) * ((vs[-1] - lo) / span)
+    cls = "up" if vs[-1] >= vs[0] else "down"
+    tag = (f'<a class="mpc mpcl {cls}" href="{e(href)}" target="_blank" rel="noreferrer noopener" '
+           f'data-tip="{e(tip)}" title="Open this card on PriceCharting">' if href else
+           f'<span class="mpc {cls}" data-tip="{e(tip)}">')
+    close = "</a>" if href else "</span>"
+    return (tag + f'<svg viewBox="0 0 {w} {h}" role="img" aria-label="{e(label)}">'
+            f'<polyline class="pline" points="{xy}"/>'
+            f'<circle class="pdot" cx="{w - pad:.1f}" cy="{y:.1f}" r="2.6"/></svg>'
+            f'<small>{e(label)}</small>' + close)
 
 
 def _chips(qs: dict, values: dict) -> str:
@@ -251,6 +287,9 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
             '<span title="Cheapest live listing in the newest snapshot (up to 3 days old), the listing itself one click '
             'away, and its gap to the typical price. Supply: listed count divided by the monthly sales pace.">'
             'Cheapest ask</span>'
+            '<span title="PriceCharting\'s own weekly sold prices for this grade (Ungraded for raw rows), last 12 '
+            'months. The line under it is the year change. A verdict from a second market, not a copy of ours.">'
+            '1 yr · PC</span>'
             '<span title="90-day change when 3+ sales sit at each end of the window; otherwise the last week; otherwise '
             'newest three sales against earliest three; otherwise steady or too new.">Trend</span>'
             '</div>')
@@ -267,6 +306,80 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
             if len(deals) >= 3:
                 break
     links = _ask_links(st, now, home, sorted({r["printing_id"] for r in rows} | {d["printing_id"] for d in deals}))
+    pcrows = pc.rows_for(st, [r["printing_id"] for r in rows])
+
+    def usd_home(usd: float | None):
+        if usd is None:
+            return None
+        try:
+            if M.fx is not None:
+                return float(M.fx.convert(Decimal(str(usd)), "USD", M.home, now))
+        except Exception:
+            return None
+        return None
+
+    def pc_money(usd: float) -> str:
+        v = usd_home(usd)
+        return M(v) if v is not None else f"${usd:,.2f}"
+
+    def raw_usd(home_v: float):
+        try:
+            if M.fx is not None:
+                return float(M.fx.convert(Decimal(str(home_v)), M.home, "USD", now))
+        except Exception:
+            return None
+
+    def vol_per_month(vol):
+        m = re.match(r"^(\d+)\s+sales?\s+per\s+(day|week|month|year)$", (vol or "").strip())
+        if not m:
+            return None
+        per = {"day": 30.0, "week": 4.35, "month": 1.0, "year": 1 / 12}[m.group(2)]
+        return int(m.group(1)) * per
+        return None
+
+    plays = []
+    for r in rows:
+        if (r["gkey"] or "|") != "|":
+            continue
+        pcr = pcrows.get(r["printing_id"])
+        psa = pc.current(pcr, "PSA 10")
+        used = pc.current(pcr, "Ungraded")
+        f = fair_of(r)
+        if not psa or not psa.get("p") or not used or not used.get("p") or not f:
+            continue
+        pu = usd_home(used["p"])
+        if not pu or not (f / 3 <= pu <= f * 3):
+            continue                       # PC's own ungraded price is far from ours: not the same printing
+        vol = (psa.get("vol") or "")
+        rate = vol_per_month(vol)
+        if rate is None or rate < 1:
+            continue                       # PSA 10 sells less than once a month: a shelf, not a market
+        ru = raw_usd(f)
+        if not ru:
+            continue
+        net = psa["p"] - 25.0 - ru
+        mult = net / ru
+        if 0.5 <= mult <= 100:
+            plays.append((mult, r, psa, f))
+    plays.sort(key=lambda x: -x[0])
+    plays = plays[:3]
+    flip = ""
+    if plays:
+        items = []
+        for mult, r, psa, f in plays:
+            pid = r["printing_id"]
+            k = _card_key(pid)
+            nm = name_of(pid) or r["label"].split(" · ")[0]
+            url = pcrows[pid].get("url")
+            vol = (psa.get("vol") or "").replace(" per ", "/")
+            ext = ' target="_blank" rel="noreferrer noopener"' if url else ""
+            href = url or (card_href(k) if k else "/market")
+            items.append(f'<a class="bb" href="{e(href)}"{ext} title="PSA 10 sells {e(pc_money(psa["p"]))} '
+                         f'({e(vol) or "no recent sales"}) on PriceCharting; after a $25 grading fee that is '
+                         f'{mult:.1f}x this version\'s raw typical"><b>{mult:.1f}×</b> {e(nm)} '
+                         f'<i>{M(f)} → {pc_money(psa["p"])}</i></a>')
+        flip = ('<div class="mk-best flip"><span class="bb-h">Raw → PSA 10, after $25 grading</span>'
+                + "".join(items) + '</div>')
     best = ""
     if deals:
         items = []
@@ -350,6 +463,19 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
                         f'<small>{e(asub)}</small>')
         else:
             ask_html = '<span class="none">no live ask</span>'
+        pcr = pcrows.get(pid)
+        gs = pc.grade_series(pcr, gkey)
+        if gs:
+            gname, gpts = gs
+            gchg = (gpts[-1][1] / gpts[0][1] - 1) * 100 if gpts[0][1] else None
+            cur_pc = pc.current(pcr, gname) or {}
+            vol = (cur_pc.get("vol") or "").replace(" per ", "/")
+            tip = (f"PriceCharting {gname}: {pc_money(gpts[-1][1])} now"
+                   + (f", {gchg:+.0f}% over the year" if gchg is not None else "")
+                   + (f"; {vol} recently" if vol else "") + ". Weekly points, 12 months.")
+            pc_html = _spark(gpts, f"{gname} · {gchg:+.0f}%" if gchg is not None else gname, tip, pcr.get("url"))
+        else:
+            pc_html = '<span class="mpc"><span class="pcnone">—</span><small>not swept</small></span>'
         body.append(
             f'<li class="mrow {cls}"><div class="mmain">{thumb}'
             f'<span class="mid">{nm_html}<span class="mmeta"><span class="mcode">{e(r["label"])}</span>{pill}</span></span></div>'
@@ -361,13 +487,16 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
             f'<b title="Copies sold per month across {n} stored sales">{pace_txt}<span>/mo</span></b>'
             f'<small>last {last_txt} · n={n}</small></div>'
             f'<div class="mask"><small class="cl">Cheapest ask</small>{ask_html}</div>'
+            f'<div class="mpcell"><small class="cl">1 yr · PC</small>{pc_html}</div>'
             f'<div class="mtick"><small class="cl">Trend</small>'
             f'<span class="mchip {cls}" title="{why}">{chip}</span></div></li>')
     shown = (f'<p class="muted small">Showing {len(rows)} of {s["series"]:,} versions'
              + (", the top 200 for this sort" if len(rows) >= 200 else "") + '.</p>')
     note = ('<p class="muted small">Prices in your display currency, each sale converted at its own date. Typical sold is '
-            'sold evidence only; asks come from the newest nightly snapshot and never move it.</p>')
-    return head + chips + best + cols + f'<ul class="mlist">{"".join(body)}</ul>' + shown + note
+            'sold evidence only; asks come from the newest nightly snapshot and never move it. The 1 yr column is '
+            'PriceCharting\'s own weekly sold data, fetched by a pinned sweep of this machine '
+            '(<code>python -m cardman.pc sweep</code>) and shown in your currency at today\'s rate.</p>')
+    return head + chips + best + flip + cols + f'<ul class="mlist">{"".join(body)}</ul>' + shown + note
 
 
 def movement_strip(st, game: str, M: Money) -> str:

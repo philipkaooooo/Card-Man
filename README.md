@@ -35,6 +35,13 @@ Pricing rules: `docs/pricing-method.md` — a price comes from real sales of one
   flagged. Untested live (no keys, host blocked).
 - Manual import (`examples/manual_import_TEMPLATE.csv`) is the path for sold, accepted-offer (eBay Product
   Research) and Japanese marketplace records until an API path opens.
+- `pc.py`: the PriceCharting cross-market. `python -m cardman.pc sweep` launches a headed Chrome over the
+  DevTools pipe (the site's Cloudflare challenge passes in the real browser, not in a scripted client),
+  resolves each product through the site search once, and stores the six grade prices, the sales-volume note
+  and a year of weekly points in `pc_card` (~2 KB a card). Paced at about one card every few seconds, skips
+  rows younger than ten days; `--refetch` re-checks a set. The market board's `1 yr · PC` column and the
+  raw-to-PSA-10 strip read it against our sold medians; a card whose PriceCharting raw price sits more than
+  3x from ours is treated as a different printing and kept out of the grading strip.
 
 ### Evidence and decisions (`store.py`)
 - Observations are written once; rewriting one with different content is refused. Cancellations, refunds,
