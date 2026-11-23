@@ -384,7 +384,14 @@ body{display:flex;flex-direction:column;min-height:100vh}
 header.top{position:sticky;top:0;z-index:30;background:color-mix(in srgb,var(--surface) 86%,transparent);backdrop-filter:saturate(1.5) blur(12px);
 border-bottom:1px solid var(--line);box-shadow:0 1px 0 rgba(15,30,45,.03),0 10px 30px rgba(15,30,45,.05);
 padding:0 22px;display:flex;align-items:center;gap:20px;height:64px}
-header.top .logo{font-weight:800;font-size:18px;color:var(--fg);text-decoration:none;letter-spacing:-.01em}
+header.top .logo{display:inline-flex;align-items:center;gap:9px;font-weight:800;font-size:18px;color:var(--fg);text-decoration:none;letter-spacing:-.01em}
+.lmark{position:relative;display:inline-flex;width:26px;height:17px;flex:none;border:1.5px solid color-mix(in srgb,var(--fg2) 48%,transparent);border-radius:999px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.14)}
+.lmark>i{flex:1}
+.lmark>i:nth-child(1){background:#e05252}.lmark>i:nth-child(2){background:#2f6ce0}.lmark>i:nth-child(3){background:#d4af6a}
+.lword{position:relative;display:inline-block;padding-bottom:5px}
+.lunder{position:absolute;left:0;right:0;bottom:0;display:flex;height:3.5px;border-radius:2px;overflow:hidden}
+.lunder i{flex:1 1 0;min-width:0}
+.lunder i:nth-child(1){background:#e05252}.lunder i:nth-child(2){background:#2f6ce0}.lunder i:nth-child(3){background:#d4af6a}
 nav.main{display:flex;gap:5px;align-items:center}nav.main a{color:var(--fg2);text-decoration:none;padding:9px 15px;border-radius:11px;
 font-weight:650;font-size:15px;letter-spacing:-.01em;white-space:nowrap}nav.main a:hover{background:var(--surface);color:var(--fg);box-shadow:var(--shadow)}
 nav.main a.on{color:var(--fg);background:var(--surface);box-shadow:var(--shadow),inset 0 -2px 0 var(--accent)}
@@ -457,7 +464,7 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     return (f'<!doctype html><html lang="en" data-theme="{"vault" if theme == "vault" else "auto"}"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)} · CardMan</title>'
             f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{PC_CSS}{ICON_CSS}{EFFECTS_CSS}{PRINT_CSS}{SHELL_CSS}{DECIDE_CSS}{CHAR_CSS}{MARKET_CSS}{NOW_CSS}{ALERTS_CSS}</style></head><body>{SPRITE}'
-            + scope_links(f'<header class="top"><a class="logo" href="/">CardMan</a><nav class="main" aria-label="Main">{links}</nav>{BELL}{hsearch}'
+            + scope_links(f'<header class="top"><a class="logo" href="/"><span class="lmark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></span><span class="lword">CardMan<b class="lunder" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></b></span></a><nav class="main" aria-label="Main">{links}</nav>{BELL}{hsearch}'
                           f'{games}{curs}</header><main class="page">{crumb}{flash}{body}</main>', game) +
             f'<footer class="foot">Private to this Mac · times {e(tz)} · press <kbd>/</kbd> to search</footer>'
             f'<script src="/static/ui.js?v={_js_version()}"></script></body></html>').encode()
@@ -2176,7 +2183,7 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
             if parts == ["alerts.json"]:
                 from . import alerts as _alerts
                 try:
-                    items = _alerts.recent(st)
+                    items = _alerts.recent(st, cards=cards)
                 except Exception:
                     items = []
                 st.db.close()

@@ -22,7 +22,12 @@ color:#fff;font-size:10.5px;font-weight:800;line-height:17px;text-align:center;f
 background:var(--surface);border:1.5px solid var(--fg2);border-radius:12px 10px 13px 9px/10px 13px 9px 12px;
 box-shadow:6px 8px 0 rgba(0,0,0,.12);z-index:45;padding:6px}
 .apop .ahead{padding:7px 10px 6px;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
-.ait{display:flex;flex-direction:column;gap:1px;padding:8px 10px;border-radius:8px;text-decoration:none;color:var(--fg)}
+.ait{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border-radius:8px;text-decoration:none;color:var(--fg)}
+.abox{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1}
+.agame{width:36px;height:36px;flex:none;display:grid;place-items:center;border:1.5px solid var(--line);border-radius:9px;background:var(--surface)}
+.agame svg{width:25px;height:25px;display:block}
+.agame.pkm{border-color:color-mix(in srgb,#e05252 55%,var(--line))}
+.agame.ygo{border-color:color-mix(in srgb,#d4af6a 60%,var(--line))}
 .ait:hover{background:color-mix(in srgb,var(--soft) 60%,var(--surface))}
 .ait b{font-size:13px;line-height:1.25}
 .ait .av{font-size:12px;color:var(--teal-deep);font-variant-numeric:tabular-nums}
@@ -50,7 +55,8 @@ text-transform:uppercase;border:1px solid var(--line)}
 .atoasts{position:fixed;right:16px;bottom:16px;z-index:80;display:flex;flex-direction:column;gap:8px;max-width:min(340px,86vw)}
 .atoast{background:var(--surface);border:1.5px solid var(--fg2);border-left:5px solid #c4553b;
 border-radius:11px 9px 12px 8px/9px 12px 8px 11px;box-shadow:5px 7px 0 rgba(0,0,0,.13);padding:10px 12px;
-font-size:13px;color:var(--fg);text-decoration:none;display:block;animation:ain .22s ease-out}
+font-size:13px;color:var(--fg);text-decoration:none;display:flex;gap:9px;align-items:center;animation:ain .22s ease-out}
+.atoast .agame{width:32px;height:32px}.atoast .agame svg{width:22px;height:22px}
 .atoast b{display:block;font-size:13.5px;margin-bottom:2px}
 .atoast span{color:var(--teal-deep);font-variant-numeric:tabular-nums}
 @keyframes ain{from{transform:translateY(8px);opacity:0}to{transform:none;opacity:1}}
@@ -72,17 +78,25 @@ function ago(iso){var t=Date.parse(iso);if(isNaN(t))return '';var s=(Date.now()-
 function tail(){var c=document.getElementById('atoasts');if(!c){c=document.createElement('div');c.id='atoasts';c.className='atoasts';document.body.appendChild(c)}return c}
 var flash=null,base=document.title;
 function unread(items){var k=known();return items.filter(function(i){return k.indexOf(i.id)<0})}
+function glogo(g){var s=h('span','agame '+(g==='pkm'?'pkm':'ygo'));s.title=g==='pkm'?'Pok\u00e9mon':'Yu-Gi-Oh!';
+ var mk=g==='pkm'?'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 2a10 10 0 0 1 10 10H2A10 10 0 0 1 12 2Z" fill="#e05252"/><path d="M2 12h20a10 10 0 0 1-20 0Z" fill="#f4f1ea"/><rect x="2" y="10.7" width="20" height="2.6" fill="#1c1a17"/><circle cx="12" cy="12" r="3.3" fill="#1c1a17"/><circle cx="12" cy="12" r="1.7" fill="#f4f1ea"/></svg>'
+ :'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 22 3 5h18L12 22Z" fill="#d4af6a"/><path d="M12 6.4 6.4 17h11.2L12 6.4Z" fill="#8a6d2f" opacity=".5"/><circle cx="12" cy="13" r="2.5" fill="#1c1a17"/><circle cx="12" cy="13" r="1" fill="#e05252"/></svg>';
+ s.appendChild(new DOMParser().parseFromString(mk,'image/svg+xml').documentElement);
+ return s}
 function item(it){
  var a=h('a','ait');a.href=it.href||'/market#under';
- a.appendChild(h('b',null,it.label));
- a.appendChild(h('span','av',money(it.ask,it.cur)+' \u00b7 '+Math.round(it.pct||0)+'% under '+money(it.typical,it.cur)));
- a.appendChild(h('small',null,ago(it.at)));
- if(it.state==='SOLD')a.appendChild(h('small',null,'sold: the listing itself ended sold'));
- else if(it.state==='SOLD_NEAR')a.appendChild(h('small',null,'sold near the ask'+(it.days!=null?' after '+it.days+' d':'')+(it.sale!=null?' \u00b7 '+money(it.sale,it.cur):'')));
- else if(it.state==='GONE')a.appendChild(h('small',null,'gone, no matching sale'));
- else if(it.state==='OPEN')a.appendChild(h('small',null,'still live'));
- if(it.hit&&it.hit.n>=2)a.appendChild(h('small',null,'this print: '+it.hit.sold+' of '+it.hit.n+' past alerts sold'));
- if(it.hist_n>=2&&it.rate!=null){var m=h('span','arate'+(it.dead?' low':''));var bar=h('i');bar.style.width=Math.round((it.rate||0)*100)+'%';m.appendChild(bar);m.title='Past alerts on this print sold '+(it.hit?it.hit.sold+' of '+it.hit.n:Math.round(it.rate*100)+'%');a.appendChild(m)}
+ a.appendChild(glogo(it.game));
+ var box=h('div','abox');
+ box.appendChild(h('b',null,it.label));
+ box.appendChild(h('span','av',money(it.ask,it.cur)+' \u00b7 '+Math.round(it.pct||0)+'% under '+money(it.typical,it.cur)));
+ box.appendChild(h('small',null,ago(it.at)));
+ if(it.state==='SOLD')box.appendChild(h('small',null,'sold: the listing itself ended sold'));
+ else if(it.state==='SOLD_NEAR')box.appendChild(h('small',null,'sold near the ask'+(it.days!=null?' after '+it.days+' d':'')+(it.sale!=null?' \u00b7 '+money(it.sale,it.cur):'')));
+ else if(it.state==='GONE')box.appendChild(h('small',null,'gone, no matching sale'));
+ else if(it.state==='OPEN')box.appendChild(h('small',null,'still live'));
+ if(it.hit&&it.hit.n>=2)box.appendChild(h('small',null,'this print: '+it.hit.sold+' of '+it.hit.n+' past alerts sold'));
+ if(it.hist_n>=2&&it.rate!=null){var m=h('span','arate'+(it.dead?' low':''));var bar=h('i');bar.style.width=Math.round((it.rate||0)*100)+'%';m.appendChild(bar);m.title='Past alerts on this print sold '+(it.hit?it.hit.sold+' of '+it.hit.n:Math.round(it.rate*100)+'%');box.appendChild(m)}
+ a.appendChild(box);
  if(it.dead)a.className='ait dead';
  a.onclick=function(){see([it.id]);setTimeout(function(){paint(cur)},0)};
  return a}
@@ -91,7 +105,7 @@ function paint(items){
  if(!document.hidden){document.title=base;clearInterval(flash);flash=null}
  pop.textContent='';
  if(!items.length){pop.appendChild(h('p','aempty','Nothing under typical yet. It fills the moment an ask lands below the typical sale price.'));return}
- pop.appendChild(h('div','ahead','Under typical \u00b7 newest first'));
+ pop.appendChild(h('div','ahead','Under typical \u00b7 both games \u00b7 newest first'));
  items.slice(0,12).forEach(function(it){pop.appendChild(item(it))});
  var f=h('div','afoot');
  var m=h('a',null,'Market \u2192');m.href='/market#under';f.appendChild(m);
@@ -105,8 +119,11 @@ function paint(items){
  pop.appendChild(f)}
 function toast(it){
  var t=h('a','atoast');t.href=it.href||'/market#under';
- t.appendChild(h('b',null,it.label));
- t.appendChild(h('span',null,money(it.ask,it.cur)+' \u00b7 '+Math.round(it.pct||0)+'% under typical'));
+ t.appendChild(glogo(it.game));
+ var tb=h('div','abox');
+ tb.appendChild(h('b',null,it.label));
+ tb.appendChild(h('span',null,money(it.ask,it.cur)+' \u00b7 '+Math.round(it.pct||0)+'% under typical'));
+ t.appendChild(tb);
  t.onclick=function(){see([it.id])};
  tail().appendChild(t);setTimeout(function(){t.remove()},15000)}
 function alert_(it){

@@ -144,7 +144,37 @@ def scan(st, now: datetime, home: str, pids: list[str] | None = None) -> int:
     return added
 
 
-def recent(st, days: int = 7, limit: int = 30, now: datetime | None = None) -> list[dict]:
+_PKM = None
+
+
+def _pkm_cat():
+    global _PKM
+    if _PKM is None:
+        try:
+            from .pkm_catalog import DB, PkmCatalog
+            _PKM = PkmCatalog(DB) or False
+        except Exception:
+            _PKM = False
+    return _PKM or None
+
+
+def _real_name(pid: str, cards) -> str:
+    """The card's actual name: a printing id is for machines, the bell is for reading."""
+    try:
+        if pid.startswith("pk:"):
+            cat = _pkm_cat()
+            return (cat.card_name(pid.split(":")[2]) or "") if cat else ""
+        from .ui_home import passcode_of
+        pc = passcode_of(pid)
+        if pc and cards is not None:
+            c = cards.card(pc) or {}
+            return c.get("name_en") or c.get("name_ja") or ""
+    except Exception:
+        pass
+    return ""
+
+
+def recent(st, days: int = 7, limit: int = 30, now: datetime | None = None, cards=None) -> list[dict]:
     """The newest under-typical asks, for the bell. Each carries its card page so a click lands somewhere."""
     if "market_signal" not in _tables(st):
         return []
@@ -166,6 +196,11 @@ def recent(st, days: int = 7, limit: int = 30, now: datetime | None = None) -> l
                 "WHERE state<>'OPEN' GROUP BY printing_id"):
             if n:
                 hits[pid] = {"sold": int(sold or 0), "n": int(n)}
+    if cards is not None:
+        try:
+            cards.ensure()
+        except Exception:
+            pass
     out = []
     for sid, at, pid, dj in rows:
         try:
@@ -173,7 +208,11 @@ def recent(st, days: int = 7, limit: int = 30, now: datetime | None = None) -> l
         except Exception:
             d = {}
         key = _card_key(pid)
-        out.append({"id": sid, "at": at, "pid": pid, "label": d.get("label") or pid,
+        raw = d.get("label") or ""
+        real = _real_name(pid, cards)
+        tail = raw.split("\u00b7", 1)[1].strip() if "\u00b7" in raw else ""
+        label = (real + " \u00b7 " + tail) if real and tail else (real or raw or pid)
+        out.append({"id": sid, "at": at, "pid": pid, "label": label,
                     "ask": d.get("ask"), "typical": d.get("typical"), "pct": d.get("pct"),
                     "cur": d.get("cur") or "TWD", "game": d.get("game") or _game(pid),
                     "href": card_href(key) if key else None,
