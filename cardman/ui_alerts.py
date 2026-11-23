@@ -88,7 +88,8 @@ function paint(items){
  pop.appendChild(h('div','ahead','Under typical \u00b7 newest first'));
  items.slice(0,12).forEach(function(it){pop.appendChild(item(it))});
  var f=h('div','afoot');
- var m=h('a',null,'Was it real? \u2192');m.href='/alerts';f.appendChild(m);
+ var m=h('a',null,'Market \u2192');m.href='/market#under';f.appendChild(m);
+ var w=h('a',null,'Was it real? \u2192');w.href='/alerts';f.appendChild(w);
  if(window.Notification){
   if(Notification.permission==='default'){var q=h('button',null,'Desktop alerts');q.type='button';
    q.onclick=function(){Notification.requestPermission().then(function(){paint(cur)})};f.appendChild(q)}
