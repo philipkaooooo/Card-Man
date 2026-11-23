@@ -211,3 +211,23 @@ def test_unswept_rows_say_so_instead_of_guessing(tmp_path):
     trends.refresh(st, NOW, "TWD")
     h = view_market(st, NOW, "TWD", "TWD", {}, game="ygo")
     assert "not swept" in h and "No raw ask clears" in h and 'class="mkcard grade"' not in h
+
+
+def test_chart_carries_a_dot_per_point_and_a_range_switch(tmp_path):
+    """Every weekly point ships in the payload; the plot draws one dot per point and the 3/6/9/12 switch rescales."""
+    import re
+    from cardman.ui_pc import section, PC_JS, PC_CSS
+    st = Store(tmp_path / "e.sqlite")
+    st.add_fx(FxRate("USD", "TWD", D("32"), NOW - timedelta(hours=1), "test"), now=NOW)
+    store_row(st, P, pc.parse_product(payload()), game="ygo")
+    h = section(st, P, "TWD", NOW)
+    data = json.loads(re.search(r'<script type="application/json" class="pcjson">(.*?)</script>', h, re.S).group(1))
+    psa = [g for g in data["grades"] if g["g"] == "PSA 10"][0]
+    assert len(psa["pts"]) == 4 and psa["pts"][-1][1] == round(141.25 * 32, 2)
+    assert data["sym"] == "NT$" and data["cur"] == "TWD"
+    assert 'class="pcrng"' in h and 'class="pctabs"' in h
+    assert 'class="n py"' in h and "prh" in h
+    assert "RANGES=[3,6,9,12]" in PC_JS
+    assert "dots.push(" in PC_JS and "stop(best)" in PC_JS      # snap to nearest dot, not nearest x
+    assert "setChangeTable()" in PC_JS and "months+' mo'" in PC_JS
+    assert ".htip" in PC_CSS and "position:absolute" in PC_CSS
