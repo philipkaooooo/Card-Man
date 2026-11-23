@@ -159,12 +159,12 @@ class EbayBrowse:
         return self._token[0]
 
     def search(self, q: str, *, catalog: Catalog | None = None, category_ids: str | None = None, aspect_filter: str | None = None,
-               limit: int = 50, max_pages: int = 3, now: datetime | None = None,
+               limit: int = 100, max_pages: int = 2, now: datetime | None = None,
                synthetic: bool = False) -> SearchResult:
         """Paginated search. Raw pages are stored before parsing; an error raises, never returns []."""
         tok = self.token()
         now = now or datetime.now(timezone.utc)
-        params = {"q": q, "limit": str(limit), "offset": "0"}
+        params = {"q": q, "limit": str(limit), "offset": "0", "sort": "newlyListed"}   # the web UI's _sop=10: freshest asks first
         if category_ids:
             params["category_ids"] = category_ids
         if aspect_filter:
@@ -176,7 +176,8 @@ class EbayBrowse:
         photos: dict[str, list] = {}
         while url and pages < max_pages:
             req = urllib.request.Request(url, headers={"Authorization": f"Bearer {tok}",
-                                                       "X-EBAY-C-MARKETPLACE-ID": self.marketplace})
+                                                       "X-EBAY-C-MARKETPLACE-ID": self.marketplace,
+                                                       "Accept-Language": "en-US,en;q=0.9"})
             raw = self._request(req)
             page = json.loads(raw)
             # Keep the raw page as evidence, minus seller identity; mapping below reads the full page in memory.

@@ -365,7 +365,7 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
                     continue
             except (ValueError, TypeError):
                 pass
-        code, sub, chip = "none", "", ""
+        code, sub, chip, ai, mb = "none", "", "", None, None
         if M is not None and payload:
             try:
                 vv = verdict(d, status or "OPEN", M)
@@ -385,6 +385,7 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
         pid = d.get("printing_id") or ""
         spk = spark_map.get(pid) or spark_map.get(pid.split("@")[0]) or ""
         pcrow = ""
+        rate, vol = None, ""
         gkey = _pc_grade(d.get("grade"))
         pcvals = pcm.get(pid) or {}
         if gkey in pcvals and M is not None:
@@ -410,10 +411,25 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
         if v != "all" and code != v:
             continue
         own = len(json.loads(imgs or "[]")) if imgs else 0
-        art = lphoto(iid, 0, "m", title or "", cls="hun-img") if own else img(_listing_art(d), "large", title or "", cls="card hun-img")
+        oa = _listing_art(d)   # the official print leads the tile; the seller's photo is the fallback, not the face
+        art = (img(oa, "large", title or "", cls="card hun-img") if oa
+               else (lphoto(iid, 0, "m", title or "", cls="hun-img") if own else img(None, "large", title or "", cls="card hun-img")))
         rank = {"good": 0, "avg": 1, "bad": 2}.get(code, 3)
         if gkey in pcvals:      # a cross-market comp beats a bare internal read for board space
             rank = min(rank, 0.8) if code == "none" else rank - 0.4
+        if vol:
+            rank -= 0.2         # sold movement per week: the market watches this print, so the board should too
+        if v == "all":
+            # the home criterion: the ask lives in the market, not on the moon - beyond 3x the measured
+            # worth (PriceCharting comp when graded evidence exists, else the verdict's max buy) a listing
+            # is noise; it stays on All listings, off the board
+            try:
+                aif = float(d.get("all_in_home") or 0)
+            except (TypeError, ValueError):
+                aif = 0.0
+            ref = float(rate) if rate is not None else (float(mb) if mb else 0.0)
+            if aif and ref and aif > 3 * ref:
+                continue
         pilef = ""
         if token and key and url:
             piled = key in _piled

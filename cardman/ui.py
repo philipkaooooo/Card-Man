@@ -388,10 +388,12 @@ header.top .logo{display:inline-flex;align-items:center;gap:9px;font-weight:800;
 .lmark{position:relative;display:inline-flex;width:26px;height:17px;flex:none;border:1.5px solid color-mix(in srgb,var(--fg2) 48%,transparent);border-radius:999px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.14)}
 .lmark>i{flex:1}
 .lmark>i:nth-child(1){background:#e05252}.lmark>i:nth-child(2){background:#2f6ce0}.lmark>i:nth-child(3){background:#d4af6a}
+.lmark>i:nth-child(4){background:#2fbf71}.lmark>i:nth-child(5){background:#e6a23c}.lmark>i:nth-child(6){background:var(--fg)}
 .lword{position:relative;display:inline-block;padding-bottom:5px}
 .lunder{position:absolute;left:0;right:0;bottom:0;display:flex;height:3.5px;border-radius:2px;overflow:hidden}
 .lunder i{flex:1 1 0;min-width:0}
 .lunder i:nth-child(1){background:#e05252}.lunder i:nth-child(2){background:#2f6ce0}.lunder i:nth-child(3){background:#d4af6a}
+.lunder i:nth-child(4){background:#2fbf71}.lunder i:nth-child(5){background:#e6a23c}.lunder i:nth-child(6){background:var(--fg)}
 nav.main{display:flex;gap:5px;align-items:center}nav.main a{color:var(--fg2);text-decoration:none;padding:9px 15px;border-radius:11px;
 font-weight:650;font-size:15px;letter-spacing:-.01em;white-space:nowrap}nav.main a:hover{background:var(--surface);color:var(--fg);box-shadow:var(--shadow)}
 nav.main a.on{color:var(--fg);background:var(--surface);box-shadow:var(--shadow),inset 0 -2px 0 var(--accent)}
