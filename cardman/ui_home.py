@@ -74,7 +74,7 @@ def _search_box(q: str = "", big: bool = False, game: str = "ygo") -> str:
     return (f'<form class="search{" big" if big else ""}" action="/search" method="get" role="search">'
             f'<input name="q" value="{e(q)}" placeholder="{e(hint)}" '
             f'autocomplete="off" spellcheck="false" data-suggest aria-label="Search cards"{" autofocus" if big else ""}>'
-            f'<button aria-label="Search">Search</button><div class="sugg" role="listbox" hidden></div></form>')
+            f'<span class="skbd" aria-hidden="true">/</span><button aria-label="Search">Hunt</button><div class="sugg" role="listbox" hidden></div></form>')
 
 
 def _ago(iso: str | None, now: datetime) -> str:
@@ -252,12 +252,12 @@ def _engine_line(st, now: datetime, base: str, token: str = "") -> str:
             sec = None
     cls = "ok" if sec is not None and sec < 1200 else ("slow" if sec is not None and sec < 86400 else "off")
     scan = ('<button class="hun-scan" id="hun-scan" type="button" data-back="' + e(base) + '" data-t="' + e(token) + '" '
-            'title="run a collector pass now"><img class="hun-wiz" src="/static/hunt-still.png" alt="" draggable="false">'
-            '<span>Scan now</span></button>')
+            'title="run a collector pass now"><img class="hun-wiz" src="/static/hunt.gif" alt="the hunt wizard, investigating" draggable="false">'
+            '<span>Run the hunt</span></button>')
     if row is None:
-        l1, l2 = "SCANNER IDLE", "no pass on record yet; the loop posts new asks here as it finds them"
+        l1, l2 = "FEED IDLE", "no pass on record yet; the loop posts new asks here as it finds them"
     else:
-        l1 = "SCANNER LIVE" if cls == "ok" else ("SCANNER SLOW" if cls == "slow" else "SCANNER OFFLINE")
+        l1 = "FEED LIVE" if cls == "ok" else ("FEED SLOW" if cls == "slow" else "FEED OFFLINE")
         l2 = "last pass " + ago + (" · +" + str(new) + " new" if new else "")
         try:
             iv = st.db.execute("SELECT v FROM engine_meta WHERE k='loop_interval_min'").fetchone()
@@ -437,7 +437,7 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
         ("drop", "Price drops", "asking less than before, last 24 hours"),
         ("end", "Ending soon", "auctions and offers that close within six hours"))) + "</span>"
     head = _hun_head(base, v, t, counts, scan, live, chips, x)
-    return ('<section class="hunzone">' + head + grid +
+    return ('<section class="hunzone"><span class="reg" aria-hidden="true"><i></i><i></i><i></i><i></i></span>' + head + grid +
             '<p class="hun-note small">Signal is the read on the price: green under what to pay, amber worth a '
             'second look, red above it; unrated has no sales history yet. Most asks sit above what a card really '
             'sells for, so red is the common read and green is rare on purpose.</p></section>')
@@ -510,7 +510,8 @@ def _pulse(st, now: datetime, game: str, M=None) -> str:
              (under, "asks under PC comp", ""),
              ("PC " + (_ago(pcf, now) if pcf else "never"), "sweep freshness", ""))
     return ('<section class="pulse" aria-label="market pulse">' + "".join(
-        '<div class="pulse-i"><span><b>{}</b><small>{}</small></span>{}</div>'.format(e(a), e(b), c) for a, b, c in items) + "</section>")
+        '<div class="pulse-i"><span><b>{}</b><small>{}</small></span>{}</div>'.format(e(a), e(b), c) for a, b, c in items) +
+        '<span class="cbar" aria-hidden="true" title="press check"><i></i><i></i><i></i><i></i><i></i><i></i></span></section>')
 
 
 def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", assumed_costs: bool = True, EM=None, game: str = "ygo",
@@ -518,7 +519,9 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", a
     """The hunt: the title, the search, and the newest postings. Every decision view lives on its own page."""
     M = Money(st, home, cur, now)
     letters = "".join(f'<span style="--i:{i}">{c if c != " " else "&nbsp;"}</span>' for i, c in enumerate(_HUNT))
-    out = [f'<section class="hero hunt"><h1 class="huntitle" aria-label="{e(_HUNT)}">{letters}</h1>' + _search_box(big=True, game=game) + "</section>"]
+    out = [f'<section class="hero hunt"><h1 class="huntitle" aria-label="{e(_HUNT)}">{letters}</h1>'
+            '<p class="huntag">Two markets, one board \u2014 live asks, sold history, PriceCharting comps.</p>'
+            + _search_box(big=True, game=game) + "</section>"]
     out.append(_pulse(st, now, game, M))
     feed = _just_posted(st, now, game, M, qs or {}, "/pkm/" if game == "pkm" else "/", token)
     out.append(feed)
@@ -810,9 +813,10 @@ def _trend_box(st, printing_id: str | None, cur: str, now: datetime, M) -> str:
         xy = " ".join(f"{pad + i * step:.1f},{h - pad - (h - 2 * pad) * ((v - lo) / span):.1f}" for i, (_t, v) in enumerate(pts))
         y = h - pad - (h - 2 * pad) * ((pts[-1][1] - lo) / span)
         stroke = "var(--teal)" if (pc_chg or 0) >= 0 else "#c4553b"
-        cap = ("12 mo " + (f"{pc_chg:+.0f}% · " if pc_chg is not None else "") + M(pts[-1][1]))
+        last_txt = charts.fmt(pts[-1][1], cur)
+        cap = ("12 mo " + (f"{pc_chg:+.0f}% · " if pc_chg is not None else "") + last_txt)
         spark = (f'<a class="tb-pc" href="#pcsheet" title="PriceCharting weekly sold prices for this grade, 12 months. '
-                 f'Last point {M(pts[-1][1])}.">'
+                 f'Last point {e(last_txt)}.">'
                  f'<svg viewBox="0 0 {w} {h}" aria-hidden="true"><polyline points="{xy}" style="stroke:{stroke}"/>'
                  f'<circle cx="{w - pad:.1f}" cy="{y:.1f}" r="2.6" style="fill:{stroke}"/></svg>'
                  f'<small>{e(cap)}</small></a>')
@@ -1272,16 +1276,19 @@ def view_character(st, idx, species: str, token: str, now: datetime, cur: str, h
 
 HOME_CSS = """
 header .hsearch{flex:1;max-width:520px}
-form.search{position:relative;display:flex;gap:0;margin:0;isolation:isolate;border-radius:999px}
-form.search::before{content:"";position:absolute;inset:-1.5px;z-index:-1;border-radius:999px;opacity:.5;transition:opacity .3s;
-background:linear-gradient(115deg,transparent 12%,rgba(140,190,255,.55) 32%,rgba(255,255,255,.85) 48%,rgba(212,175,106,.6) 64%,transparent 86%),var(--axis)}
-form.search:hover::before{opacity:.8}
-form.search:focus-within::before{opacity:1;box-shadow:0 8px 28px rgba(90,140,200,.18)}
-form.search input{flex:1;min-width:0;border-radius:999px 0 0 999px;padding:8px 14px;border-right:0}
-form.search button{border-radius:0 999px 999px 0;padding:8px 16px;background:var(--fg);color:var(--surface);border-color:var(--fg);font-weight:600}
-form.search.big input{font-size:17px;padding:15px 22px}form.search.big button{font-size:16px;padding:0 26px}
-.sugg{position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:20;background:var(--surface);border:1px solid var(--line);border-radius:12px;
-box-shadow:0 12px 32px rgba(0,0,0,.14);overflow:hidden;text-align:left}
+form.search{position:relative;display:flex;gap:0;margin:0;isolation:isolate}
+form.search input{flex:1;min-width:0;border:2px solid color-mix(in srgb,var(--fg2) 62%,transparent);border-right:0;
+border-radius:13px 9px 0 11px/9px 13px 11px 0;background:var(--surface);box-shadow:-2px 3px 0 rgba(0,0,0,.10)}
+form.search button{border:2px solid color-mix(in srgb,var(--fg2) 62%,transparent);border-radius:0 11px 9px 13px/13px 0 9px 11px;
+padding:8px 18px;background:var(--fg);color:var(--surface);font-weight:800;letter-spacing:.14em;text-transform:uppercase;font-size:12px;
+box-shadow:3px 3px 0 rgba(224,82,82,.35)}
+form.search button:hover{transform:translate(-1px,-1px)}form.search button:active{transform:translate(1px,2px);box-shadow:0 0 0}
+form.search.big input{font-size:17px;padding:15px 22px}form.search.big button{font-size:13px;padding:0 26px}
+.skbd{position:absolute;right:calc(9.2em + 26px);top:50%;transform:translateY(-50%);font:600 11px/1 ui-monospace,Menlo,monospace;
+color:var(--muted);border:1px solid var(--axis);border-bottom-width:2.5px;border-radius:5px 7px 6px 8px;padding:3px 6px;background:var(--bg);pointer-events:none}
+.sugg{position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:20;background:var(--surface);
+border:2px solid color-mix(in srgb,var(--fg2) 62%,transparent);border-radius:12px 8px 13px 9px/8px 13px 9px 12px;
+box-shadow:3px 5px 0 rgba(0,0,0,.12);overflow:hidden;text-align:left}
 .sugg a{display:flex;gap:10px;align-items:center;padding:7px 12px;color:var(--fg);text-decoration:none}
 .sugg a.on,.sugg a:hover{background:var(--soft)}.sugg img,.sugg .ph{width:30px;height:44px;flex:none}
 .sugg b{display:block;font-weight:600}.sugg small{color:var(--muted)}
@@ -1414,8 +1421,8 @@ img.mthumb{width:44px;height:58px;object-fit:cover;border-radius:6px;background:
 .stat small{display:block;color:var(--muted);font-size:11px}.stat b{font-size:16px}
 .pricebox{border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:12px 14px;margin:0 0 14px;max-width:420px}
 .prow{display:flex;gap:12px;align-items:stretch;flex-wrap:wrap;margin:0 0 14px}
-.prow .pricebox{flex:1 1 300px;max-width:none;margin:0}
-.trendbox{flex:1 1 280px;max-width:440px;display:flex;gap:14px;align-items:center;justify-content:space-between;
+.prow .pricebox{flex:0 1 420px;max-width:none;margin:0}
+.trendbox{flex:1 1 300px;max-width:560px;display:flex;gap:14px;align-items:center;justify-content:space-between;
 border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:12px 14px}
 .trendbox .cl{display:block;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600}
 .tb-main{min-width:0}
@@ -1543,6 +1550,25 @@ a.hun span.card.hun-img,a.hun img.card.hun-img{object-fit:contain;padding:10px;b
 .hun-meta{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);white-space:nowrap}
 .mkt{display:inline-flex;align-items:center;justify-content:center;width:19px;height:19px;border-radius:50%;flex:none;
 font:700 11px/1 "Helvetica Neue",Arial,sans-serif;color:#fff}
+.huntag{margin:2px auto 18px;font-size:12.5px;letter-spacing:.14em;color:var(--muted);text-transform:uppercase}
+.reg{position:absolute;inset:0;pointer-events:none}
+.reg i{position:absolute;width:16px;height:16px;opacity:.5}
+.reg i::before,.reg i::after{content:"";position:absolute;background:var(--fg2)}
+.reg i::before{left:50%;top:0;width:1px;height:100%;transform:translateX(-.5px)}
+.reg i::after{top:50%;left:0;height:1px;width:100%;transform:translateY(-.5px)}
+.reg i:nth-child(1){top:9px;left:9px}.reg i:nth-child(2){top:9px;right:9px}
+.reg i:nth-child(3){bottom:9px;left:9px}.reg i:nth-child(4){bottom:9px;right:9px}
+.cbar{display:inline-flex;flex:none;align-self:stretch;border:1.5px solid color-mix(in srgb,var(--fg2) 45%,transparent);
+border-radius:9px 6px 10px 7px;overflow:hidden;box-shadow:2px 3px 0 rgba(0,0,0,.07)}
+.cbar i{width:13px;align-self:stretch}
+.cbar i:nth-child(1){background:#e05252}.cbar i:nth-child(2){background:#2f6ce0}.cbar i:nth-child(3){background:#d4af6a}
+.cbar i:nth-child(4){background:#2fbf71}.cbar i:nth-child(5){background:#e6a23c}.cbar i:nth-child(6){background:var(--fg)}
+.huntitle{animation:regdrift 11s ease-in-out infinite alternate}
+@keyframes regdrift{0%{text-shadow:2px 0 rgba(224,82,82,.18),-2px 0 rgba(47,108,224,.14)}
+50%{text-shadow:3px 1px rgba(224,82,82,.20),-2.5px -1px rgba(47,108,224,.16)}
+100%{text-shadow:1.5px -1px rgba(224,82,82,.16),-3px 0 rgba(47,108,224,.18)}}
+.hun-stats a{background-image:radial-gradient(color-mix(in srgb,var(--fg2) 22%,transparent) .5px,transparent .6px);background-size:5px 5px}
+@media(prefers-reduced-motion:reduce){.huntitle{animation:none}}
 .pulse{display:flex;flex-wrap:wrap;gap:12px;margin:8px 0 22px}
 .pulse-i{display:flex;align-items:center;justify-content:space-between;gap:14px;flex:1 1 160px;min-width:150px;background:var(--surface);
 border:1.5px solid color-mix(in srgb,var(--fg2) 40%,transparent);border-radius:12px 8px 13px 9px/8px 13px 9px 12px;
@@ -1581,7 +1607,7 @@ function st(){return fetch('/engine/status').then(function(r){return r.json()}).
 function ago(s){if(s==null)return'';if(s<60)return'just now';if(s<3600)return Math.round(s/60)+'m ago';if(s<86400)return Math.round(s/3600)+'h ago';return Math.round(s/86400)+'d ago'}
 function paint(){var b=document.getElementById('hun-status1'),m=document.getElementById('hun-status2'),lv=document.getElementById('hun-live');
 var age=last?last.age_s:null,ok=age!=null&&age<1200;
-if(b)b.textContent=running?('SCANNING'+(last&&last.progress?' '+last.progress:'\u2026')):(age==null?'SCANNER IDLE':(ok?'SCANNER LIVE':(age<86400?'SCANNER SLOW':'SCANNER OFFLINE')));
+if(b)b.textContent=running?('HUNTING'+(last&&last.progress?' \u00b7 '+last.progress:'\u2026')):(age==null?'FEED IDLE':(ok?'FEED LIVE':(age<86400?'FEED SLOW':'FEED OFFLINE')));
 if(m){var seg=[];
 if(running)seg.push('+'+landed+' landed this pass','new asks appear the moment they are found');
 else{if(landed)seg.push('+'+landed+' landed since load');if(age!=null)seg.push('last pass '+ago(age));if(last&&last.new)seg.push('+'+last.new+' new');
@@ -1589,11 +1615,7 @@ if(last&&last.interval_min>=1)seg.push('auto every '+Math.round(last.interval_mi
 m.textContent=seg.length?seg.join(' \u00b7 '):(running?'working':'run a scan anytime')}
 if(lv)lv.className='hun-live '+(running?'ok':(age==null?'off':(ok?'ok':(age<86400?'slow':'off'))))}
 function sync(){var btn=document.querySelector('.hun-scan');
-if(btn){btn.classList.toggle('busy',running);var s=btn.querySelector('span');if(s)s.textContent=running?'Scanning\u2026':'Scan now';
-var im=btn.querySelector('img');if(im)im.src=running?'/static/hunt.gif?r='+((Date.now()/1000)|0):'/static/hunt-still.png'
-if(!btn._hz){btn._hz=1;btn.addEventListener('mouseenter',function(){var q=btn.querySelector('img');
-if(q&&!running)q.src='/static/hunt.gif?r='+((Date.now()/1000)|0)});
-btn.addEventListener('mouseleave',function(){var q=btn.querySelector('img');if(q&&!running)q.src='/static/hunt-still.png'})}}paint()}
+if(btn){btn.classList.toggle('busy',running);var s=btn.querySelector('span');if(s)s.textContent=running?'Hunting\u2026':'Run the hunt'}paint()}
 function swap(){var had={};document.querySelectorAll('.hun[data-key]').forEach(function(n){had[n.getAttribute('data-key')]=1});
 return fetch(location.pathname+location.search).then(function(r){return r.text()}).then(function(html){
 var d=new DOMParser().parseFromString(html,'text/html');
