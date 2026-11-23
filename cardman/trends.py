@@ -55,16 +55,16 @@ def label_for(pid: str) -> str:
 
 
 def _asks(st, now: datetime) -> dict[tuple[str, str], dict]:
-    """Each printing's newest ask snapshot within the last week, carrying its own day. One day's sweep is
+    """Each printing's newest ask snapshot within the last month, carrying its own day. One day's sweep is
     partial, so pinning the board to a single calendar day blanks rows whose listing was seen on another day;
-    a listing unseen for more than a week is not a price anyone can pay today."""
+    the row dates the snapshot, so an older listing is shown as old rather than dropped."""
     have = {r[0] for r in st.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     if "ask_daily" not in have:
         return {}
     day = st.db.execute("SELECT MAX(day) FROM ask_daily").fetchone()[0]
     if not day or (now.date() - date.fromisoformat(day)).days > 3:
         return {}
-    floor = (now.date() - timedelta(days=7)).isoformat()
+    floor = (now.date() - timedelta(days=30)).isoformat()
     out: dict[tuple[str, str], dict] = {}
     for pid, g, low, med, n, seen in st.db.execute(
             "SELECT a.printing_id, a.gkey, a.low, a.median, a.n, a.day FROM ask_daily a "

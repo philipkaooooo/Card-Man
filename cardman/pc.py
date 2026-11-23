@@ -220,6 +220,7 @@ def pick_link(links: list[dict], *, name: str = "", number: str = "", code: str 
     variant beats the base page only when its bracket names the rarity we track."""
     words = [w for w in re.split(r"[^a-z0-9]+", name.lower()) if len(w) >= 4]
     compact = re.sub(r"[^a-z0-9]+", "", name.lower())
+    num = str(number or "").lower()
     generic = {"rare", "holo", "holofoil", "foil", "card", "edition", "pokemon"}
     rwords = {w for w in re.split(r"[^a-z0-9]+", (rarity or "").lower()) if w and w not in generic}
     set_words = [w for w in re.split(r"[^a-z0-9]+", (set_name or "").lower()) if len(w) >= 4 and w != "pokemon"]
@@ -229,11 +230,11 @@ def pick_link(links: list[dict], *, name: str = "", number: str = "", code: str 
         t = (x.get("t") or "").strip()
         if not h or not t:
             continue                   # image-only anchors repeat a product with no name to judge it by
-        slug = _slug(h)
+        slug = _slug(h).lower()
         path = h.lower()               # the set lives in the path, not the slug: two sets ship the same charizard-4
         score = 0.0
-        if number and re.search(rf"-{re.escape(str(number))}$", slug):
-            score += 4
+        if num and re.search(rf"-{re.escape(num)}$", slug):
+            score += 4                 # BW promos use the promo number in the slug: minccino-bw13
         if code and code != "-" and code.lower().replace("-", "") in path.replace("-", ""):
             score += 4
         score += sum(1 for w in words if w in path)
@@ -250,9 +251,8 @@ def pick_link(links: list[dict], *, name: str = "", number: str = "", code: str 
     # A confident product needs both halves: the right card (name in the slug, the compact name, or the set it
     # belongs to) and the right printing (the number on the page, or the set code). Same-name cards in other sets
     # scored on the name alone - Minccino #182 for BW13 - so a name without a number is not evidence.
-    slug, tl = _slug(best), best_t.lower()
-    num_ok = bool(number) and (bool(re.search(rf"-{re.escape(str(number))}$", slug))
-                               or f"#{str(number).lower()}" in tl)
+    slug, tl = _slug(best).lower(), best_t.lower()
+    num_ok = bool(num) and (bool(re.search(rf"-{re.escape(num)}$", slug)) or f"#{num}" in tl)
     code_ok = bool(code) and code != "-" and code.lower().replace("-", "") in best.lower().replace("-", "")
     name_ok = any(w in slug or w in tl for w in words) or (len(compact) >= 3 and compact in slug)
     set_ok = bool(set_words) and any(w in slug or w in tl for w in set_words)

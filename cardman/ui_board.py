@@ -806,8 +806,8 @@ body.b-sel .bbulk{display:flex}
 .bshade{position:fixed;inset:0;background:color-mix(in srgb,var(--fg) 38%,transparent);z-index:70}
 .bdrawer{position:fixed;top:0;right:0;bottom:0;width:min(620px,94vw);z-index:80;background:var(--bg);
  border-left:2px solid var(--fg);box-shadow:-6px 0 0 color-mix(in srgb,var(--fg) 18%,transparent);
- transform:translateX(103%);transition:transform .22s ease;display:flex;flex-direction:column}
-.bdrawer.open{transform:translateX(0)}
+ transform:translateX(103%);visibility:hidden;transition:transform .22s ease,visibility 0s .22s;display:flex;flex-direction:column}
+.bdrawer.open{transform:translateX(0);visibility:visible;transition:transform .22s ease}
 .bd-head{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--fg);background:var(--surface)}
 .bd-head b{font-size:15px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bd-head a{color:var(--fg);white-space:nowrap}
@@ -825,6 +825,8 @@ body.b-sel .bbulk{display:flex}
 .btoast button{font:inherit;font-size:12.5px;border:1px solid var(--fg);background:var(--fg);color:var(--bg);padding:3px 10px;cursor:pointer}
 .btoast button:hover{background:#2fbf71;border-color:var(--fg);color:#0e1a12}
 .bmeta{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin:0 0 6px}
+body{overflow-x:clip}
+html{overflow-x:clip}
 .cnd{display:inline-flex;align-items:center;gap:4px;font-size:11px;line-height:1.5;border:1px solid var(--lc,var(--fg));
  color:var(--fg);background:color-mix(in srgb,var(--lc,var(--fg)) 13%,var(--surface));padding:1px 6px;white-space:nowrap}
 .cnd svg{color:var(--lc,var(--fg));flex:none}

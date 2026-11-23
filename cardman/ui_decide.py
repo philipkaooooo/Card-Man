@@ -227,7 +227,7 @@ display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hi
 .i-basis{font-size:12px;color:var(--muted)}
 .track{position:relative;height:4px;margin:4px 0;border-radius:2px;background:var(--track)}
 .tk-v{position:absolute;top:-4px;width:2px;height:12px;margin-left:-1px;border-radius:1px;background:var(--fg2);opacity:.55}
-.tk-m{position:absolute;inset:0;transform:translateX(var(--x));pointer-events:none}
+.tk-m{position:absolute;top:0;bottom:0;left:var(--x);width:0;pointer-events:none}
 .tk-m i{position:absolute;left:-6px;top:-4px;width:12px;height:12px;border-radius:50%;background:var(--teal);box-shadow:0 0 0 3px var(--surface)}
 .track.over .tk-m i{background:var(--grey)}
 .dpills{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
@@ -252,7 +252,7 @@ color-mix(in srgb,var(--sky) 55%,transparent) 50%,transparent 80%)}
 .cm-motion .deal:not(.in){opacity:0;transform:translateY(8px)}
 .cm-motion .deal.in .tk-m{animation:cm-slide .4s var(--ease) calc(var(--d,0ms) + 120ms) backwards}
 .cm-motion .deal.in .cpoint::after{animation:cm-shimmer .4s var(--ease) calc(var(--d,0ms) + 260ms) backwards}
-@keyframes cm-slide{from{transform:translateX(0)}}
+@keyframes cm-slide{from{transform:translateX(-12px)}}
 @keyframes cm-shimmer{from{transform:translateX(-110%)}to{transform:translateX(110%)}}
 @keyframes cm-tip{from{opacity:0}to{opacity:1}}
 @media (prefers-reduced-motion:reduce){.deal,.dphoto,.rail-ind,.fchip,.rail .lane{transition:none!important}.tip,.tk-m,.cpoint::after{animation:none!important}
