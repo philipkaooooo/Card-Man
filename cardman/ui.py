@@ -361,7 +361,21 @@ a.hun:hover{transform:translate(-1px,-4px);box-shadow:6px 9px 0 rgba(224,82,82,.
 .hunzone{border-radius:22px 16px 24px 14px}
 .hun-deal{border:1.5px solid currentColor;border-radius:7px 11px 6px 12px;transform:rotate(-2deg);background:transparent}
 .hun-stats a,.hun-fresh a{border-radius:10px 7px 12px 8px}
-@media(prefers-reduced-motion:reduce){a.hun,a.hun:hover{transform:none}}
+main h3{text-shadow:1px 0 rgba(224,82,82,.10),-1px 0 rgba(47,108,224,.09)}
+main table{border-collapse:separate;border-spacing:0;border:2px solid color-mix(in srgb,var(--fg2) 45%,transparent);
+border-radius:14px 9px 15px 10px/9px 15px 10px 14px;overflow:hidden}
+main table tbody tr:hover td{background:color-mix(in srgb,var(--accent) 6%,transparent)}
+.tile{border:1.5px solid color-mix(in srgb,var(--fg2) 40%,transparent);border-radius:12px 8px 13px 9px/8px 13px 9px 12px;
+box-shadow:2px 3px 0 rgba(0,0,0,.08)}
+.tile:hover{box-shadow:3px 5px 0 rgba(224,82,82,.10)}
+.tag{border-color:currentColor;border-radius:6px 9px 5px 10px;transform:rotate(-1.2deg)}
+main button:not(.hun-scan){border:2px solid color-mix(in srgb,var(--fg2) 55%,transparent);
+border-radius:10px 7px 11px 8px/7px 11px 8px 10px;box-shadow:2px 3px 0 rgba(0,0,0,.14);transition:transform .12s,box-shadow .12s}
+main button:not(.hun-scan):hover{transform:translate(-1px,-1px);box-shadow:3px 4px 0 rgba(0,0,0,.16)}
+main button:not(.hun-scan):active{transform:translate(1px,2px);box-shadow:0 0 0 rgba(0,0,0,0)}
+.pileadd button{border:0;border-radius:12px 9px 13px 8px/9px 13px 8px 12px;box-shadow:2px 3px 0 rgba(0,0,0,.20)}
+a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+@media(prefers-reduced-motion:reduce){a.hun,a.hun:hover,.tag,main button:not(.hun-scan),main button:not(.hun-scan):hover,main button:not(.hun-scan):active{transform:none}}
 """
 SHELL_CSS = """
 body{display:flex;flex-direction:column;min-height:100vh}
