@@ -37,6 +37,12 @@ SORT_DEFAULT_DIR = {k: d for k, _, d in SORTS}
 FRESH = (("1h", "Past hour", 3600), ("24h", "Past day", 86400), ("7d", "Past week", 604800))
 PER_PAGE = 48
 NEW = "NEW"
+RATE_HINT = ("Every ask gets our best guess — good, mid, or bad — to buy, sell, or trade. "
+             "We rate the whole track record: what cards actually sold for, not one person's hunch. "
+             "Buy = under the sold market. 2x Check = right price, version risk. Watch = fair price, no edge. "
+             "Skip = wrong card or no proof. Every sold outcome is kept score in the Sold market, so the guesses keep sharpening.")
+RHINT = ('<span class="rhint" tabindex="0" aria-label="How we rate every ask" '
+         f'data-tip="{e(RATE_HINT)}" title="{e(RATE_HINT)}">?</span>')
 COND = (("MT", "Mint", "green"), ("NM", "Near Mint", "blue"), ("EX", "Excellent", "blue"),
         ("LP", "Lightly Played", "gold"), ("MP", "Moderately Played", "amber"),
         ("HP", "Heavily Played", "red"), ("DMG", "Damaged", "ink"))
@@ -199,7 +205,7 @@ def sort_str(stack: list[tuple[str, str]]) -> str:
 def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur: str = "TWD",
                game: str = "ygo", token: str = "", back: str = "/opportunities") -> str:
     from .ui_decide import deal_card, first_seen, rail
-    from .ui_listing import ORDER, open_listings, photo_counts, item_id_of, site_of, SITES
+    from .ui_listing import ORDER, open_listings, photo_counts, item_id_of, site_of, SITES, suspect, Verdict, BUY, LABEL
     from .ui_home import _pc_grade, _listing_art
     from .pile import keys as pile_keys
     from .history import sparks as _sparks
@@ -223,6 +229,8 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
                 st.db.execute("UPDATE board_view SET uses=uses+1, last_used=? WHERE id=?", (now.isoformat(), int(view_id)))
             g1 = lambda k, d="": (qs.get(k) or [d])[0]
 
+    if g1("sec") == "sold":
+        return view_sold(st, cards, now, M, qs=qs, home_cur=home_cur, game=game, token=token, back=back)
     v = g1("v", "all")
     v = v if v in ("all", "BUY", "CHECK", "WATCH", "PASS", "NEW", "every") else "all"
     t = g1("t", "any")
@@ -296,6 +304,7 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
             except Exception:
                 pass
     pc_pct: dict[str, float] = {}
+    pc_rate: dict[str, float] = {}
     try:
         fx = FxTable(st.fx_rates(), max_age=timedelta(days=7))
         rate_cache: dict[tuple, float] = {}
@@ -319,9 +328,26 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
                 pct = (float(ask) - rate) / rate * 100
                 if pct <= -3:
                     pc_pct[key] = pct
+                    pc_rate[key] = rate
     except Exception:
         pc_pct = {}
     is_lot = lambda d: "LOT" in (d.get("kinds") or [])
+    promoted: dict[str, Verdict] = {}
+    for key, status, d, vd in items:
+        if key not in pc_pct or status == "REJECTED" or d.get("photo") == "clash" or is_lot(d):
+            continue
+        if suspect(d) or "MISIDENTIFIED" in (d.get("kinds") or []):
+            continue
+        rate, ask = pc_rate[key], float(d.get("all_in_home") or 0)
+        top = {"resale_mid": rate, "max_buy": rate, "basis": "reference", "n_sales": 0,
+               "label": (vd.top or {}).get("label") or "", "printing_id": d.get("printing_id")}
+        promoted[key] = Verdict(BUY, "Buy (under PC)",
+                                f"Asking {M(ask)} against a {M(rate)} sold-market comp on PriceCharting — "
+                                f"{round(-pc_pct[key])}% under. The market's own sales back this number.",
+                                "Medium", ["PriceCharting sold-market comp, matched to this grade",
+                                           "Converted at the stored exchange rate"],
+                                top, rate - ask)
+    evd = lambda i: promoted.get(i[0], i[3])
     now_ts = now.timestamp()
     win = dict((a, c) for a, b, c in FRESH).get(fresh)
     ql = q.lower()
@@ -354,7 +380,7 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
         return True
 
     pool = [i for i in items if base_ok(i)]
-    ecode = lambda i: i[3].code if i[0] in analyzed else NEW
+    ecode = lambda i: BUY if i[0] in promoted else (i[3].code if i[0] in analyzed else NEW)
     board_order = {**ORDER, NEW: 4}
     counts = {c: sum(1 for i in pool if ecode(i) == c) for c in list(ORDER) + [NEW]}
     mk_counts = {m: sum(1 for i in pool if marks.get(i[0]) == m) for m in MARKS}
@@ -377,12 +403,13 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
         if k == "lane":
             return board_order[ecode(i)]
         if k == "profit":
-            return vd.margin if vd.margin is not None else -1e18
+            m = evd(i).margin
+            return m if m is not None else -1e18
         if k == "ask":
             a = d.get("all_in_home")
             return a if a is not None else 1e18
         if k == "value":
-            top = vd.top or {}
+            top = evd(i).top or {}
             r = top.get("resale_mid")
             return float(r) if r else -1e18
         if k == "fresh":
@@ -467,7 +494,7 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
                 f'data-tip="{e("Unchecked: the engine has not priced this listing yet")}">'
                 f'<span class="lane-i">{NEW_ICON}</span><span class="lane-w">Unchecked</span>'
                 f'<b class="lane-n" data-n="{counts[NEW]}">{counts[NEW]:,}</b></a>')
-    rail_html = rail_html.replace("</nav>", new_pill + "</nav>")
+    rail_html = rail_html.replace("</nav>", new_pill + RHINT + "</nav>")
     type_sec = ('<div class="fsec" role="group" aria-label="Card kind"><h3>Card kind</h3>'
                 + chip("t", "any", "All cards", t == "any") + chip("t", "singles", "Single cards", t == "singles")
                 + chip("t", "lots", "Lots", t == "lots") + '</div>')
@@ -511,7 +538,12 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
     if n_pc:
         pc_sec = ('<div class="fsec" role="group" aria-label="PriceCharting"><h3>PriceCharting</h3>'
                   + chip("pc", "" if pcflag else "1", "Under the PC market", pcflag, n_pc) + '</div>')
-    facets = (f'<aside class="brail" aria-label="Filters">{rail_html}{type_sec}{site_sec}{fresh_sec}{price_sec}{cond_sec}{pc_sec}{mark_sec}{lab_sec}</aside>')
+    from .sold import counts as sold_counts, ensure as sold_ensure
+    sold_ensure(st)
+    n_sold = sum(sold_counts(st, game).values())
+    track_sec = ('<div class="fsec" role="group" aria-label="Track record"><h3>Track record</h3>'
+                 f'<a class="fchip" href="{e(back + "?sec=sold")}">Sold market<b class="fc-n">{n_sold:,}</b></a></div>')
+    facets = (f'<aside class="brail" aria-label="Filters">{rail_html}{track_sec}{type_sec}{site_sec}{fresh_sec}{price_sec}{cond_sec}{pc_sec}{mark_sec}{lab_sec}</aside>')
 
     # -- saved views
     views = views_of(st, game)
@@ -542,7 +574,10 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
     grptoggle = ('<span class="bgrp-toggle" role="group" aria-label="Grouping">'
                  + f'<a class="fchip{" on" if grp == "card" else ""}" href="{e(href(grp="card", print=""))}">By card</a>'
                  + f'<a class="fchip{" on" if grp == "list" else ""}" href="{e(href(grp="list"))}">One by one</a></span>')
-    toolbar = (f'<div class="bbar"><div class="bbar1">{searchf}{studio}{grptoggle}'
+    sectoggle = ('<span class="bsec-toggle" role="group" aria-label="Board section">'
+                 f'<a class="fchip on" href="{e(href())}" aria-current="true">Live asks</a>'
+                 f'<a class="fchip" href="{e(back + "?sec=sold")}">Sold market</a></span>')
+    toolbar = (f'<div class="bbar"><div class="bbar1">{searchf}{studio}{grptoggle}{sectoggle}'
                f'<button type="button" class="bdense" id="b-dense" aria-pressed="false" '
                f'data-tip="Tight rows fit more on screen" aria-label="Toggle tight rows">Tight</button>'
                f'<label class="ball"><input type="checkbox" id="b-all"> pick page</label>{keys_hint}</div>{viewsrow}</div>')
@@ -550,6 +585,7 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
     # -- cards
     cells = []
     for key, status, d, vd in page_items:
+        vd = promoted.get(key, vd)
         m = marks.get(key, "")
         labs = labels.get(key, [])
         qk = quote(key, safe="")
@@ -619,7 +655,7 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
         art_tag = ("Lot photo" if is_lot(d) else "Official art" if _listing_art(d)
                    else "Seller photo" if has_shot else "No photo yet")
         arttag = f'<span class="bart" data-tip="{e("The picture shown: " + art_tag.lower())}">{e(art_tag)}</span>'
-        cells.append(f'<div class="bcell{" mk-pinned" if pin_on else ""}{" mk-reviewed" if rev_on else ""}{" b-new" if key not in analyzed else ""}" '
+        cells.append(f'<div class="bcell{" mk-pinned" if pin_on else ""}{" mk-reviewed" if rev_on else ""}{" b-new" if key not in analyzed else ""}{" b-pcdeal" if key in promoted else ""}" '
                      f'data-key="{e(key)}" tabindex="0">{ctl}{metarow}{arttag}{card}{labrow}</div>')
 
     # -- pager
@@ -692,6 +728,283 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
 
 
 # -- styles -----------------------------------------------------------------------------------------------------------
+
+SOLD_SORTS = (("ended", "Newest outcome", "d"), ("lived", "Days live", "d"), ("units", "Units sold", "d"),
+              ("ask", "Last ask", "a"), ("sale", "Sale price", "a"))
+SOLD_COLS = ("key", "game", "title", "url", "printing_id", "payload", "rating", "ask", "currency", "ask_home",
+             "sale_price", "sale_cur", "sale_home", "units", "best_offer", "status", "ended", "lived_days",
+             "cuts", "gap", "klass", "why", "recorded_at")
+KLASS_TIP = {"agreed": "We rated it good and the market paid the ask",
+             "missed": "We passed, and the market bought it at the ask anyway",
+             "dodged": "We passed, and the market agreed: price cuts or no taker",
+             "overcalled": "We rated it good, and the market wanted it cheaper or not at all"}
+
+
+def view_sold(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur: str = "TWD",
+              game: str = "ygo", token: str = "", back: str = "/opportunities") -> str:
+    from .ui_decide import LANE
+    from .ui_listing import LABEL, item_id_of, photo_counts, pair_art
+    from .sold import sync as sold_sync, ensure as sold_ensure, KLASSES, KLASS_LABEL, KLASS_COLOR
+    sold_ensure(st)
+    sold_sync(st, M, now, game=game)
+    qs = dict(qs or {})
+    g1 = lambda k, d="": (qs.get(k) or [d])[0]
+    view_id = g1("view")
+    if view_id.isdigit():
+        row = st.db.execute("SELECT qs FROM board_view WHERE id=? AND game=?", (int(view_id), game)).fetchone()
+        if row:
+            base = parse_qs(row[0], keep_blank_values=True)
+            base.pop("view", None)
+            base.update({k: v for k, v in qs.items() if k != "view"})
+            qs = base
+            with st.db:
+                st.db.execute("UPDATE board_view SET uses=uses+1, last_used=? WHERE id=?", (now.isoformat(), int(view_id)))
+            g1 = lambda k, d="": (qs.get(k) or [d])[0]
+    q = g1("q").strip()[:80]
+    klass = g1("klass")
+    klass = klass if klass in KLASS_LABEL else ""
+    rating = g1("rating")
+    rating = rating if rating in LABEL else ""
+    mk = g1("mk")
+    mk = mk if mk in MARKS else ""
+    sort = g1("sort", "ended:d")
+    sk, _, sd = sort.partition(":")
+    sdirs = dict((a, c) for a, b, c in SOLD_SORTS)
+    if sk not in sdirs:
+        sk, sd = "ended", "d"
+    sd = sd if sd in ("a", "d") else sdirs[sk]
+    try:
+        page = max(1, int(g1("page", "1")))
+    except ValueError:
+        page = 1
+    state = {"sec": "sold", "q": q, "klass": klass, "rating": rating, "mk": mk,
+             "sort": f"{sk}:{sd}" if f"{sk}:{sd}" != "ended:d" else "", "page": str(page) if page > 1 else ""}
+
+    def href(**kw):
+        merged = {**state, **kw}
+        if any(a in kw for a in ("q", "klass", "rating", "mk", "sort")):
+            merged["page"] = ""
+        clean = {a: b for a, b in merged.items() if b not in ("", None)}
+        return back + ("?" + urlencode(clean) if clean else "")
+
+    marks = marks_of(st)
+    labels = labels_of(st)
+    rows = [dict(zip(SOLD_COLS, r)) for r in st.db.execute("SELECT * FROM sold_review WHERE game=?", (game,))]
+    ql = q.lower()
+    pool = [r for r in rows if (not ql or ql in (r["title"] or "").lower() or ql in r["key"].lower())
+            and (not rating or r["rating"] == rating)]
+    kcounts = {k: sum(1 for r in pool if r["klass"] == k) for k, _, _ in KLASSES}
+    rcounts = {c: sum(1 for r in pool if r["rating"] == c) for c in LABEL}
+    mk_counts = {m: sum(1 for r in pool if marks.get(r["key"]) == m) for m in MARKS}
+    shown = [r for r in pool if not klass or r["klass"] == klass]
+    if mk:
+        shown = [r for r in shown if marks.get(r["key"]) == mk]
+    else:
+        shown = [r for r in shown if marks.get(r["key"]) != "hidden"]
+
+    def sval(r):
+        if sk == "lived":
+            return r["lived_days"] or 0.0
+        if sk == "units":
+            return r["units"] or 0
+        if sk == "ask":
+            return r["ask_home"] if r["ask_home"] is not None else 1e18
+        if sk == "sale":
+            return r["sale_home"] if r["sale_home"] is not None else 1e18
+        return _ep(r["ended"] or "") or 0.0
+
+    shown.sort(key=lambda r: (0 if marks.get(r["key"]) == "pinned" else 1,
+                              sval(r) if sd == "a" else -sval(r), r["key"]))
+    total = len(shown)
+    pages = max(1, (total + PER_PAGE - 1) // PER_PAGE)
+    page = min(page, pages)
+    page_rows = shown[(page - 1) * PER_PAGE:page * PER_PAGE]
+    pairs = [(r, json.loads(r["payload"] or "{}")) for r in page_rows]
+    ph = photo_counts(st, [item_id_of(r["key"], d) for r, d in pairs])
+
+    def chip(param, val, text, on, n=None, dot=""):
+        current = ' aria-current="true"' if on else ""
+        count = f'<b class="fc-n">{n:,}</b>' if n is not None else ""
+        d = f'<i class="fc-dot c-{dot}" aria-hidden="true"></i>' if dot else ""
+        return f'<a class="fchip{" on" if on else ""}" href="{e(href(**{param: val}))}"{current}>{d}{e(text)}{count}</a>'
+
+    ssum = ('<div class="ssum" role="group" aria-label="Outcome counts">'
+            + "".join(f'<a class="ssum-c c-{col}{" on" if klass == k else ""}" href="{e(href(klass="" if klass == k else k))}"'
+                      f'{" aria-current=" + chr(34) + "true" + chr(34) if klass == k else ""}>'
+                      f'<i aria-hidden="true"></i><b>{kcounts[k]:,}</b> {e(lab)}</a>' for k, lab, col in KLASSES)
+            + f'<span class="ssum-t">{len(rows):,} recorded outcomes</span>' + RHINT + '</div>')
+    klass_sec = ('<div class="fsec" role="group" aria-label="Outcome"><h3>Outcome</h3>'
+                 + chip("klass", "", "Every outcome", not klass, len(pool))
+                 + "".join(chip("klass", k, lab, klass == k, kcounts[k], col) for k, lab, col in KLASSES) + '</div>')
+    rating_sec = ('<div class="fsec" role="group" aria-label="Our rating at the time"><h3>Our rating then</h3>'
+                  + chip("rating", "", "Every rating", not rating, len(pool))
+                  + "".join(chip("rating", c, LABEL[c], rating == c, rcounts[c]) for c in ("BUY", "CHECK", "WATCH", "PASS")) + '</div>')
+    mark_sec = ('<div class="fsec" role="group" aria-label="Your marks"><h3>Your marks</h3>'
+                + chip("mk", "", "Everything up", not mk, sum(1 for r in pool if marks.get(r["key"]) != "hidden"))
+                + chip("mk", "pinned", "Pinned to top", mk == "pinned", mk_counts["pinned"])
+                + chip("mk", "reviewed", "Reviewed", mk == "reviewed", mk_counts["reviewed"])
+                + chip("mk", "hidden", "Hidden", mk == "hidden", mk_counts["hidden"]) + '</div>')
+    back_sec = ('<div class="fsec" role="group" aria-label="Board"><h3>Board</h3>'
+                f'<a class="fchip" href="{e(back)}">← Live asks</a></div>')
+    facets = (f'<aside class="brail" aria-label="Filters">{klass_sec}{rating_sec}{mark_sec}{back_sec}</aside>')
+
+    views = views_of(st, game)
+    vpills = "".join(
+        f'<span class="bview{" on" if view_id == str(vid) else ""}"><a href="{e(back + "?view=" + str(vid))}">{e(name)}</a>'
+        f'<form method="post" action="/board/viewdel" class="bvx" data-bviewdel>'
+        f'<input type="hidden" name="t" value="{e(token)}"><input type="hidden" name="id" value="{vid}">'
+        f'<input type="hidden" name="back" value="{e(href())}">'
+        f'<button type="submit" aria-label="{e("Forget the view " + name)}" data-tip="{e("Forget this view")}">×</button></form></span>'
+        for vid, name, vqs, uses in views)
+    cur_qs = href().partition("?")[2]
+    saveform = (f'<form class="bsave" method="post" action="/board/view" data-bviewsave>'
+                f'<input type="hidden" name="t" value="{e(token)}"><input type="hidden" name="qs" value="{e(cur_qs)}">'
+                f'<input type="hidden" name="game" value="{e(game)}"><input type="hidden" name="back" value="{e(href())}">'
+                f'<input name="name" maxlength="40" placeholder="Name this view…" aria-label="Name this view">'
+                f'<button type="submit">Save view</button></form>')
+    viewsrow = (f'<div class="bviews" aria-label="Saved views"><span class="bv-l">Views</span>{vpills}{saveform}</div>')
+
+    searchf = (f'<form class="bfind" method="get" action="{e(back)}" role="search">'
+               + "".join(f'<input type="hidden" name="{k}" value="{e(val)}">' for k, val in state.items()
+                         if val and k not in ("q", "page"))
+               + f'<input type="search" name="q" id="b-q" value="{e(q)}" placeholder="Find a card or listing…" '
+                 f'aria-label="Find a card or listing" autocomplete="off">'
+               + f'<button type="submit" aria-label="Search">→</button></form>')
+    sopts = "".join(f'<option value="{k}:{d}"{" selected" if (k, d) == (sk, sd) else ""}>{e(lab)}</option>'
+                    for k, lab, d in SOLD_SORTS)
+    ssort = f'<label class="ssort">Sort <select id="s-sort" aria-label="Sort outcomes">{sopts}</select></label>'
+    sectoggle = ('<span class="bsec-toggle" role="group" aria-label="Board section">'
+                 f'<a class="fchip" href="{e(back)}">Live asks</a>'
+                 f'<a class="fchip on" href="{e(href())}" aria-current="true">Sold market</a></span>')
+    keys_hint = ('<span class="bkeys" aria-hidden="true"><kbd>j</kbd><kbd>k</kbd> move <kbd>x</kbd> pick '
+                 '<kbd>p</kbd> pin <kbd>r</kbd> reviewed <kbd>/</kbd> find</span>')
+    toolbar = (f'<div class="bbar"><div class="bbar1">{searchf}{ssort}{sectoggle}'
+               f'<button type="button" class="bdense" id="b-dense" aria-pressed="false" '
+               f'data-tip="Tight rows fit more on screen" aria-label="Toggle tight rows">Tight</button>'
+               f'<label class="ball"><input type="checkbox" id="b-all"> pick page</label>{keys_hint}</div>{viewsrow}</div>')
+
+    cells = []
+    for r, d in pairs:
+        key = r["key"]
+        m = marks.get(key, "")
+        labs = labels.get(key, [])
+        back_href = href()
+        pin_on = m == "pinned"
+        rev_on = m == "reviewed"
+        ctl = (f'<div class="bctl">'
+               f'<input type="checkbox" class="bsel" name="keys" value="{e(key)}" form="bulkform" '
+               f'aria-label="{e("Pick " + (r["title"] or key))}">'
+               f'<form method="post" action="/board/mark" class="bmk" data-bmark>'
+               f'<input type="hidden" name="t" value="{e(token)}"><input type="hidden" name="keys" value="{e(key)}">'
+               f'<input type="hidden" name="mark" value="{"none" if pin_on else "pinned"}">'
+               f'<input type="hidden" name="back" value="{e(back_href)}">'
+               f'<button type="submit" class="bpin{" on" if pin_on else ""}" '
+               f'aria-label="{e("Unpin" if pin_on else "Pin to top")}" data-tip="{e("Unpin" if pin_on else "Pin to top")}">'
+               f'{"Pinned" if pin_on else "Pin"}</button></form>'
+               f'<form method="post" action="/board/mark" class="bmk" data-bmark>'
+               f'<input type="hidden" name="t" value="{e(token)}"><input type="hidden" name="keys" value="{e(key)}">'
+               f'<input type="hidden" name="mark" value="{"none" if rev_on else "reviewed"}">'
+               f'<input type="hidden" name="back" value="{e(back_href)}">'
+               f'<button type="submit" class="brev{" on" if rev_on else ""}" '
+               f'aria-label="{e("Unmark reviewed" if rev_on else "Mark reviewed")}" '
+               f'data-tip="{e("Unmark reviewed" if rev_on else "Mark reviewed")}">'
+               f'{"Reviewed ✓" if rev_on else "Reviewed"}</button></form></div>')
+        labrow = ""
+        if labs:
+            chips = []
+            for lname, c in labs:
+                chips.append(f'<span class="blab c-{e(c)}">{e(lname)}'
+                             f'<form method="post" action="/board/unlabel" class="blx" data-bunlabel>'
+                             f'<input type="hidden" name="t" value="{e(token)}"><input type="hidden" name="keys" value="{e(key)}">'
+                             f'<input type="hidden" name="label" value="{e(lname)}">'
+                             f'<input type="hidden" name="back" value="{e(back_href)}">'
+                             f'<button type="submit" aria-label="{e("Remove label " + lname)}" '
+                             f'data-tip="{e("Remove this label")}">×</button></form></span>')
+            labrow = f'<div class="blabs">{"".join(chips)}</div>'
+        art = pair_art(key, d, ph)
+        lane = LANE[r["rating"]]
+        kc = KLASS_COLOR[r["klass"]]
+        ask = M(r["ask_home"]) if r["ask_home"] is not None else f'{r["ask"]} {r["currency"]}'
+        sale = (M(r["sale_home"]) if r["sale_home"] is not None
+                else f'{r["sale_price"]} {r["sale_cur"]}' if r["sale_price"] else "—")
+        units = f'{r["units"]} sold' if r["units"] else "no sale proven"
+        bo = ('<span class="sbo" data-tip="{e("Best Offers were on: the recorded price is an upper bound")}" '
+              'title="{e("Best Offers were on: upper bound")}">offer cap</span>') if r["best_offer"] and r["units"] else ""
+        try:
+            ended = datetime.fromisoformat(r["ended"]).strftime("%d %b") if r["ended"] else ""
+        except ValueError:
+            ended = ""
+        cuts = f' · {r["cuts"]} cut{"s" if r["cuts"] != 1 else ""}' if r["cuts"] else ""
+        href_opp = f'/opp/{quote(key, safe="")}'
+        cells.append(
+            f'<div class="bcell srow{" mk-pinned" if pin_on else ""}{" mk-reviewed" if rev_on else ""}" '
+            f'data-key="{e(key)}" tabindex="0">{ctl}'
+            f'<div class="dart sart">{art}</div>'
+            f'<div class="smain"><a class="dtitle" href="{href_opp}">{e(r["title"] or key)}</a>'
+            f'<div class="smeta"><span class="dpill p-{lane}">{e(LABEL[r["rating"]])}</span>'
+            f'<span class="sklass c-{kc}" data-tip="{e(KLASS_TIP[r["klass"]])}" title="{e(KLASS_TIP[r["klass"]])}">'
+            f'{e(KLASS_LABEL[r["klass"]])}</span>{bo}</div>'
+            f'<p class="swhy">{e(r["why"])}</p>'
+            f'<details class="sgap"><summary>Why we rated it {e(LABEL[r["rating"]])}</summary><p>{e(r["gap"])}</p></details>'
+            f'{labrow}</div>'
+            f'<div class="snums"><b>{e(ask)}</b><span class="sn-l">last ask</span>'
+            f'<b>{e(sale)}</b><span class="sn-l">sale price</span>'
+            f'<span>{e(units)}</span><span>{r["lived_days"]:.0f}d live{cuts}</span>'
+            f'<span class="sn-l">{e(ended)}</span></div></div>')
+
+    pager = ""
+    if pages > 1:
+        lo, hi = max(1, page - 2), min(pages, page + 2)
+        nums = []
+        if lo > 1:
+            nums.append(f'<a href="{e(href(page=""))}">1</a>' + ("<span>…</span>" if lo > 2 else ""))
+        nums += [f'<b aria-current="page">{n}</b>' if n == page else f'<a href="{e(href(page=str(n)))}">{n}</a>'
+                 for n in range(lo, hi + 1)]
+        if hi < pages:
+            nums.append(("<span>…</span>" if hi < pages - 1 else "") + f'<a href="{e(href(page=str(pages)))}">{pages}</a>')
+        prev = f'<a class="bp-prev" href="{e(href(page=str(page - 1) if page > 2 else ""))}">←</a>' if page > 1 else ""
+        nxt = f'<a class="bp-next" href="{e(href(page=str(page + 1)))}">→</a>' if page < pages else ""
+        pager = f'<nav class="bpager" aria-label="Pages">{prev}{"".join(nums)}{nxt}</nav>'
+
+    swatches = "".join(
+        f'<label class="bsw c-{c}" data-tip="{e(c.capitalize() + " label")}"><input type="radio" name="color" value="{c}"'
+        f'{" checked" if c == "red" else ""} aria-label="{e(c.capitalize() + " label")}"><i></i></label>'
+        for c, _hex in COLORS)
+    bulk = (f'<form id="bulkform" method="post" action="/board/bulk" class="bbulk" aria-label="Handle picked listings">'
+            f'<input type="hidden" name="t" value="{e(token)}"><input type="hidden" name="back" value="{e(href())}">'
+            f'<input type="hidden" name="keys" id="b-keys" value="">'
+            f'<b class="bn"><span id="b-n">0</span> picked</b>'
+            f'<input class="bl-in" name="label" maxlength="40" placeholder="Label these…" aria-label="Label for the picked listings">'
+            f'<span class="bsws" role="radiogroup" aria-label="Label color">{swatches}</span>'
+            f'<button type="submit" name="act" value="label">Label</button>'
+            f'<button type="submit" name="act" value="pinned">Pin to top</button>'
+            f'<button type="submit" name="act" value="reviewed">Mark reviewed</button>'
+            f'<button type="submit" name="act" value="hidden" class="bhide">Hide</button>'
+            f'<button type="submit" name="act" value="none" class="bghost">Clear marks</button>'
+            f'<button type="button" id="b-clear" class="bghost">Let go</button></form>')
+
+    tick = (f'<form method="post" action="/engine/tick" class="inline btick"><input type="hidden" name="t" value="{e(token)}">'
+            f'<button>Check for new listings now</button> <a class="small" href="{e(back)}/engine">engine details</a></form>')
+    head = (f'<div class="bhead"><h1>Listings</h1>'
+            f'<p class="sub">Sold market — what the market did after we rated it. {len(rows):,} outcomes on record, '
+            f'kept so the guesses keep score.</p>{tick}</div>')
+    empty = ('<p class="empty">Nothing matches these filters. Widen an outcome, or clear the search.</p>'
+             if not cells else "")
+    if not rows:
+        empty = ('<p class="empty">No sold outcomes recorded yet. The watch records sales as it rechecks listings — '
+                 'check back after the next passes.</p>')
+    grid = f'<div class="deals bgrid sgrid" id="b-grid">{"".join(cells)}</div>' if cells else ""
+    drawer = ('<div class="bshade" id="b-shade" hidden></div>'
+              '<aside class="bdrawer" id="b-drawer" aria-label="Listing peek" aria-hidden="true">'
+              '<div class="bd-head"><b id="bd-title">Listing</b>'
+              '<a id="bd-full" href="#" class="small">Full page ↗</a>'
+              '<button type="button" id="bd-close" aria-label="Close the peek" data-tip="Close">×</button></div>'
+              '<div class="bd-body" id="bd-body"></div></aside>')
+    toast = '<div class="btoast" id="b-toast" role="status" hidden><span id="bt-msg"></span><button type="button" id="bt-undo" hidden>Undo</button></div>'
+    return (head + toolbar + ssum
+            + f'<div class="blayout">{facets}<section class="bmain" aria-label="Sold outcomes">{empty}{grid}{pager}</section></div>'
+            + bulk + drawer + toast)
+
 
 BOARD_CSS = """
 .bhead{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 18px;margin-bottom:10px}
@@ -827,6 +1140,47 @@ body.b-sel .bbulk{display:flex}
 .bmeta{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin:0 0 6px}
 body{overflow-x:clip}
 html{overflow-x:clip}
+.rhint{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border:1px solid var(--fg);
+ border-radius:50%;font-size:11px;font-weight:700;cursor:help;margin-left:6px;flex:none;background:var(--surface);color:var(--fg)}
+.rhint:hover,.rhint:focus-visible{background:#d4af6a;color:#1c1710;outline:none}
+.bsec-toggle{display:inline-flex;border:1px solid var(--fg)}
+.bsec-toggle .fchip{border:0;margin:0;padding:5px 9px;font-size:12.5px;color:var(--fg);text-decoration:none}
+.bsec-toggle .fchip.on{background:var(--fg);color:var(--bg)}
+.bcell.b-pcdeal .deal{border-color:#2fbf71;box-shadow:3px 3px 0 color-mix(in srgb,#2fbf71 45%,transparent)}
+.ssum{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 12px}
+.ssum-c{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--fg);padding:4px 10px;text-decoration:none;
+ color:var(--fg);font-size:12.5px;background:var(--surface)}
+.ssum-c i{width:9px;height:9px;background:var(--lc,var(--fg));border-radius:2px}
+.ssum-c b{font-variant-numeric:tabular-nums}
+.ssum-c.on{background:var(--fg);color:var(--bg)}
+.ssum-c:hover{border-color:var(--lc,var(--fg))}
+.ssum-t{font-size:12.5px;color:var(--muted)}
+.sgrid{display:flex;flex-direction:column;gap:10px}
+.srow{display:grid;grid-template-columns:86px 1fr 190px;gap:12px;border:1px solid var(--fg);background:var(--surface);padding:12px}
+.srow .sart{width:86px;align-self:start}
+.srow .sart img{width:100%;height:auto;display:block}
+.smain{min-width:0}
+.smeta{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:5px 0}
+.sklass{font-size:11px;font-weight:650;border:1px solid var(--lc,var(--fg));color:var(--fg);
+ background:color-mix(in srgb,var(--lc,var(--fg)) 14%,var(--surface));padding:1px 7px;white-space:nowrap}
+.sbo{font-size:10.5px;border:1px dashed var(--fg);padding:0 5px;white-space:nowrap}
+.swhy{font-size:12.5px;margin:4px 0;line-height:1.45}
+.sgap summary{font-size:12px;cursor:pointer;color:var(--muted)}
+.sgap p{font-size:12px;color:var(--muted);margin:4px 0;line-height:1.45}
+.snums{display:flex;flex-direction:column;gap:1px;font-size:12px;text-align:right;font-variant-numeric:tabular-nums}
+.snums b{font-size:14px}
+.snums .sn-l{color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px}
+.ssort{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;white-space:nowrap}
+.ssort select{border:1px solid var(--fg);background:var(--surface);color:var(--fg);font:inherit;padding:4px 6px}
+body.b-tight .srow{grid-template-columns:64px 1fr 150px;padding:7px 9px;gap:9px}
+body.b-tight .srow .sart{width:64px}
+body.b-tight .sgap,body.b-tight .swhy{display:none}
+@media(max-width:900px){
+ .srow{grid-template-columns:64px 1fr}
+ .srow .sart{width:64px}
+ .snums{grid-column:1/-1;flex-direction:row;flex-wrap:wrap;text-align:left;gap:8px;align-items:baseline}
+ .snums .sn-l{margin-bottom:0}
+}
 .cnd{display:inline-flex;align-items:center;gap:4px;font-size:11px;line-height:1.5;border:1px solid var(--lc,var(--fg));
  color:var(--fg);background:color-mix(in srgb,var(--lc,var(--fg)) 13%,var(--surface));padding:1px 6px;white-space:nowrap}
 .cnd svg{color:var(--lc,var(--fg));flex:none}
@@ -1079,6 +1433,14 @@ BOARD_JS = """
     var def={lane:'a',profit:'d',ask:'a',value:'d',fresh:'d',ends:'a',pc:'a'}[this.value]||'d';
     cur.push(this.value+':'+def);
     navSort(cur.join(','));
+  });
+
+  var ss=$('s-sort');
+  if(ss)ss.addEventListener('change',function(){
+    var u=new URL(location.href);
+    if(this.value&&this.value!=='ended:d')u.searchParams.set('sort',this.value);else u.searchParams.delete('sort');
+    u.searchParams.delete('page');
+    location.href=u.pathname+u.search;
   });
 
   /* find box: enter or a short pause */
