@@ -263,7 +263,7 @@ def _engine_line(st, now: datetime, base: str, token: str = "") -> str:
         except (ValueError, TypeError):
             sec = None
     cls = "ok" if sec is not None and sec < 1200 else ("slow" if sec is not None and sec < 86400 else "off")
-    scan = ('<button class="hun-scan hun-scanline" id="hun-scan" type="button" data-back="' + e(base) + '" data-t="' + e(token) + '" '
+    scan = ('<button class="hun-scan wizfloat" id="hun-scan" type="button" data-back="' + e(base) + '" data-t="' + e(token) + '" '
             'title="run a collector pass now"><img class="hun-wiz" src="/static/hunt.gif?v=2" alt="the hunt wizard, investigating" draggable="false">'
             '<span class="wizlab">Run the hunt</span></button>')
     if row is None:
@@ -275,7 +275,7 @@ def _engine_line(st, now: datetime, base: str, token: str = "") -> str:
                   '<b id="hun-status1">{}</b><small id="hun-status2">{}</small></span></span>').format(cls, e(l1), e(l2))
 
 
-def _hun_head(base: str, v: str, t: str, counts: dict, stats: str = "", chips: str = "", x: str = "", live: str = "", scan: str = "") -> str:
+def _hun_head(base: str, v: str, t: str, counts: dict, stats: str = "", chips: str = "", x: str = "", live: str = "") -> str:
     sig = (("all", "All", "hsn"), ("good", "Good", "hsg"), ("avg", "Average", "hsa"), ("bad", "Bad", "hsb"),
            ("none", "Unrated", "hsn"))
     xs = "&x=" + x if x in ("drop", "end") else ""
@@ -286,12 +286,12 @@ def _hun_head(base: str, v: str, t: str, counts: dict, stats: str = "", chips: s
         ("1h", "Last hour"), ("24h", "Last 24 hours"), ("all", "Any time")))
     head = ('<div class="hun-head"><div><p class="hun-kick">Freshest asks on the market, ranked by the read</p>'
             '<h2 class="hun-h">Newest listings</h2></div>' + live + '<div class="hun-stats">' + cells + '</div></div>'
-            '<div class="hun-tools"><span class="hun-fresh">' + fresh + "</span>" + chips + stats + scan +
+            '<div class="hun-tools"><span class="hun-fresh">' + fresh + "</span>" + chips + stats +
             '<a class="hun-all" href="/opportunities">All listings →</a></div>')
     return head
 
 
-def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, base: str = "/", token: str = "", pulse: str = "", live: str = "", scan: str = "") -> str:
+def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, base: str = "/", token: str = "", pulse: str = "", live: str = "") -> str:
     """The newest things actually posted, wherever they were posted: one tile per fresh listing, laser-coded."""
     if "listing" not in _tables(st):
         return ""
@@ -455,19 +455,19 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
                 + ('<span class="bi-why">' + e(why) + "</span>" if why else ""))
         entries.append((rank, seen or "",
                         '<div class="hun-item">'
-                        '<a class="hun box sig-{}" href="{}" data-key="{}" data-signal="{}">'
-                        '<span class="box-face">{}'
-                        '<span class="box-seal s-{}" title="{}" aria-label="{}" data-tip="{}">{}</span>'
-                        '<span class="box-info">{}</span>'
+                        '<a class="hun card sig-{}" href="{}" data-key="{}" data-signal="{}">'
+                        '<span class="card-face">{}'
+                        '<span class="card-seal s-{}" title="{}" aria-label="{}" data-tip="{}">{}</span>'
+                        '<span class="card-info">{}</span>'
                         '<span class="laser l-{}"></span></span>'
-                        '<span class="box-foot"><span class="box-name">{}</span>'
-                        '<span class="box-strip"><span class="box-price">{}{}</span>'
-                        '<span class="box-when">{}{}</span></span></span></a>{}</div>'.format(
+                        '<span class="card-pi"><span class="card-price">{}</span>{}</span>'
+                        '<span class="card-meta">{}<span class="card-when">{}</span></span>'
+                        '</a>{}</div>'.format(
                             e(code), e(url), e(key), e(code), art,
                             e(code), e(read), e(read), e(read), e(_SEAL.get(code, "?")),
-                            info, e(code), e((title or "")[:90]),
+                            info, e(code),
                             e(price_txt), chip, _mkt_icon(source),
-                            ((" " + e(when)) if when else "") + (" \u00b7 {} pics".format(own) if own > 1 else ""),
+                            ((e(when)) if when else "") + (" \u00b7 {} pics".format(own) if own > 1 else ""),
                             pilef)))
     entries.sort(key=lambda x: x[1], reverse=True)
     entries.sort(key=lambda x: x[0])
@@ -483,7 +483,7 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
             (("on" if x == code else "") + (" zero" if not D[code] else "")).strip(), base, v, t, "&x=" + code, tip, lab, D[code]) for code, lab, tip in (
         ("drop", "Price drops", "asking less than before, last 24 hours"),
         ("end", "Ending soon", "auctions and offers that close within six hours"))) + "</span>"
-    head = _hun_head(base, v, t, counts, pulse, chips, x, live, scan)
+    head = _hun_head(base, v, t, counts, pulse, chips, x, live)
     return ('<section class="hunzone home"><span class="reg" aria-hidden="true"><i></i><i></i><i></i><i></i></span>' + head + grid +
             '<p class="hun-note small">Signal is the read on the price: green under what to pay, amber worth a '
             'second look, red above it; unrated has no sales history yet. Most asks sit above what a card really '
@@ -570,8 +570,8 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", a
     out = [f'<section class="hero hunt"><div class="hunframe"><h1 class="huntitle" aria-label="{e(_HUNT)}">{letters}</h1></div>'
             '<p class="huntag">Collect Wisely</p>'
             '<div class="huntline">' + _search_box(big=True, game=game) + '</div></section>']
-    feed = _just_posted(st, now, game, M, qs or {}, base, token, _pulse(st, now, game, M), live, scan)
-    out.append('<div class="boardwrap">' + feed + '</div>')
+    feed = _just_posted(st, now, game, M, qs or {}, base, token, _pulse(st, now, game, M), live)
+    out.append('<div class="boardwrap">' + scan + feed + '</div>')
     wash = ('<style>main.page{max-width:min(95vw,1500px)}'
             'body{background:var(--bg)}'
             'body::before{content:"";position:fixed;inset:-32%;z-index:-1;pointer-events:none;will-change:transform;background:'
@@ -1568,16 +1568,15 @@ filter:drop-shadow(0 7px 16px rgba(0,0,0,.28));transition:transform .18s var(--e
 .hun-status b{font-size:11px;letter-spacing:.14em;color:var(--fg);text-transform:uppercase;font-weight:750}
 .hun-status small::before{content:"\00b7";margin-right:9px;color:var(--muted)}
 .hun-status small{font-size:12px;color:var(--muted);font-weight:400;letter-spacing:0;text-transform:none}
-.boardwrap{position:relative;margin-top:10px;padding-top:0}
-.hun-scanline{display:inline-flex;flex-direction:row;align-items:center;gap:8px;padding:3px 13px 3px 5px;
-border:2px solid var(--fg);border-radius:999px;background:var(--surface);cursor:pointer;font:inherit;
-font-size:11.5px;font-weight:750;letter-spacing:.1em;text-transform:uppercase;color:var(--fg);transition:transform .12s,box-shadow .12s,color .12s}
-.hun-scanline .hun-wiz{width:34px;height:46px;object-fit:contain;flex:none;filter:drop-shadow(0 3px 6px rgba(0,0,0,.25))}
-.hun-scanline .wizlab{position:static;width:auto;height:auto;overflow:visible;clip:auto;white-space:nowrap}
-.hun-scanline:hover{transform:translateY(-2px);box-shadow:2px 3px 0 rgba(0,0,0,.14);color:var(--accent)}
-.hun-scanline.busy{color:var(--accent);border-color:var(--accent)}
-.hun-scanline.busy .hun-wiz{filter:drop-shadow(0 0 10px rgba(47,191,113,.5))}
-.hun-scanline:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.boardwrap{position:relative;margin-top:14px;padding-top:calc(var(--wizh) - var(--wizdip));
+--wizh:clamp(120px,16vw,232px);--wizdip:calc(var(--wizh)*.1)}
+.wizfloat{position:absolute;top:0;left:clamp(12px,2.6vw,38px);z-index:6;display:block;padding:0;border:0;
+background:none;cursor:pointer;line-height:0}
+.wizfloat .hun-wiz{width:calc(var(--wizh)*.668);height:var(--wizh);object-fit:contain;
+filter:drop-shadow(0 10px 18px rgba(0,0,0,.30));transition:transform .18s var(--ease)}
+.wizfloat:hover .hun-wiz{transform:translateY(-4px) rotate(-1.5deg)}
+.wizfloat:focus-visible{outline:2px solid var(--accent);outline-offset:5px;border-radius:14px}
+.wizfloat .wizlab{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .hun-head .hun-live{align-self:flex-end;margin-bottom:7px}
 .hun-live{display:inline-flex;align-items:center;gap:9px;font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums;padding:4px 0}
 .hun-live i{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
@@ -1586,7 +1585,7 @@ font-size:11.5px;font-weight:750;letter-spacing:.1em;text-transform:uppercase;co
 @keyframes hunpulse{0%,100%{box-shadow:0 0 0 0 rgba(47,191,113,.35)}50%{box-shadow:0 0 0 6px rgba(47,191,113,0)}}
 .hunzone{transition:opacity .25s}
 .hunzone.home{margin-top:0}
-@media(max-width:640px){.hun-scanline .hun-wiz{width:28px;height:38px}.hun-scanline{font-size:10.5px}}
+@media(max-width:640px){.boardwrap{--wizh:112px}.wizfloat{left:16px}}
 .hunzone.home::before{content:"";position:absolute;top:0;left:0;right:0;height:4px;border-radius:26px 26px 0 0;
 background:linear-gradient(90deg,#e05252 0 16.66%,#2f6ce0 16.66% 33.33%,#d4af6a 33.33% 50%,#2fbf71 50% 66.66%,#e6a23c 66.66% 83.33%,var(--fg) 83.33%)}
 .hunzone.home .hun-h{position:relative;padding-bottom:9px}
@@ -1630,55 +1629,53 @@ transition:transform .35s cubic-bezier(.2,1.8,.4,1);transition-delay:calc(var(--
 -webkit-mask-image:var(--ink);mask-image:var(--ink);-webkit-mask-size:190px 190px;mask-size:190px 190px;
 -webkit-mask-position:calc(var(--i)*-11px) calc(var(--i)*5px);mask-position:calc(var(--i)*-11px) calc(var(--i)*5px)}
 .huntitle:hover span{transform:translateY(-7px) rotate(-4deg)}
-.hungrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(178px,1fr));gap:16px}
-a.hun.box{position:relative;display:flex;flex-direction:column;aspect-ratio:3/4;text-decoration:none;color:inherit;
-border:2px solid var(--fg);border-radius:8px 6px 9px 7px/7px 9px 6px 8px;overflow:hidden;background:var(--surface);
-box-shadow:3px 4px 0 rgba(0,0,0,.13);transition:transform .16s var(--ease),box-shadow .16s var(--ease)}
-a.hun.box:hover{transform:translate(-2px,-5px);box-shadow:6px 9px 0 rgba(0,0,0,.17)}
-a.hun.box::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;z-index:6;background:var(--axis)}
-a.hun.box.sig-good::before{background:#2fbf71}
-a.hun.box.sig-avg::before{background:#e6a23c}
-a.hun.box.sig-bad::before{background:#e05252}
-.box-face{position:relative;flex:1;min-height:0;overflow:hidden;background:var(--bg)}
-.box-art{position:absolute;inset:0;display:block}
-.box-face img.hun-img,.box-face span.hun-img{width:100%;height:100%;object-fit:cover;display:block;border:0;border-radius:0;background:var(--bg)}
-.box-face span.card.hun-img,.box-face img.card.hun-img{object-fit:contain;padding:9px;box-sizing:border-box;
-background:radial-gradient(120% 100% at 50% 0%,color-mix(in srgb,var(--fg2) 12%,var(--bg)),var(--bg))}
-.box-seal{position:absolute;top:7px;right:7px;z-index:5;width:27px;height:27px;border-radius:50%;display:flex;align-items:center;justify-content:center;
-font:900 13px/1 "Helvetica Neue",Arial,sans-serif;color:#fff;border:2px solid var(--fg);box-shadow:0 2px 6px rgba(0,0,0,.32)}
-.box-seal.s-good{background:#2fbf71}.box-seal.s-avg{background:#e6a23c}.box-seal.s-bad{background:#e05252}.box-seal.s-none{background:var(--muted)}
+.hungrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(172px,1fr));gap:24px 18px}
+a.hun.card{position:relative;display:flex;flex-direction:column;align-items:center;gap:9px;text-decoration:none;color:inherit;
+transition:transform .16s var(--ease)}
+a.hun.card:hover{transform:translateY(-4px)}
+.card-face{position:relative;width:100%;aspect-ratio:5/7;border-radius:11px;overflow:hidden;background:var(--surface);
+border:2px solid var(--line);box-shadow:0 6px 18px rgba(0,0,0,.16);transition:border-color .16s,box-shadow .16s var(--ease)}
+a.hun.card.sig-good .card-face{border-color:#2fbf71}
+a.hun.card.sig-avg .card-face{border-color:#e6a23c}
+a.hun.card.sig-bad .card-face{border-color:#e05252}
+a.hun.card:hover .card-face{box-shadow:0 13px 30px rgba(0,0,0,.24)}
+.card-face img.hun-img,.card-face span.hun-img{width:100%;height:100%;object-fit:contain;display:block;border:0;border-radius:0;background:var(--surface)}
+.card-face span.card.hun-img,.card-face img.card.hun-img{object-fit:contain;padding:0;box-sizing:border-box;background:var(--surface)}
+.card-seal{position:absolute;top:6px;right:6px;z-index:5;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+font:900 11px/1 "Helvetica Neue",Arial,sans-serif;color:#fff;box-shadow:0 2px 5px rgba(0,0,0,.3)}
+.card-seal.s-good{background:#2fbf71}.card-seal.s-avg{background:#e6a23c}.card-seal.s-bad{background:#e05252}.card-seal.s-none{background:var(--muted)}
 .laser{position:absolute;top:0;left:0;right:0;height:3px;z-index:4}
 .l-good{background:linear-gradient(90deg,#2fbf71,#5ad79a);box-shadow:0 0 10px #2fbf7180}
 .l-avg{background:linear-gradient(90deg,#e6a23c,#f0c078)}
 .l-bad{background:linear-gradient(90deg,#e05252,#f08080)}
 .l-none{background:var(--line)}
-.box-info{position:absolute;inset:0;z-index:5;display:flex;flex-direction:column;gap:5px;padding:12px 12px 14px;overflow:hidden;
-background:linear-gradient(180deg,rgba(16,19,23,.93),rgba(16,19,23,.88));color:#f4eedf;
-opacity:0;transform:translateY(10px);transition:opacity .18s var(--ease),transform .18s var(--ease);pointer-events:none}
-a.hun.box:hover .box-info,a.hun.box:focus-visible .box-info{opacity:1;transform:none}
+.card-info{position:absolute;inset:0;z-index:5;display:flex;flex-direction:column;gap:5px;padding:12px 12px 14px;overflow:hidden;
+background:linear-gradient(180deg,rgba(16,19,23,.94),rgba(16,19,23,.9));color:#f4eedf;border-radius:9px;
+opacity:0;transform:translateY(8px);transition:opacity .18s var(--ease),transform .18s var(--ease);pointer-events:none}
+a.hun.card:hover .card-info,a.hun.card:focus-visible .card-info{opacity:1;transform:none}
 .bi-read{font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:.04em;line-height:1.2}
 .bi-read.r-good{color:#5ad79a}.bi-read.r-avg{color:#f0c078}.bi-read.r-bad{color:#f08080}.bi-read.r-none{color:#c2c8ce}
 .bi-sub{font-size:11.5px;color:#d2c8b1;line-height:1.3}
 .bi-worth{font-size:12.5px;font-weight:750;color:#fff}
 .bi-why{font-size:11px;line-height:1.4;color:#c2c8b1}
-.box-info .hun-pc{color:#d2c8b1;white-space:normal;margin-top:2px}
-.box-info .hun-pc b.pclo{color:#5ad79a}.box-info .hun-pc b.pchi{color:#f0c078}
-.box-info .hun-spark{margin-top:auto}
-.box-info .hun-spark .spark{width:100%;height:26px}
-.box-foot{flex:none;display:flex;flex-direction:column;position:relative;z-index:3}
-.box-name{background:var(--fg);color:var(--bg);font-family:"Avenir Next Condensed","Arial Narrow","Helvetica Neue",sans-serif;
-font-weight:800;font-size:12.5px;line-height:1.18;padding:6px 9px 5px;text-transform:uppercase;letter-spacing:.01em;
-display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:2.36em}
-.box-strip{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:5px 9px;background:var(--surface);border-top:2px solid var(--fg)}
-.box-price{font-size:15px;font-weight:800;color:var(--fg);font-variant-numeric:tabular-nums;white-space:nowrap}
-.box-when{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.hun-deal{display:inline-block;margin-left:6px;padding:0 6px;border-radius:999px;font-size:10.5px;font-weight:750;vertical-align:1px}
+.card-info .hun-pc{color:#d2c8b1;white-space:normal;margin-top:2px}
+.card-info .hun-pc b.pclo{color:#5ad79a}.card-info .hun-pc b.pchi{color:#f0c078}
+.card-info .hun-spark{margin-top:auto}
+.card-info .hun-spark .spark{width:100%;height:26px}
+.card-pi{display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap}
+.card-price{background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:6px 20px;
+font-size:15px;font-weight:800;color:var(--fg);font-variant-numeric:tabular-nums;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.1)}
+.card-meta{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);white-space:nowrap;max-width:100%;overflow:hidden}
+.card-when{overflow:hidden;text-overflow:ellipsis}
+.hun-deal{display:inline-block;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:750}
 .hun-deal.d-good{color:#1c8a4d;background:rgba(47,191,113,.16)}
 .hun-deal.d-avg{color:#a4701d;background:rgba(230,162,60,.18)}
-@media(hover:none){.box-info{position:static;opacity:1;transform:none;background:none;color:var(--fg2);padding:8px 9px;pointer-events:auto}
-.box-info .bi-why,.box-info .hun-spark{display:none}.bi-read{font-size:11px}.bi-sub{color:var(--muted)}.bi-worth{color:var(--fg)}
-.box-info .hun-pc{color:var(--muted)}.box-face{flex:none;aspect-ratio:3/4}a.hun.box{aspect-ratio:auto}}
-@media(max-width:460px){.hungrid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}}
+@media(hover:none){.card-face{aspect-ratio:auto;overflow:visible}
+.card-face img.hun-img,.card-face span.hun-img{height:auto;aspect-ratio:5/7}
+.card-info{position:static;opacity:1;transform:none;background:none;color:var(--fg2);padding:8px 2px 0;pointer-events:auto;border-radius:0}
+.card-info .bi-why,.card-info .hun-spark{display:none}.bi-read{font-size:11px}.bi-sub{color:var(--muted)}.bi-worth{color:var(--fg)}
+.card-info .hun-pc{color:var(--muted)}}
+@media(max-width:460px){.hungrid{grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:18px 12px}}
 .mkt{display:inline-flex;align-items:center;justify-content:center;width:19px;height:19px;border-radius:50%;flex:none;
 font:700 11px/1 "Helvetica Neue",Arial,sans-serif;color:#fff}
 .huntag{margin:0 auto 20px;display:flex;align-items:center;justify-content:center;gap:16px;
@@ -1716,7 +1713,7 @@ border-radius:9px 6px 10px 7px;overflow:hidden;box-shadow:2px 3px 0 rgba(0,0,0,.
 .hun-spark .spark{width:100%;height:30px}
 .hun-pc{display:block;font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hun-pc b.pclo{color:#2fbf71;font-weight:750}.hun-pc b.pchi{color:var(--fg2);font-weight:600}
-.hungrid .hun-item .pilebtn{top:auto;bottom:8px}
+.hungrid .hun-item .pilebtn{top:8px;bottom:auto;left:8px;right:auto}
 .hun-item .pilebtn:has(.pbtn.on){opacity:1}
 @media(hover:none){.hungrid .hun-item .pilebtn{opacity:1}}
 """
