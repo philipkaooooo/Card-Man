@@ -48,7 +48,12 @@ Pricing rules: `docs/pricing-method.md` — a price comes from real sales of one
   own dot and hover snaps to the nearest one, naming the date, the price and the move since the week
   before - warm dots on a rise, cold on a fall. A 3/6/9/12-month switch rescales plot and table
   together, the change column recomputes client-side, and end tags price each live line, plus PSA/CGC
-  population.
+  population. Every capture's weekly points also go into `pc_point`, so the series deepens sweep over
+  sweep and the 9/12-month views fill out instead of stopping at one capture's window.
+- `pile.py` is a board: new additions land in a full-width staging pile at the top (fanned, draggable),
+  and each card sorts left into Set aside or right into Chases - drag it across the zones or press its
+  buttons. A chase opens at the sold typical, the live ask when there is no comp; the card stays put when
+  neither exists.
 - `alerts.py` catches asks under the typical sold price the moment they land: the engine scans each batch
   right after it is analyzed and sweeps the whole board at the end of every pass, writing one `ASK_UNDER`
   signal per printing per price point (fee math identical to the under-typical section: raw in, raw out).
