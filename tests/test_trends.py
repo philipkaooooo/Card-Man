@@ -116,11 +116,15 @@ def test_board_trend_cell_names_the_direction_and_its_evidence(tmp_path):
         add(st, f"r{i}", 120, 4 + i)
     trends.refresh(st, NOW, "TWD")
     h = view_market(st, NOW, "TWD", "TWD", {}, game="ygo")
-    assert 'class="mtrend rising"' in h and "Climbing" in h and "+20%" in h and "30d" not in h
+    assert 'class="mtrend rising"' in h and "Climbing" in h and "+20%" in h
+    cell = h.split('class="mtrend rising"', 1)[1].split("</span></div></li>", 1)[0]
+    assert "30d" not in cell                                        # the cell cites sales counts, not a day window
     assert "newest 2 vs 2 before" in h
-    assert 'class="fbar"' in h and 'class="flab">Move<' in h and 'class="flab">Order<' in h
-    assert "Climbing: up 5% or more" in h
-    assert '<a href="/market?' in h                                  # the pulse key filters the board it describes
+    assert 'class="mkph-bar"' in h and 'class="fbar"' in h and 'class="flab">Order<' in h
+    assert 'class="mtile up"' in h and 'class="mtile down"' in h and '>Climbing<' in h and '>Slipping<' in h
+    assert "Climbing: up 5% or more" in h                           # the rule sits in the bar's tooltip, not a paragraph
+    assert "Every row uses the same rule" not in h
+    assert 'href="/market?label=rising"' in h
 
 
 def test_thin_sales_take_pricechartings_year_as_the_call(tmp_path):

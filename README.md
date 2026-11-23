@@ -60,7 +60,8 @@ Pricing rules: `docs/pricing-method.md` — a price comes from real sales of one
   against the median of the k before them, k = min(5, sales/2). Up 5%+ is Climbing, down 5%+ Slipping,
   inside that Holding. Too few sales for that, PriceCharting's own weekly series for the same grade supplies
   the call from its 12-month change (the cell says `PC 12 mo`); only rows where neither can answer are Thin.
-  The pulse key above the board is clickable and filters to the same categories it counts.
+  The header draws the same four categories as a segmented bar with a clickable count tile each (a second
+  click clears the filter), plus how many live asks sit under typical and the listed / sold-30d totals.
 - A card page carries the same call beside the price (`_trend_box` in `ui_home.py`): direction, percent, and
   the evidence in plain words, with PriceCharting's weekly line drawn small and linked to the grade table.
   The old price-over-time chart is gone - it drew one flat line from a handful of backfilled sales, so the

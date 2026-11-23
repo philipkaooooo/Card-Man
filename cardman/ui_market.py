@@ -23,8 +23,8 @@ MARKET_CSS = """
 .mk-games a{padding:7px 16px;border-radius:999px;text-decoration:none;font-weight:700;font-size:14px;color:var(--fg2)}
 .mk-games a:hover{color:var(--fg)}
 .mk-games a.on{background:var(--surface);color:var(--fg);box-shadow:var(--shadow)}
-.mhead{display:grid;grid-template-columns:minmax(0,1.55fr) 118px 118px 160px 124px 100px;gap:12px;padding:0 16px 6px;
-font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+.mhead{display:grid;grid-template-columns:minmax(0,1.55fr) 118px 118px 160px 124px 100px;gap:12px;padding:4px 16px 8px;
+font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line);margin:0 0 10px}
 .mhead span{cursor:help;border-bottom:1px dotted color-mix(in srgb,var(--muted) 45%,transparent);justify-self:start}
 @media(max-width:900px){.mhead{display:none}}
 .move-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:6px 0 14px}
@@ -32,16 +32,35 @@ font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
 ul.mini{list-style:none;margin:0;padding:0}ul.mini li{padding:3px 0;font-size:13px;border-bottom:1px solid var(--line)}
 ul.mini li:last-child{border-bottom:0}.up{color:var(--teal-deep);font-weight:600}.down{color:#b3261e;font-weight:600}
 @media(max-width:760px){.move-grid{grid-template-columns:1fr}}
-.mk-sub{max-width:72ch;font-size:15px;color:var(--fg2);margin:0 0 12px}
-.mk-pulse{display:flex;height:14px;border-radius:999px;overflow:hidden;background:var(--soft);margin:2px 0 8px;max-width:720px}
-.mk-pulse span{display:block;height:100%;min-width:2px}
-.p-up{background:var(--teal)}.p-down{background:#c4553b}.p-hold{background:#c9c2b4}.p-none{background:#e6e0d4}
-.mk-pulse-k{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--fg2);margin:0 0 16px;align-items:center}
-.mk-pulse-k a{color:inherit;text-decoration:none;border-bottom:1px solid transparent;padding-bottom:1px}
-.mk-pulse-k a:hover{color:var(--fg);border-bottom-color:var(--fg2)}
-.mk-pulse-k i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:middle}
-.mk-pulse-k i.p-up,.mk-pulse-k i.p-down,.mk-pulse-k i.p-hold,.mk-pulse-k i.p-none{display:inline-block}
-.mkstat{margin-left:auto;color:var(--muted)}.mkstat b{color:var(--fg);font-variant-numeric:tabular-nums}
+.mk-top{display:flex;align-items:center;justify-content:space-between;gap:10px 16px;flex-wrap:wrap;margin:0 0 14px}
+.mk-top h1{margin:0}
+.mk-top .mk-games{margin:0}
+.mkph-bar{display:flex;gap:3px;height:30px;padding:3px;border-radius:10px;background:var(--soft);border:1px solid var(--line);
+margin:0 0 10px;max-width:860px}
+.mkph-bar a{display:block;min-width:5px;border-radius:6px;transition:filter .15s;position:relative;
+box-shadow:inset 0 1px 0 rgba(255,255,255,.35),inset 0 -10px 14px rgba(0,0,0,.10)}
+.mkph-bar a:hover{filter:brightness(1.12)}
+.mkph-bar a:focus-visible{outline:2px solid var(--fg);outline-offset:1px}
+.p-up{background:var(--teal)}.p-down{background:#c4553b}.p-hold{background:#c9c2b4}.p-none{background:#e0d9ca}
+.mkph-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 16px}
+.mtile{display:inline-flex;align-items:center;gap:8px;padding:5px 12px 5px 10px;border:1px solid var(--line);border-radius:10px;
+background:var(--surface);text-decoration:none;color:var(--fg);transition:box-shadow .15s,transform .15s,border-color .15s}
+.mtile:hover{box-shadow:var(--shadow);transform:translateY(-1px)}
+.mtile:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+.mtile b{font-size:16px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
+.mtile small{font-size:10px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+.mtile i{flex:none;width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent}
+.mtile.up i{border-bottom:8px solid var(--teal)}
+.mtile.down i{border-top:8px solid #c4553b}
+.mtile.hold i{width:10px;height:2.5px;border:0;border-radius:2px;background:var(--fg2)}
+.mtile.none i{width:8px;height:8px;border:1.5px solid var(--muted);border-radius:50%}
+.mtile.on{background:var(--fg);border-color:var(--fg);color:var(--surface)}
+.mtile.on small{color:color-mix(in srgb,var(--surface) 70%,transparent)}
+.mtile.deal{border-style:dashed;border-color:color-mix(in srgb,var(--teal) 45%,var(--line))}
+.mtile.deal b{color:var(--teal-deep)}
+.mkstat{display:inline-flex;gap:16px;margin-left:auto;font-size:12px;color:var(--fg2);align-items:baseline}
+.mkstat b{font-size:15px;color:var(--fg);font-variant-numeric:tabular-nums;margin-right:3px}
+@media(max-width:700px){.mkstat{margin-left:0}}
 .mkjump{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 6px}
 .mkjump a{font-size:12.5px;font-weight:700;color:var(--fg2);text-decoration:none;padding:4px 12px;border-radius:999px;
 border:1px solid var(--line);background:var(--surface)}
@@ -176,8 +195,9 @@ def _spark(points: list, label: str, tip: str, href: str | None = None) -> str:
             f'<small>{e(label)}</small>' + close)
 
 
-def _filters(qs: dict, sort: str, min_sales: str, counts: dict) -> str:
-    """Three named groups, each chip carrying its count, so a filter says what it keeps before it is clicked."""
+def _filters(qs: dict, sort: str, min_sales: str) -> str:
+    """Two named groups under the trend tiles, each chip carrying its count, so a filter says what it keeps
+    before it is clicked."""
     def href(key, val):
         q = {k: v for k, v in qs.items() if k not in ("msg", "err", key)}
         if val not in (None, "all", ""):
@@ -190,24 +210,15 @@ def _filters(qs: dict, sort: str, min_sales: str, counts: dict) -> str:
         b = f'<b>{n:,}</b>' if n is not None else ""
         return f'<a class="fchip{" on" if on else ""}" href="{href(key, val)}">{text}{b}</a>'
 
-    label = qs.get("label", ["all"])[0]
-    trend = [chip("label", None, "Everything", label, counts["series"]),
-             chip("label", "rising", "Climbing", label, counts["rising"]),
-             chip("label", "falling", "Slipping", label, counts["falling"]),
-             chip("label", "steady", "Holding", label, counts["steady"]),
-             chip("label", "none", "Thin", label, counts["no_trend"])]
     evidence = [chip("min", None, "Any history", min_sales),
                 chip("min", "3", "3+ sales", min_sales), chip("min", "6", "6+ sales", min_sales)]
     order = [chip("sort", "move", "Newest-vs-prior move", sort), chip("sort", "edge", "Under typical", sort),
              chip("sort", "sales", "Selling fast", sort), chip("sort", "spread", "Ask gap", sort),
              chip("sort", "recent", "Newest sale", sort)]
-    groups = (("Move", trend), ("Evidence", evidence), ("Order", order))
+    groups = (("Evidence", evidence), ("Order", order))
     return ('<div class="fbar">' + "".join(
         f'<div class="fsec"><span class="flab">{e(name)}</span>{"".join(ch)}</div>' for name, ch in groups)
-        + '</div><p class="fnote">Every row uses the same rule: the middle of its newest sales against the middle '
-        'of the sales just before them, same number on each side. Climbing: up 5% or more. Slipping: down 5% or '
-        'more. Holding: inside 5%. Too few sales here, PriceCharting\'s own 12-month series for the same grade '
-        'supplies the call; Thin means neither could.</p>')
+        + '</div>')
 
 
 def vals_default(key: str) -> str:
@@ -323,57 +334,6 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
     def pct(n):
         return max(0.0, n / total * 100)
 
-    pulse = ""
-    if s["series"]:
-        def jump(lab):
-            q = {k: v for k, v in qs.items() if k not in ("msg", "err", "label")}
-            if lab != "all":
-                q["label"] = lab
-            return "/market" + ("?" + e(urlencode(q)) if q else "")
-        segs = (("p-up", s["rising"]), ("p-down", s["falling"]), ("p-hold", s["steady"]), ("p-none", s["no_trend"]))
-        pulse = ('<div class="mk-pulse" role="img" aria-label="'
-                 f'{s["rising"]} climbing, {s["falling"]} slipping, {s["steady"]} holding, {s["no_trend"]} too thin to call">'
-                 + "".join(f'<span class="{c}" style="width:{pct(n):.1f}%"></span>' for c, n in segs if n) + '</div>'
-                 '<div class="mk-pulse-k">'
-                 f'<a href="{jump("rising")}"><i class="p-up"></i>{s["rising"]:,} climbing</a>'
-                 f'<a href="{jump("falling")}"><i class="p-down"></i>{s["falling"]:,} slipping</a>'
-                 f'<a href="{jump("steady")}"><i class="p-hold"></i>{s["steady"]:,} holding</a>'
-                 f'<a href="{jump("none")}"><i class="p-none"></i>{s["no_trend"]:,} too thin to call</a>'
-                 f'<a class="mkstat all" href="{jump("all")}"><b>{s["with_asks"]:,}</b> listed now · '
-                 f'<b>{s["n_30"]:,}</b> sales in the last 30 days</a></div>')
-    tabs = ('<div class="mk-games" role="tablist" aria-label="Game">'
-            + "".join(f'<a role="tab"{ON_TAB if g == game else ""} href="/game?{e(urlencode({"g": g, "back": "/market"}))}">'
-                      f'{e(lab)}</a>' for g, lab in (("ygo", "Yu-Gi-Oh!"), ("pkm", "Pokémon")))
-            + '</div>')
-    head = (f'<h1>The {e(name)} market</h1>' + tabs +
-            f'<p class="mk-sub">One row per exact printing and grade. <b>Typical</b> is the middle of what this version '
-            f'actually sold for, with raw sales restated to Near Mint. <b>Ask</b> is the cheapest copy on sale now - '
-            f'click it to open the listing. <b>Trend</b> puts the middle of the newest sales against the middle of the '
-            f'sales just before them; where sales are too few, PriceCharting\'s 12-month series for the same grade '
-            f'answers instead.</p>'
-            + pulse)
-    chips = _filters({**qs, "sort": sort, "min": str(min_sales)}, sort, str(min_sales),
-                     {"series": s["series"], "rising": s["rising"], "falling": s["falling"],
-                      "steady": s["steady"], "no_trend": s["no_trend"]})
-    cols = ('<div class="mhead">'
-            '<span>Card</span>'
-            '<span title="Median of this exact version\'s sales, in your currency. Uses the last 30 days when 3+ sales '
-            'sit there, otherwise all stored sales. The line under it is the middle half (p25-p75).">Typical sold</span>'
-            '<span title="Copies sold per month. The line under it: newest sale and how many sales back the number.">'
-            'Sales pace</span>'
-            '<span title="Cheapest live listing in the newest snapshot (up to 3 days old), the listing itself one click '
-            'away, and its gap to the typical price. Supply: listed count divided by the monthly sales pace.">'
-            'Cheapest ask</span>'
-            '<span title="PriceCharting\'s own weekly sold prices for this grade (Ungraded for raw rows), last 12 '
-            'months. The line under it is the year change. A verdict from a second market, not a copy of ours.">'
-            '1 yr · PC</span>'
-            '<span title="The middle of this row\'s newest sales against the middle of the sales just before them - '
-            'same count on each side, up to 5. Climbing 5%+, Slipping 5%-, else Holding. Too few sales, '
-            'PriceCharting\'s 12-month series for that grade answers instead; Thin means neither could.">'
-            'Trend</span>'
-            '</div>')
-    name_of = _name_of(cards, pkm)
-
     def fair_of(r):
         return r["median_30"] if (r["n_30"] or 0) >= 3 else r["median"]
 
@@ -410,7 +370,62 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
         if p > 0:
             deals.append((p, d))
     deals.sort(key=lambda x: -x[0])
+    under_n = len(deals)
     deals = [d for _p, d in deals[:6]]
+
+    def jump(lab):
+        q = {k: v for k, v in qs.items() if k not in ("msg", "err", "label")}
+        if lab not in ("all", label):
+            q["label"] = lab
+        return "/market" + ("?" + e(urlencode(q)) if q else "")
+
+    pulse = ""
+    if s["series"]:
+        tiles = (("rising", "up", "p-up", s["rising"], "Climbing"),
+                 ("falling", "down", "p-down", s["falling"], "Slipping"),
+                 ("steady", "hold", "p-hold", s["steady"], "Holding"),
+                 ("none", "none", "p-none", s["no_trend"], "Thin"))
+        rule = ("One rule on every row: the middle of its newest sales against the middle of the ones just before "
+                "them. Climbing: up 5% or more. Slipping: down 5% or more. Holding: inside 5%. Too few sales "
+                "here, PriceCharting's 12-month series for the same grade answers; Thin means neither could.")
+        pulse = ('<div class="mkph-bar" role="img" aria-label="Market split by trend" title="' + e(rule) + '">'
+                 + "".join(f'<a class="{bc}" style="width:{pct(n):.1f}%" href="{jump(l)}" '
+                           f'title="{n:,} {w} — show only these"></a>' for l, _c, bc, n, w in tiles if n)
+                 + '</div><div class="mkph-row">'
+                 + "".join(f'<a class="mtile {c}{" on" if label == l else ""}" href="{jump(l)}"'
+                           + (' aria-current="true"' if label == l else "")
+                           + f' title="{w}: {n:,} versions. A click keeps only these; a second click clears it.">'
+                           f'<i></i><b>{n:,}</b><small>{w}</small></a>' for l, c, _bc, n, w in tiles)
+                 + (f'<a class="mtile deal" href="#under" title="{under_n} live asks under the typical sold price '
+                    f'after fees."><b>{under_n}</b><small>under typical</small></a>' if under_n else "")
+                 + '<span class="mkstat">'
+                 + f'<span><b>{s["with_asks"]:,}</b> listed</span>'
+                 + f'<span><b>{s["n_30"]:,}</b> sold · 30d</span>'
+                 + '</span></div>')
+    tabs = ('<div class="mk-games" role="tablist" aria-label="Game">'
+            + "".join(f'<a role="tab"{ON_TAB if g == game else ""} href="/game?{e(urlencode({"g": g, "back": "/market"}))}">'
+                      f'{e(lab)}</a>' for g, lab in (("ygo", "Yu-Gi-Oh!"), ("pkm", "Pokémon")))
+            + '</div>')
+    head = f'<div class="mk-top"><h1>The {e(name)} market</h1>' + tabs + '</div>' + pulse
+    chips = _filters({**qs, "sort": sort, "min": str(min_sales)}, sort, str(min_sales))
+    cols = ('<div class="mhead">'
+            '<span>Card</span>'
+            '<span title="Median of this exact version\'s sales, in your currency. Uses the last 30 days when 3+ sales '
+            'sit there, otherwise all stored sales. The line under it is the middle half (p25-p75).">Typical sold</span>'
+            '<span title="Copies sold per month. The line under it: newest sale and how many sales back the number.">'
+            'Sales pace</span>'
+            '<span title="Cheapest live listing in the newest snapshot (up to 3 days old), the listing itself one click '
+            'away, and its gap to the typical price. Supply: listed count divided by the monthly sales pace.">'
+            'Cheapest ask</span>'
+            '<span title="PriceCharting\'s own weekly sold prices for this grade (Ungraded for raw rows), last 12 '
+            'months. The line under it is the year change. A verdict from a second market, not a copy of ours.">'
+            '1 yr · PC</span>'
+            '<span title="The middle of this row\'s newest sales against the middle of the sales just before them - '
+            'same count on each side, up to 5. Climbing 5%+, Slipping 5%-, else Holding. Too few sales, '
+            'PriceCharting\'s 12-month series for that grade answers instead; Thin means neither could.">'
+            'Trend</span>'
+            '</div>')
+    name_of = _name_of(cards, pkm)
     links = _ask_links(st, now, home, sorted({r["printing_id"] for r in rows} | {d["printing_id"] for d in deals}))
     pcrows = pc.rows_for(st, [r["printing_id"] for r in rows])
 
