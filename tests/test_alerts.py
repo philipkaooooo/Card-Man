@@ -127,3 +127,53 @@ def test_alerts_page_states_the_flow_and_the_rules(tmp_path):
     assert "did the asks turn into sales" in h.lower()
     assert "inference" in h and "Money flow by week" in h and "Gone" in h
     assert "Blue-Eyes" in h or "LOB-EN001" in h
+
+
+def _outcome(st, sid, pid, at, ask, typ, state):
+    from cardman.alert_outcomes import _SCHEMA
+    st.db.executescript(_SCHEMA)
+    with st.db:
+        st.db.execute("INSERT OR REPLACE INTO alert_outcome (signal_id, printing_id, key, at, ask, typical, state, "
+                      "checked) VALUES (?,?,?,?,?,?,?,?)", (sid, pid, None, at.isoformat(), ask, typ, state, at.isoformat()))
+
+
+def test_dead_print_stops_alerting(tmp_path):
+    from cardman import alert_outcomes
+    st = seed(tmp_path)
+    for i in range(4):                                   # four past alerts on P, none of them sold
+        _outcome(st, f"old{i}", P, NOW - timedelta(days=30 - i), 1500, 2000, "GONE")
+    assert alert_outcomes.sell_through(st)[0][P]["n"] == 4
+    add_ask(st, P, 1500)
+    assert alerts.scan(st, NOW, "TWD") == 0
+
+
+def test_one_good_print_keeps_alerting(tmp_path):
+    from cardman import alert_outcomes
+    st = seed(tmp_path)
+    for i in range(4):
+        _outcome(st, f"old{i}", P, NOW - timedelta(days=30 - i), 1500, 2000, "SOLD_NEAR")
+    rates, _ = alert_outcomes.sell_through(st)
+    assert rates[P]["rate"] > alert_outcomes.DEAD_RATE
+    add_ask(st, P, 1500)
+    assert alerts.scan(st, NOW, "TWD") == 1
+
+
+def test_bell_ranks_by_money_times_sell_through(tmp_path):
+    st = seed(tmp_path)
+    for i, d in enumerate((2, 5, 9)):
+        when = NOW - timedelta(days=d)
+        st.add_observation(MarketObservation(
+            id=f"q{i}", evidence_type=ET.MARKETPLACE_MARKED_SOLD, source="ebay_browse:EBAY_US",
+            original_amount=D("2000"), currency="TWD", event_time=when, capture_time=when,
+            source_url=f"fixture://q{i}", printing_candidates=(Q,)), now=NOW)
+    trends.refresh(st, NOW, "TWD")
+    for i in range(4):                                  # P's past alerts sold; Q's mostly did not
+        _outcome(st, f"p-old{i}", P, NOW - timedelta(days=40, minutes=i), 1500, 2000, "SOLD_NEAR")
+        _outcome(st, f"q-old{i}", Q, NOW - timedelta(days=40, minutes=i), 1500, 2000,
+                 "SOLD_NEAR" if i == 0 else "GONE")
+    add_ask(st, P, 1500)                                # same money on the table as Q's ask
+    add_ask(st, Q, 1500, key="l2")                      # the one difference is which print sells
+    assert alerts.scan(st, NOW, "TWD") == 2
+    got = alerts.recent(st, now=NOW)
+    assert [g["pid"] for g in got] == [P, Q]
+    assert got[0]["rate"] > got[1]["rate"] and got[0]["weight"] > got[1]["weight"]

@@ -33,6 +33,10 @@ box-shadow:6px 8px 0 rgba(0,0,0,.12);z-index:45;padding:6px}
 .afoot a:hover,.afoot button:hover{text-decoration:underline}
 .ach{display:inline-block;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:800;letter-spacing:.04em;
 text-transform:uppercase;border:1px solid var(--line)}
+.ait.dead{opacity:.55}
+.arate{display:block;width:64px;height:4px;border-radius:3px;background:color-mix(in srgb,var(--teal) 14%,var(--surface));margin-top:3px;overflow:hidden}
+.arate i{display:block;height:100%;background:var(--teal)}
+.arate.low i{background:#c4553b}
 .ach.sold{color:#1d6b4f;border-color:#1d6b4f;background:color-mix(in srgb,#1d6b4f 10%,var(--surface))}
 .ach.gone{color:var(--muted);border-color:var(--line)}
 .ach.open{color:#9a6a15;border-color:#9a6a15;background:color-mix(in srgb,#9a6a15 9%,var(--surface))}
@@ -78,6 +82,8 @@ function item(it){
  else if(it.state==='GONE')a.appendChild(h('small',null,'gone, no matching sale'));
  else if(it.state==='OPEN')a.appendChild(h('small',null,'still live'));
  if(it.hit&&it.hit.n>=2)a.appendChild(h('small',null,'this print: '+it.hit.sold+' of '+it.hit.n+' past alerts sold'));
+ if(it.hist_n>=2&&it.rate!=null){var m=h('span','arate'+(it.dead?' low':''));var bar=h('i');bar.style.width=Math.round((it.rate||0)*100)+'%';m.appendChild(bar);m.title='Past alerts on this print sold '+(it.hit?it.hit.sold+' of '+it.hit.n:Math.round(it.rate*100)+'%');a.appendChild(m)}
+ if(it.dead)a.className='ait dead';
  a.onclick=function(){see([it.id]);setTimeout(function(){paint(cur)},0)};
  return a}
 function paint(items){

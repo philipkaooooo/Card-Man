@@ -55,7 +55,9 @@ Pricing rules: `docs/pricing-method.md` — a price comes from real sales of one
   evidence, a vanished ask counts as sold near the ask only when a raw sale of the same print lands inside the
   ask band within 21 days, and anything else is gone. The Alerts page (`/alerts`) shows sell-through, the money
   caught and the edge left on the table per week, plus every followed signal with what actually happened; the
-  bell shows each ask's state and how past alerts on that print resolved.
+  bell shows each ask's state and how past alerts on that print resolved. Sell-through feeds back: with four or
+  more resolved alerts, a print under 25% stops alerting, and the bell and toasts are ordered by money at stake
+  times that print's past sell-through, each ask carrying a meter of its rate.
 - The board's **Trend** column (`trends.py`) uses one rule on every row: the median of the newest k sales
   against the median of the k before them, k = min(5, sales/2). Up 5%+ is Climbing, down 5%+ Slipping,
   inside that Holding. Too few sales for that, PriceCharting's own weekly series for the same grade supplies

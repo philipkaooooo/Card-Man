@@ -214,3 +214,31 @@ def ledger(st, days: int = 60, limit: int = 60, now: datetime | None = None) -> 
                     "sale_price": sale_price, "sale_at": sale_at, "note": note,
                     "label": d.get("label") or pid, "href": card_href(key) if key else None})
     return out
+
+
+def sell_through(st, pids: list[str] | None = None) -> tuple[dict[str, dict], float]:
+    """How often past alerts on each print actually sold, smoothed toward the whole desk's rate so two misses on a
+    quiet print do not bury it and two wins do not crown it. Returns ({pid: {sold, n, rate}}, desk_rate)."""
+    if "alert_outcome" not in _tables(st):
+        return {}, 0.35
+    where, args = "WHERE state<>'OPEN'", ()
+    if pids:
+        where += f" AND printing_id IN ({','.join('?' * len(pids))})"
+        args = tuple(pids)
+    rows = st.db.execute(f"SELECT printing_id, SUM(state IN ('SOLD','SOLD_NEAR')), COUNT(*) "
+                         f"FROM alert_outcome {where} GROUP BY printing_id", args).fetchall()
+    sold = sum(int(r[1] or 0) for r in rows)
+    n = sum(int(r[2] or 0) for r in rows)
+    prior = (sold / n) if n >= 5 else 0.35
+    out = {}
+    for pid, s, c in rows:
+        s, c = int(s or 0), int(c or 0)
+        out[pid] = {"sold": s, "n": c, "rate": (s + 2 * prior) / (c + 2)}
+    return out, prior
+
+
+DEAD_N, DEAD_RATE = 4, 0.25   # enough history and this little sell-through: the print stops alerting
+
+
+def dead(rate: float, n: int) -> bool:
+    return n >= DEAD_N and rate < DEAD_RATE

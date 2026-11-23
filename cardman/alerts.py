@@ -101,6 +101,11 @@ def scan(st, now: datetime, home: str, pids: list[str] | None = None) -> int:
     asks = _asks(st, now, home, pids)
     if not asks:
         return 0
+    try:
+        from .alert_outcomes import dead, sell_through
+        rates, _prior = sell_through(st)
+    except Exception:
+        rates, dead = {}, lambda rate, n: False
     add = list(asks)
     typ = _typicals(st, add)
     st.db.executescript(_SCHEMA)
@@ -118,6 +123,9 @@ def scan(st, now: datetime, home: str, pids: list[str] | None = None) -> int:
             disc = (fair - ask) / fair
             if disc < MIN_DISCOUNT or fair * (1 - fee_pct) - k_buy * ask <= 0:
                 continue
+            hist = rates.get(pid)
+            if hist and dead(hist["rate"], hist["n"]):
+                continue        # a print whose past alerts keep dying does not get a new one
             label = label_for(pid)
             detail = {"label": label, "ask": round(ask, 2), "typical": round(fair, 2),
                       "pct": round(disc * 100, 1), "cur": home, "game": _game(pid), "day": day,
@@ -173,5 +181,20 @@ def recent(st, days: int = 7, limit: int = 30, now: datetime | None = None) -> l
                     "state": (states.get(sid) or ("OPEN", None, None))[0],
                     "days": (states.get(sid) or ("OPEN", None, None))[1],
                     "sale": (states.get(sid) or ("OPEN", None, None))[2],
-                    "hit": hits.get(pid)})
+                    "hit": hits.get(pid), "rate": None, "hist_n": None, "dead": False, "weight": 0.0})
+    from .alert_outcomes import dead, sell_through
+    rates, prior = sell_through(st)
+    try:
+        from .engine import load_profile
+        k_buy, fee_pct = _fees(load_profile())
+    except Exception:
+        k_buy, fee_pct = 1.0, 0.0
+    for it in out:
+        hist = rates.get(it["pid"])
+        rate = hist["rate"] if hist else prior
+        n_hist = hist["n"] if hist else 0
+        edge = (it.get("typical") or 0) * (1 - fee_pct) - k_buy * (it.get("ask") or 0)
+        it.update(rate=round(rate, 3), hist_n=n_hist, dead=dead(rate, n_hist),
+                  weight=round(rate * max(edge, 0), 2))
+    out.sort(key=lambda x: (x["weight"], x["at"]), reverse=True)   # money at stake, then recency
     return out
