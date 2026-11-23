@@ -409,11 +409,11 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     from .ui_import import IMPORT_CSS
     from .ui_listing import LISTING_CSS
     from .ui_settings import SETTINGS_CSS
-    from .ui_chart import CHART_CSS
     from .ui_pc import PC_CSS
     from .ui_market import MARKET_CSS
     from .ui_icons import EFFECTS_CSS, ICON_CSS, SPRITE
     from .ui_decide import DECIDE_CSS
+    from .ui_alerts import BELL, CSS as ALERTS_CSS
     from .zone import CHAR_CSS
     theme = theme if theme in THEMES else "market"
     where = NAV_OF.get(nav, "")
@@ -452,8 +452,8 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     tz = datetime.now().astimezone().strftime("UTC%z")
     return (f'<!doctype html><html lang="en" data-theme="{"vault" if theme == "vault" else "auto"}"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)} · CardMan</title>'
-            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{CHART_CSS}{PC_CSS}{ICON_CSS}{EFFECTS_CSS}{PRINT_CSS}{SHELL_CSS}{DECIDE_CSS}{CHAR_CSS}{MARKET_CSS}</style></head><body>{SPRITE}'
-            + scope_links(f'<header class="top"><a class="logo" href="/">CardMan</a><nav class="main" aria-label="Main">{links}</nav>{hsearch}'
+            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{PC_CSS}{ICON_CSS}{EFFECTS_CSS}{PRINT_CSS}{SHELL_CSS}{DECIDE_CSS}{CHAR_CSS}{MARKET_CSS}{ALERTS_CSS}</style></head><body>{SPRITE}'
+            + scope_links(f'<header class="top"><a class="logo" href="/">CardMan</a><nav class="main" aria-label="Main">{links}</nav>{BELL}{hsearch}'
                           f'{games}{curs}</header><main class="page">{crumb}{flash}{body}</main>', game) +
             f'<footer class="foot">Private to this Mac · times {e(tz)} · press <kbd>/</kbd> to search</footer>'
             f'<script src="/static/ui.js?v={_js_version()}"></script></body></html>').encode()
@@ -1494,12 +1494,12 @@ def _js_version() -> str:
     """Changes whenever the script changes, so a browser never keeps running an old copy."""
     if not _JSV:
         import hashlib
-        from .ui_chart import CHART_JS
         from .ui_home import HOME_JS
         from .ui_import import IMPORT_JS
         from .ui_decide import DECIDE_JS
         from .ui_pc import PC_JS
-        _JSV.append(hashlib.sha256((JS + HOME_JS + IMPORT_JS + CHART_JS + DECIDE_JS + PC_JS).encode()).hexdigest()[:10])
+        from .ui_alerts import JS as ALERTS_JS
+        _JSV.append(hashlib.sha256((JS + HOME_JS + IMPORT_JS + DECIDE_JS + PC_JS + ALERTS_JS).encode()).hexdigest()[:10])
     return _JSV[0]
 
 
@@ -2106,10 +2106,10 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                 st.db.close()
                 from .ui_home import HOME_JS
                 from .ui_import import IMPORT_JS
-                from .ui_chart import CHART_JS
                 from .ui_decide import DECIDE_JS
                 from .ui_pc import PC_JS
-                return self._send(200, (JS + HOME_JS + IMPORT_JS + CHART_JS + DECIDE_JS + PC_JS).encode(), "text/javascript; charset=utf-8")
+                from .ui_alerts import JS as ALERTS_JS
+                return self._send(200, (JS + HOME_JS + IMPORT_JS + DECIDE_JS + PC_JS + ALERTS_JS).encode(), "text/javascript; charset=utf-8")
             if len(parts) == 3 and parts[0] == "card" and parts[1].isdigit() and parts[2] in ("history.json", "history.html"):
                 try:
                     from .identity import edition_variants
@@ -2152,6 +2152,14 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                 st.db.close()
                 from .ui_home import suggest_json
                 return self._send(200, suggest_json(cards, qs.get("q", [""])[0][:80]), "application/json; charset=utf-8")
+            if parts == ["alerts.json"]:
+                from . import alerts as _alerts
+                try:
+                    items = _alerts.recent(st)
+                except Exception:
+                    items = []
+                st.db.close()
+                return self._send(200, json.dumps({"items": items}, ensure_ascii=False).encode(), "application/json; charset=utf-8")
             if parts == ["theme"]:
                 st.db.close()
                 t = qs.get("t", [""])[0]

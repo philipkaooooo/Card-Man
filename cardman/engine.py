@@ -77,6 +77,7 @@ class TickReport:
     seconds: float = 0.0
     ask_rows: int = 0
     trends: int = 0
+    alerts: int = 0
     errors: list[str] = field(default_factory=list)
     routes: list[dict] = field(default_factory=list)
     ebay_sold: dict = field(default_factory=dict)
@@ -542,6 +543,18 @@ class Engine:
                     self.analyze_listing(k, book, now, rep)
                 except Exception as x:
                     rep.errors.append(f"{k}: {type(x).__name__}: {x}")
+            if fresh:   # an ask that beats its typical alerts now, not when the pass finishes
+                try:
+                    from . import alerts
+                    from .card_market import ensure_index
+                    ensure_index(self.store)      # the batch is not in card_listing until the index catches up
+                    marks = ",".join("?" * len(fresh))
+                    pids = [r[0] for r in self.db.execute(
+                        f"SELECT DISTINCT printing_id FROM card_listing WHERE key IN ({marks}) AND printing_id IS NOT NULL",
+                        fresh)]
+                    rep.alerts += alerts.scan(self.store, now, home, pids=pids) if pids else 0
+                except Exception as x:
+                    rep.errors.append(f"alerts: {type(x).__name__}: {x}")
 
         for route in (self.inbox, self.ebay):
             rep.routes.append(asdict(route.status()))
@@ -608,6 +621,13 @@ class Engine:
             rep.trends = refresh_trends(self.store, now, home)
         except Exception as x:
             rep.errors.append(f"trend board: {type(x).__name__}: {x}")
+        try:
+            from . import alerts
+            from .card_market import ensure_index
+            ensure_index(self.store)
+            rep.alerts += alerts.scan(self.store, now, home)
+        except Exception as x:
+            rep.errors.append(f"alerts: {type(x).__name__}: {x}")
         rep.open_opportunities = self.db.execute("SELECT COUNT(*) FROM opportunity WHERE status=?", (OPEN,)).fetchone()[0]
         rep.seconds = round(time.monotonic() - started, 3)
         with self.db:

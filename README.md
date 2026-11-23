@@ -46,10 +46,20 @@ Pricing rules: `docs/pricing-method.md` — a price comes from real sales of one
   profit in currency and the most the raw may cost when no ask is low enough. Each card page carries a
   PriceCharting section of its own (`ui_pc.py`): all six grades selectable, one line each, hover for the
   week's sold price, plus the table and PSA/CGC population.
+- `alerts.py` catches asks under the typical sold price the moment they land: the engine scans each batch
+  right after it is analyzed and sweeps the whole board at the end of every pass, writing one `ASK_UNDER`
+  signal per printing per price point (fee math identical to the under-typical section: raw in, raw out).
+  The bell in the header polls `/alerts.json` every 40 s, badges what is unseen, toasts new asks while the app
+  is open, and can post a desktop notification after one explicit click. Every alert links to its card page.
 - The board's **Trend** column (`trends.py`) uses one rule on every row: the median of the newest k sales
   against the median of the k before them, k = min(5, sales/2). Up 5%+ is Climbing, down 5%+ Slipping,
-  inside that Holding; fewer than four sales is Thin and says so instead of guessing. The pulse key above the
-  board is clickable and filters to the same categories it counts.
+  inside that Holding. Too few sales for that, PriceCharting's own weekly series for the same grade supplies
+  the call from its 12-month change (the cell says `PC 12 mo`); only rows where neither can answer are Thin.
+  The pulse key above the board is clickable and filters to the same categories it counts.
+- A card page carries the same call beside the price (`_trend_box` in `ui_home.py`): direction, percent, and
+  the evidence in plain words, with PriceCharting's weekly line drawn small and linked to the grade table.
+  The old price-over-time chart is gone - it drew one flat line from a handful of backfilled sales, so the
+  space belongs to the trend and the sales table stays below.
 - Raw sales are restated to Near Mint on the condition ladder (`conditions.py`) before any median, and a raw
   ask in a played condition is restated up to NM the same way, so a cheaper lower-grade copy never poses as a
   cheap NM copy. Unknown condition stays NM - it is never guessed.
