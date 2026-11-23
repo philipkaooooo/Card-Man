@@ -74,27 +74,52 @@ def test_view_prices_from_sales_and_flags_the_ones_without_a_comp(tmp_path):
     assert "Best return per dollar" in page
     assert "Dark Magician LOB no comps" in page
     assert page.count('action="/pile/remove"') == 2
-    assert "2 waiting in the pile, 0 set aside" in page
-    assert "0 chases running" in page
+    assert page.count('class="pcard cut') == 2
+    assert "The pile" in page and "Chases" in page
 
 
 def test_view_with_an_empty_pile_says_so(tmp_path):
     page = view(seed(tmp_path), None, M(), NOW, "tok")
     assert "Nothing in the pile yet." in page
-    assert "0 waiting in the pile, 0 set aside" in page
     assert 'data-zone="pile"' in page and 'data-zone="set"' in page and 'data-zone="chase"' in page
+    assert "The Card Pile" in page and 'class="pad"' in page
 
 
 def test_new_additions_land_in_the_pile_and_sort_left(tmp_path):
     st = seed(tmp_path)
     add(st, KEY, NOW)
     page = view(st, None, M(), NOW, "tok")
-    assert "1 waiting in the pile, 0 set aside" in page
-    assert 'class="zone zone-pile"' in page and 'action="/pile/sort"' in page
+    assert 'data-side="pile"' in page
+    assert 'class="zcol zc-pile"' in page and 'action="/pile/sort"' in page
     set_side(st, KEY, "set")
     page = view(st, None, M(), NOW, "tok")
-    assert "0 waiting in the pile, 1 set aside" in page
-    assert "← Set aside" in page and "Chases →" in page
+    assert 'data-side="set"' in page and "Set aside" in page
+
+
+def test_a_card_version_adds_and_renders_as_a_cutout(tmp_path):
+    from cardman.pile import known
+    st = seed(tmp_path)
+    key = "card:pk:EN:sv1-249:holo@pkm-sv1-249"
+    assert known(st, key) is True
+    assert known(st, "card:no-at-sign") is False
+    add(st, key, NOW)
+    page = view(st, None, M(), NOW, "tok")
+    assert 'data-key="card:pk:EN:sv1-249:holo@pkm-sv1-249"' in page
+    assert "pkm-sv1-249" in page and "today" in page
+    assert page.count('class="pcard cut') == 1
+
+
+def test_a_tcgplayer_product_link_resolves_to_the_stored_ask(tmp_path):
+    st = seed(tmp_path)
+    with st.db:
+        st.db.execute("INSERT INTO public_listing VALUES ('tcgplayer','1','42347','tcg:42347|Holofoil','Dragonite',"
+                      "'4','Holofoil','Near Mint','English','10','1','ask',0,NULL,NULL,NULL,'ask','t')")
+        st.db.execute("INSERT INTO public_listing VALUES ('tcgplayer','2','42347','tcg:42347|Holofoil','Dragonite',"
+                      "'4','Holofoil','Damaged','English','1','0','ask',0,NULL,NULL,NULL,'ask','t')")
+    assert resolve(st, "https://www.tcgplayer.com/product/42347/pokemon-fossil-dragonite") == "tcg:42347|Holofoil"
+    add(st, "tcg:42347|Holofoil", NOW)
+    page = view(st, None, M(), NOW, "tok")
+    assert "tcg:42347|Holofoil" in page and "Dragonite" in page and "$11" in page
 
 
 def test_sort_right_starts_a_chase_at_the_sold_typical(tmp_path):

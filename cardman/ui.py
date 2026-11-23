@@ -2017,7 +2017,8 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                 if parts == ["pile"]:
                     from .pile import view as view_pile
                     return self._page("pile", "Card Pile", view_pile(st, idx, EngineMoney(st, _engine_home(st), self._cur(), now), now, token,
-                                                                      game="pkm", back="/pkm/pile"), qs)
+                                                                      game="pkm", back="/pkm/pile",
+                                                                      added=qs.get("added", [""])[0][:512]), qs)
                 if parts == ["search"]:
                     from .ui_home import Money, view_search
                     q = qs.get("q", [""])[0][:120]
@@ -2269,7 +2270,8 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     self._page("home", "Home", view_home(st, cards, now, self._cur(), self._theme(), assumed_costs=assumed, EM=EM, qs=qs, token=token), qs)
                 elif parts == ["pile"]:
                     from .pile import view as view_pile
-                    self._page("pile", "Card Pile", view_pile(st, cards, EngineMoney(st, _engine_home(st), self._cur(), now), now, token), qs)
+                    self._page("pile", "Card Pile", view_pile(st, cards, EngineMoney(st, _engine_home(st), self._cur(), now), now, token,
+                                                              added=qs.get("added", [""])[0][:512]), qs)
                 elif parts == ["deals"]:
                     self._page("deals", "Deals", view_deals(st, now, self._cur(), qs.get("syn", [""])[0] == "1"), qs)
                 elif parts == ["search"]:
@@ -2402,9 +2404,13 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
             st = Store(store_path)
             now = clock()
             try:
-                def _pile_back():
+                def _pile_back(added: str = ""):
                     b = form.get("back", "")
-                    return b if b.startswith("/") and not b.startswith("//") else "/pile"
+                    if not (b.startswith("/") and not b.startswith("//")):
+                        b = "/pile"
+                    if added:
+                        b += ("&" if "?" in b else "?") + urlencode({"added": added})
+                    return b
 
                 if parts[:1] == ["board"]:
                     from . import ui_board as B
@@ -2466,16 +2472,18 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     from .pile import add as pile_add, resolve as pile_resolve
                     key = pile_resolve(st, form.get("url", "")[:2048])
                     if not key:
-                        self._redirect(_pile_back(), err="Not in the store yet. Open the listing once under Listings, then add it here.")
+                        self._redirect(_pile_back(), err="No card behind that link yet. Try a TCGplayer product link, an eBay listing link, or an item number.")
                     else:
-                        self._redirect(_pile_back(), msg="Dropped in the pile - sort it left or right." if pile_add(st, key, now) else "Already in the pile.")
+                        self._redirect(_pile_back(key), msg="In the pile - sort it left or right."
+                                        if pile_add(st, key, now) else "Already in the pile.")
                 elif parts == ["pile", "add"]:
-                    from .pile import add as pile_add
+                    from .pile import add as pile_add, known as pile_known
                     key = form.get("key", "")[:512]
-                    if not st.db.execute("SELECT 1 FROM listing WHERE key=?", (key,)).fetchone():
-                        self._redirect(_pile_back(), err="That listing is not in the store.")
+                    if not pile_known(st, key):
+                        self._redirect(_pile_back(), err="That card is not in the store yet.")
                     else:
-                        self._redirect(_pile_back(), msg="Dropped in the pile - sort it left or right." if pile_add(st, key, now) else "Already in the pile.")
+                        self._redirect(_pile_back(key), msg="In the pile - sort it left or right."
+                                        if pile_add(st, key, now) else "Already in the pile.")
                 elif parts == ["pile", "sort"]:
                     from .pile import sort as pile_sort
                     res = pile_sort(st, form.get("key", "")[:512], form.get("side", ""), now, _engine_home(st))

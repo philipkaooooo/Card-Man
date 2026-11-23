@@ -708,6 +708,20 @@ def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalo
     details = [("Card number", c["passcode"]), ("Konami ID", c.get("konami_id"))] + [
         (f"Tournament status ({k.upper()})", lim) for k, lim in limits.items() if k in ("tcg", "ocg")]
     pend = f'<div class="pend"><small>Pendulum effect</small>{_para(c.get("pend_en"))}</div>' if c.get("pend_en") else ""
+    cpile = ""
+    if token and chosen:
+        try:
+            from .pile import keys as _pile_keys
+            _has = ("card:" + chosen) in frozenset(_pile_keys(st))
+        except Exception:
+            _has = False
+        _back = f"/pkm/card/{passcode[4:]}" if pkm else f"/card/{passcode}"
+        _say = "In the Card Pile - remove" if _has else "Add this version to the Card Pile"
+        cpile = (f'<form class="cpile" method="post" action="/pile/{"remove" if _has else "add"}">'
+                 f'<input type="hidden" name="t" value="{e(token)}"><input type="hidden" name="key" value="card:{e(chosen)}">'
+                 f'<input type="hidden" name="back" value="{e(_back)}">'
+                 f'<button class="pbtn{" on" if _has else ""}" type="submit" title="{_say}" aria-label="{_say}">'
+                 f'{"✓" if _has else "＋"}</button></form>')
     from .ui_pc import section as pc_section
     if pkm:
         from .character import slug as _slug, species_of
@@ -717,7 +731,7 @@ def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalo
                f'<p class="cja"><a href="/pkm/character/{e(_slug(who))}">{e(who)} market</a> · each card priced on its own</p>'
                f'<p class="cja">{e(c.get("set_name"))} · {e(c.get("number"))}/{e(c.get("printed_total"))} · {e(c.get("rarity") or "")}</p>')
         return (
-            f'<div class="cardpage"><div class="cp-img">{img(passcode, "", c.get("name_en") or "", cls="card big")}</div>'
+            f'<div class="cardpage"><div class="cp-img">{img(passcode, "", c.get("name_en") or "", cls="card big")}{cpile}</div>'
             f'<div class="cp-info">{top}' + picker + price_row + _pkm_details(c) + '</div></div>'
             + pc_section(st, chosen, cur, now)
             + _market_section(passcode, market, chosen, by_id, M, now, f)
@@ -725,7 +739,7 @@ def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalo
             + _versions_table(passcode, all_v, chosen, value, listed, M)
             + (_sale_form(passcode, all_v, chosen, token, now) + _chase_form(passcode, all_v, chosen, token, c.get("name_en") or "") if token else ""))
     return (
-        f'<div class="cardpage"><div class="cp-img">{img(passcode, "", c.get("name_en") or "", cls="card big")}</div>'
+        f'<div class="cardpage"><div class="cp-img">{img(passcode, "", c.get("name_en") or "", cls="card big")}{cpile}</div>'
         f'<div class="cp-info"><p class="crumb">{e(c.get("card_type") or "")}{" · " + e(c["type_line"]) if c.get("type_line") else ""}</p>'
         f'<h1 class="cname">{e(c.get("name_en") or ja)}</h1>'
         + (f'<p class="cja">{e(ja)}{" <span>(" + e(c["reading"]) + ")</span>" if c.get("reading") and c.get("reading") != ja else ""}</p>' if ja else "")
