@@ -20,7 +20,7 @@ _ITEM = re.compile(r"/itm/(?:[^/?#]+/)?(\d{9,})")
 _BARE = re.compile(r"^(\d{9,})$")
 
 _SCHEMA = """
-CREATE TABLE IF NOT EXISTS card_pile (key TEXT PRIMARY KEY, added_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS card_pile (key TEXT PRIMARY KEY, added_at TEXT NOT NULL, side TEXT NOT NULL DEFAULT 'set');
 CREATE TABLE IF NOT EXISTS pile_price (
     key TEXT NOT NULL, at TEXT NOT NULL, ask REAL, resale REAL, PRIMARY KEY (key, at));
 CREATE TABLE IF NOT EXISTS chase (
@@ -29,22 +29,76 @@ CREATE TABLE IF NOT EXISTS chase (
     last_ask REAL, last_fair REAL, seen_at TEXT);
 """
 
+SIDES = ("pile", "set", "chase")
+
 
 def ensure(db) -> None:
     db.executescript(_SCHEMA)
+    if "side" not in {r[1] for r in db.execute("PRAGMA table_info(card_pile)")}:
+        db.execute("ALTER TABLE card_pile ADD COLUMN side TEXT NOT NULL DEFAULT 'set'")
 
 
 def _tables(st) -> set[str]:
     return {r[0] for r in st.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
 
 
-def add(st, key: str, now: datetime) -> bool:
-    """True when the key was not already in the pile."""
+def add(st, key: str, now: datetime, side: str = "pile") -> bool:
+    """True when the key was not already in the pile. New additions land in the pile, unfiled."""
     ensure(st.db)
     had = st.db.execute("SELECT 1 FROM card_pile WHERE key=?", (key,)).fetchone()
     with st.db:
-        st.db.execute("INSERT OR REPLACE INTO card_pile VALUES (?,?)", (key, now.isoformat()))
+        if had:
+            st.db.execute("UPDATE card_pile SET added_at=? WHERE key=?", (now.isoformat(), key))
+        else:
+            st.db.execute("INSERT INTO card_pile VALUES (?,?,?)", (key, now.isoformat(), side))
     return had is None
+
+
+def set_side(st, key: str, side: str) -> None:
+    ensure(st.db)
+    if side not in SIDES:
+        return
+    with st.db:
+        st.db.execute("UPDATE card_pile SET side=? WHERE key=?", (side, key))
+
+
+def _card_of(st, key: str) -> tuple[str, str | None]:
+    """Passcode and printing for a pile key, from the engine's own card index."""
+    if "card_listing" in _tables(st):
+        r = st.db.execute("SELECT passcode, printing_id FROM card_listing WHERE key=? "
+                          "ORDER BY card_prob DESC LIMIT 1", (key,)).fetchone()
+        if r:
+            return (r[0] or ""), r[1]
+    return "", None
+
+
+def sort(st, key: str, side: str, now: datetime, home: str) -> str:
+    """File a pile card left (set aside) or right (chase). A chase takes the sold typical as its threshold,
+    the live ask when there is no comp; a card with neither stays in the pile."""
+    ensure(st.db)
+    if side not in SIDES:
+        return "bad"
+    if not st.db.execute("SELECT 1 FROM card_pile WHERE key=?", (key,)).fetchone():
+        return "missing"
+    if side != "chase":
+        set_side(st, key, side)
+        return "ok"
+    passcode, printing = _card_of(st, key)
+    if not passcode:
+        return "nocard"
+
+    def _m(v, sign=False):
+        return "—" if v is None else f"{v:,.2f}"
+
+    it = next((i for i in _items(st, _m) if i["key"] == key), None)
+    if it is None:
+        return "missing"
+    th = it["resale"] if it["resale"] else it["ask"]
+    if not th or float(th) <= 0:
+        return "noprice"
+    chase_add(st, passcode, it["printing_id"] or printing or "", it["title"], round(float(th), 2), home, now)
+    remove(st, key)
+    return "ok"
 
 
 def remove(st, key: str) -> None:
@@ -225,7 +279,7 @@ def _items(st, M) -> list[dict]:
     ensure(st.db)
     have = _tables(st)
     out = []
-    for (key,) in st.db.execute("SELECT key FROM card_pile ORDER BY added_at DESC"):
+    for key, side in st.db.execute("SELECT key, side FROM card_pile ORDER BY added_at DESC"):
         row = None
         if "listing" in have:
             row = st.db.execute(
@@ -251,7 +305,7 @@ def _items(st, M) -> list[dict]:
             "SELECT ask FROM pile_price WHERE key=? ORDER BY at DESC LIMIT 8", (key,))]
         hist.reverse()
         out.append({
-            "key": key, "title": d.get("title") or title or key, "url": d.get("url") or url,
+            "key": key, "side": side or "set", "title": d.get("title") or title or key, "url": d.get("url") or url,
             "printing_id": d.get("printing_id") or "", "code": code,
             "ask": _num(d.get("all_in_home", d.get("ask_home"))),
             "resale": _num(top.get("resale_mid")), "resale_low": _num(top.get("resale_low")),
@@ -285,10 +339,22 @@ def _chase_rows(st, M) -> list[dict]:
     return out
 
 
+
+def _sort_form(token: str, key: str, side: str, back: str, label: str, cls: str, title: str) -> str:
+    from .ui import e
+    return (f'<form class="psort" data-side="{side}" method="post" action="/pile/sort">'
+            f'<input type="hidden" name="t" value="{e(token)}"><input type="hidden" name="key" value="{e(key)}">'
+            f'<input type="hidden" name="side" value="{side}"><input type="hidden" name="back" value="{e(back)}">'
+            f'<button class="sbtn {cls}" title="{e(title)}">{label}</button></form>')
+
+
 def view(st, idx, M, now: datetime, token: str, game: str = "ygo", back: str = "/pile") -> str:
     from .ui import e
     from .ui_listing import pair_art, photo_counts
     items = _items(st, M)
+    filed = [i for i in items if i["side"] != "chase"]
+    piled = [i for i in filed if i["side"] == "pile"]
+    aside = [i for i in filed if i["side"] != "pile"]
     live = [i for i in items if i["code"] in ("BUY", "CHECK", "WATCH")]
     backed = [i for i in items if i["basis"] == "sales" and i["profit"] is not None]
     capital = sum(i["ask"] or 0 for i in items)
@@ -299,9 +365,9 @@ def view(st, idx, M, now: datetime, token: str, game: str = "ygo", back: str = "
     def roas(i):
         return None if not i["ask"] or i["profit"] is None else i["profit"] / i["ask"]
 
-    ph = photo_counts(st, [i["iid"] for i in items if i["iid"]])
-    tiles = []
-    for i in items:
+    ph = photo_counts(st, [i["iid"] for i in filed if i["iid"]])
+
+    def tile(i):
         photos = {i["iid"]: 1} if i["iid"] and ph.get(i["iid"]) else None
         art = pair_art(i["key"], {"title": i["title"], "printing_id": i["printing_id"], "kinds": i["kinds"]},
                        photos, big=True)
@@ -316,14 +382,24 @@ def view(st, idx, M, now: datetime, token: str, game: str = "ygo", back: str = "
                 + (f'<a href="{e(i["url"])}" target="_blank" rel="noreferrer noopener">Site ↗</a>'
                    if (i["url"] or "").startswith("http") else "")
                 + '</div>')
-        form = (f'<form class="pcard-form" method="post" action="/pile/remove">'
+        drop = (f'<form class="pcard-form" method="post" action="/pile/remove">'
                 f'<input type="hidden" name="t" value="{e(token)}"><input type="hidden" name="key" value="{e(i["key"])}">'
                 f'<input type="hidden" name="back" value="{e(back)}">'
-                f'<button class="pbtn on" title="In the pile - remove">✓</button></form>')
-        tiles.append(f'<div class="pcard"><div class="ppic">{art}</div>{form}'
-                     f'<a class="ptitle" href="{op}">{e(i["title"][:70])}</a>'
-                     f'<div class="pprice">{M(i["ask"])}<span class="call {_cls(i["code"])}">{_glyph(i["code"])} {e(i["code"])}</span></div>'
-                     f'<div class="pinfo">{info}</div></div>')
+                f'<button class="pbtn on" title="Out of the pile">✓</button></form>')
+        if i["side"] == "pile":
+            left = _sort_form(token, i["key"], "set", back, "← Set aside", "left", "Keep it: file left under Set aside")
+        else:
+            left = _sort_form(token, i["key"], "pile", back, "↥ Pile", "up", "Back to the unfiled pile")
+        right = _sort_form(token, i["key"], "chase", back, "Chase →", "right", "Watch this card under a threshold")
+        return (f'<div class="pcard" draggable="true" data-side="{e(i["side"])}" data-key="{e(i["key"])}">'
+                f'<div class="ppic">{art}</div>{drop}'
+                f'<a class="ptitle" href="{op}">{e(i["title"][:70])}</a>'
+                f'<div class="pprice">{M(i["ask"])}<span class="call {_cls(i["code"])}">{_glyph(i["code"])} {e(i["code"])}</span></div>'
+                f'<div class="pinfo">{info}</div>'
+                f'<div class="psortrow">{left}{right}</div></div>')
+
+    pile_tiles = "".join(tile(i) for i in piled)
+    aside_tiles = "".join(tile(i) for i in aside)
 
     chase_tiles = []
     for c in chs:
@@ -353,11 +429,6 @@ def view(st, idx, M, now: datetime, token: str, game: str = "ygo", back: str = "
                            f'<div class="pprice">{state}</div>'
                            f'<div class="pinfo">{info}</div></div>')
 
-    pile_grid = (f'<div class="pgrid">{"".join(tiles)}</div>' if tiles
-                 else '<p class="empty">Nothing set aside yet. Paste a listing above, or press ＋ on any listing card.</p>')
-    chase_grid = (f'<div class="pgrid">{"".join(chase_tiles)}</div>' if chase_tiles
-                  else '<p class="empty">No chases. Open any card page and press Chase - the app watches its live asks '
-                       'against your number and the sold data behind them.</p>')
     assists = []
     if items:
         assists.append(f"{len(backed)} of {len(items)} price from real sales; the rest wait on a comp before they get a profit number.")
@@ -378,21 +449,40 @@ def view(st, idx, M, now: datetime, token: str, game: str = "ygo", back: str = "
     said = ('<section><h2>What the pile says</h2><ul class="moves">' + "".join(f"<li>{e(a)}</li>" for a in assists)
             + "</ul></section>" if assists else "")
     return ('<section><h1>Card Pile</h1>'
-            f'<p class="sub">{len(items)} listing{"s" if len(items) != 1 else ""} set aside and {len(chs)} chase{"s" if len(chs) != 1 else ""} '
-            'running. Set-asides price against their own sales; chases watch the live ask against your number, and the sold '
-            'data behind it says whether your number is real.</p>'
+            f'<p class="sub">{len(piled)} waiting in the pile, {len(aside)} set aside and {len(chs)} chase{"s" if len(chs) != 1 else ""} '
+            'running. New additions land in the pile first - drag one left to set it aside, right to chase it, or use its buttons. '
+            'Everything is priced from the sales the store already holds.</p>'
             '<form class="pileadd" method="post" action="/pile">'
             f'<input type="hidden" name="t" value="{e(token)}">'
             f'<input type="hidden" name="back" value="{e(back)}">'
             '<input name="url" placeholder="Paste an eBay listing link or item number" autocomplete="off">'
-            '<button>Add to pile</button></form>'
+            '<button>Drop it in the pile</button></form>'
             '<div class="stats">'
             f'<div class="stat"><small>All-in capital</small><b>{M(capital)}</b></div>'
             f'<div class="stat"><small>Expected profit, sale-backed</small><b>{M(upside)}</b></div>'
-            f'<div class="stat"><small>Can move now</small><b>{len(live)}</b></div>'
+            f'<div class="stat"><small>Waiting to sort</small><b>{len(piled)}</b></div>'
             f'<div class="stat"><small>Chases under threshold</small><b>{firing}</b></div></div></section>'
-            '<section><h2>Set aside</h2>' + pile_grid + '</section>'
-            '<section><h2>Chases</h2>' + chase_grid + '</section>'
+            '<section class="board">'
+            '<div class="zone zone-pile" data-zone="pile">'
+            f'<header class="zhead"><h2>The pile</h2><span class="zhint">every new addition lands here - sort it left or right</span>'
+            f'<span class="zcount">{len(piled)}</span></header>'
+            + (f'<div class="pfan">{pile_tiles}</div>' if pile_tiles else
+               '<p class="empt">Nothing in the pile yet. Paste a listing above, or press ＋ on any listing card - it lands '
+               'here first, then you sort it.</p>')
+            + '</div><div class="zrow">'
+            '<div class="zone zone-set" data-zone="set">'
+            f'<header class="zhead"><h2>← Set aside</h2><span class="zhint">kept for a buy you mean to make</span>'
+            f'<span class="zcount">{len(aside)}</span></header>'
+            + (f'<div class="pgrid">{aside_tiles}</div>' if aside_tiles else
+               '<p class="empt">Nothing set aside. Drag a pile card left to keep it here.</p>')
+            + '</div>'
+            '<div class="zone zone-chase" data-zone="chase">'
+            f'<header class="zhead"><h2>Chases →</h2><span class="zhint">the bell fires under your number</span>'
+            f'<span class="zcount">{len(chs)}</span></header>'
+            + (f'<div class="pgrid">{"".join(chase_tiles)}</div>' if chase_tiles else
+               '<p class="empt">No chases. Drag a pile card right, or press Chase on any card page - the threshold is '
+               'the sold typical until you move it.</p>')
+            + '</div></div></section>'
             + said)
 
 
@@ -404,12 +494,74 @@ def _glyph(code: str) -> str:
     return "✓" if code == "BUY" else "!" if code == "CHECK" else "·"
 
 
+PILE_JS = r"""
+(function(){
+function init(){
+ var zones={},tiles=document.querySelectorAll('.pcard[draggable="true"]'),drag=null;
+ [].forEach.call(document.querySelectorAll('.zone[data-zone]'),function(z){zones[z.getAttribute('data-zone')]=z});
+ if(!tiles.length)return;
+ function clear(){Object.keys(zones).forEach(function(k){zones[k].classList.remove('over')})}
+ [].forEach.call(tiles,function(t){
+  t.addEventListener('dragstart',function(e){drag=t;t.classList.add('lift');
+   if(e.dataTransfer){e.dataTransfer.setData('text/plain','');e.dataTransfer.effectAllowed='move'}clear()});
+  t.addEventListener('dragend',function(){if(drag)drag.classList.remove('lift');drag=null;clear()});
+ });
+ Object.keys(zones).forEach(function(k){
+  var z=zones[k];
+  z.addEventListener('dragover',function(e){if(e.preventDefault)e.preventDefault();
+   if(e.dataTransfer)e.dataTransfer.dropEffect='move';z.classList.add('over')});
+  z.addEventListener('dragleave',function(e){if(!z.contains(e.relatedTarget))z.classList.remove('over')});
+  z.addEventListener('drop',function(e){if(e.preventDefault)e.preventDefault();clear();if(!drag)return;
+   var f=drag.querySelector('form.psort[data-side="'+k+'"]');
+   if(f)f.submit()});
+ });
+}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
+})();
+"""
+
 PILE_CSS = """
-.pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:18px;margin:6px 0 4px}
+.board{display:grid;gap:16px;margin:10px 0 6px}
+.zone{position:relative;padding:14px 16px 16px;border:1px solid var(--line);
+border-radius:26px 20px 28px 18px/20px 28px 18px 26px;
+transition:box-shadow .25s var(--ease),border-color .25s var(--ease),background .25s var(--ease)}
+.zone .zhead{display:flex;align-items:baseline;gap:10px;margin:0 0 12px;flex-wrap:wrap}
+.zone h2{margin:0;font-size:17px;letter-spacing:.01em}
+.zone .zhint{color:var(--fg2);font-size:12.5px}
+.zone .zcount{margin-left:auto;font-variant-numeric:tabular-nums;border:1px solid var(--line);border-radius:999px;
+padding:1px 10px;font-size:12px;color:var(--fg2);background:var(--surface)}
+.zone.over{border-color:var(--accent);
+outline:2px dashed color-mix(in srgb,var(--accent) 55%,transparent);outline-offset:-8px;
+box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 16%,transparent)}
+.zone.over .zhint{color:var(--fg)}
+.zone-pile{background:
+ radial-gradient(color-mix(in srgb,var(--teal) 9%,transparent) 1px,transparent 1.4px) 0 0/18px 18px,
+ radial-gradient(130% 160% at 16% -25%,color-mix(in srgb,var(--teal) 18%,var(--surface)) 0,
+  color-mix(in srgb,var(--teal) 6%,var(--surface)) 58%,var(--surface) 100%);
+border-color:color-mix(in srgb,var(--teal) 36%,var(--line));
+box-shadow:inset 0 1px 0 color-mix(in srgb,#fff 55%,transparent),0 14px 30px rgba(8,40,36,.10)}
+.zone-set{background:linear-gradient(165deg,color-mix(in srgb,var(--sky) 17%,var(--surface)),
+ color-mix(in srgb,var(--sky) 4%,var(--surface)) 72%);
+border-color:color-mix(in srgb,var(--sky) 38%,var(--line));
+box-shadow:inset 0 1px 0 color-mix(in srgb,#fff 50%,transparent),0 12px 26px rgba(20,50,80,.09)}
+.zone-chase{background:linear-gradient(200deg,color-mix(in srgb,#d0861f 16%,var(--surface)),
+ color-mix(in srgb,#d0861f 4%,var(--surface)) 74%);
+border-color:color-mix(in srgb,#d0861f 36%,var(--line));
+box-shadow:inset 0 1px 0 color-mix(in srgb,#fff 50%,transparent),0 12px 26px rgba(90,55,0,.10)}
+.zone-set h2{color:color-mix(in srgb,var(--sky-text) 80%,var(--fg))}
+.zone-chase h2{color:color-mix(in srgb,#c77b12 72%,var(--fg))}
+.zrow{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+.pfan{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:18px;perspective:900px}
+.pfan .pcard:nth-child(odd){transform:rotate(-1.3deg)}
+.pfan .pcard:nth-child(3n){transform:rotate(1.1deg)}
+.pfan .pcard:nth-child(4n){transform:rotate(-.3deg)}
+.pfan .pcard:hover{transform:translateY(-5px) rotate(0) scale(1.015)}
+.pcard.lift{opacity:.35;transform:scale(.97) rotate(0deg)!important}
 .pcard{position:relative;display:flex;flex-direction:column;gap:6px;background:var(--surface);border:1px solid var(--line);
-border-radius:14px;padding:10px;transition:transform .15s,box-shadow .15s}
-.pcard:hover{transform:translateY(-3px);box-shadow:0 10px 26px rgba(0,0,0,.16);z-index:12}
-.ppic{display:flex;justify-content:center;align-items:center;min-height:150px;background:var(--bg);border-radius:9px;
+border-radius:16px;padding:10px;transition:transform .18s var(--ease),box-shadow .18s var(--ease);cursor:grab}
+.pcard:active{cursor:grabbing}
+.pcard:hover{transform:translateY(-3px) rotate(0);box-shadow:0 12px 28px rgba(0,0,0,.16);z-index:12}
+.ppic{display:flex;justify-content:center;align-items:center;min-height:150px;background:var(--bg);border-radius:11px;
 padding:6px;overflow:hidden}
 .ppic img.card{max-height:168px;object-fit:contain}
 .ptitle{font-size:13px;font-weight:600;color:var(--fg);text-decoration:none;display:-webkit-box;-webkit-line-clamp:2;
@@ -433,6 +585,20 @@ padding:11px 12px;font-size:12px;color:var(--fg)}
 .pi-go a{font-size:12px;font-weight:700;color:var(--teal-deep);text-decoration:none}
 .pi-go a:hover{text-decoration:underline}
 .pspark{display:inline-block;vertical-align:middle;margin-left:6px}
+.psortrow{display:flex;gap:8px;margin-top:2px}
+.psort{flex:1;display:flex;margin:0}
+.sbtn{width:100%;padding:7px 8px;border-radius:10px 8px 11px 7px/8px 11px 7px 10px;
+border:1px solid var(--axis);background:var(--surface);font-size:12px;font-weight:700;color:var(--fg2);cursor:pointer;
+transition:background .15s var(--ease),border-color .15s var(--ease),color .15s var(--ease),transform .12s var(--ease)}
+.sbtn:hover{transform:translateY(-1px)}
+.sbtn.left:hover{border-color:var(--sky);color:color-mix(in srgb,var(--sky-text) 78%,var(--fg));
+background:color-mix(in srgb,var(--sky) 14%,var(--surface))}
+.sbtn.up:hover{border-color:var(--teal);color:var(--teal-deep);
+background:color-mix(in srgb,var(--teal) 13%,var(--surface))}
+.sbtn.right:hover{border-color:#c77b12;color:color-mix(in srgb,#c77b12 72%,var(--fg));
+background:color-mix(in srgb,#d0861f 14%,var(--surface))}
+.empt{margin:6px 4px 10px;color:var(--fg2);font-size:13px;border:1.5px dashed color-mix(in srgb,var(--axis) 80%,transparent);
+border-radius:14px;padding:14px 16px;background:color-mix(in srgb,var(--surface) 55%,transparent)}
 .cchip{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:800;letter-spacing:.03em;
 text-transform:uppercase;border:1px solid var(--line);color:var(--fg2)}
 .cchip.fire{color:#c4553b;border-color:#c4553b;background:color-mix(in srgb,#c4553b 10%,var(--surface))}
@@ -460,7 +626,8 @@ border-radius:12px;background:var(--surface)}
 .hungrid>.hun-item:nth-child(8){animation-delay:280ms}.hungrid>.hun-item:nth-child(9){animation-delay:320ms}
 .hungrid>.hun-item:nth-child(10){animation-delay:360ms}.hungrid>.hun-item:nth-child(11){animation-delay:400ms}
 .hungrid>.hun-item:nth-child(12){animation-delay:440ms}
-@media(prefers-reduced-motion:reduce){.hungrid>.hun-item{animation:none}}
+@media(max-width:860px){.zrow{grid-template-columns:1fr}}
+@media(prefers-reduced-motion:reduce){.hungrid>.hun-item{animation:none}.pcard,.pfan .pcard:hover{transition:none;transform:none}}
 .dpile{display:inline-flex;align-items:center;gap:7px;margin-left:4px}
 .dpile form{display:inline-flex}
 .dpile .pbtn{width:24px;height:24px;font-size:12px}

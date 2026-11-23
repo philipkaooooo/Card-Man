@@ -37,7 +37,13 @@ CREATE TABLE IF NOT EXISTS pc_card (
   grades TEXT, series TEXT, pop TEXT,
   fetched TEXT NOT NULL, status TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS pc_game ON pc_card(game);
+CREATE TABLE IF NOT EXISTS pc_point (
+  printing_id TEXT NOT NULL, name TEXT NOT NULL, x INTEGER NOT NULL, v REAL NOT NULL,
+  PRIMARY KEY (printing_id, name, x));
+CREATE INDEX IF NOT EXISTS pc_point_pid ON pc_point(printing_id);
 """
+
+POINT_KEEP_DAYS = 1100     # every capture adds its newest weeks; three years of weekly points is the ceiling
 
 GRADES = ("Ungraded", "Grade 7", "Grade 8", "Grade 9", "Grade 9.5", "PSA 10")
 SERIES_TO_GRADE = {"used": "Ungraded", "cib": "Grade 7", "new": "Grade 8", "graded": "Grade 9",
@@ -360,6 +366,37 @@ def fetch_card(b: Browser, *, query: str, name: str = "", number: str = "", code
     return row
 
 
+def _keep_points(st, pid: str, series: dict) -> int:
+    """Every capture's weekly points go into pc_point; a capture only carries ~26 weeks, so the store is
+    where a year or three of history accumulates. Same x restated: the newer value wins."""
+    rows = [(pid, name, int(x), round(float(v), 2)) for name, pts in (series or {}).items()
+            for x, v in (pts or []) if v is not None]
+    if not rows:
+        return 0
+    with st.db:
+        st.db.executemany(
+            "INSERT INTO pc_point (printing_id, name, x, v) VALUES (?,?,?,?) "
+            "ON CONFLICT(printing_id, name, x) DO UPDATE SET v=excluded.v", rows)
+        for name in {r[1] for r in rows}:
+            newest = max(r[2] for r in rows if r[1] == name)
+            st.db.execute("DELETE FROM pc_point WHERE printing_id=? AND name=? AND x<?",
+                          (pid, name, newest - POINT_KEEP_DAYS * 86_400_000))
+    return len(rows)
+
+
+def _seed(st) -> int:
+    """Old stores: copy each stored capture's series into pc_point once, so history starts from what is held."""
+    n = 0
+    for pid, series in st.db.execute("SELECT printing_id, series FROM pc_card WHERE status='ok'"):
+        if st.db.execute("SELECT 1 FROM pc_point WHERE printing_id=? LIMIT 1", (pid,)).fetchone():
+            continue
+        try:
+            n += _keep_points(st, pid, json.loads(series or "{}"))
+        except ValueError:
+            continue
+    return n
+
+
 def _query_for(pid: str, name: str, number: str, code: str) -> str:
     if code and code != "-":
         return code
@@ -371,6 +408,7 @@ def sweep(st, *, limit: int = 40, game: str | None = None, refetch: bool = False
           headless: bool = False, pacing: tuple[float, float] = (1.1, 2.2), log=print) -> dict:
     """Walk the board's best-sold versions and fill `pc_card`. Two page loads per unmapped card, one per refresh."""
     st.db.executescript(SCHEMA)
+    _seed(st)
     now = datetime.now(UTC)
     if pids:
         targets = [(p, "pkm" if p.startswith("pk:") else "ygo") for p in pids]
@@ -429,6 +467,8 @@ def sweep(st, *, limit: int = 40, game: str | None = None, refetch: bool = False
                     (pid, g, row.get("url") or url, row.get("title"), query, row.get("match_note"),
                      _dump(row.get("grades") or {}), _dump(row.get("series") or {}), _dump(row.get("pop") or {}),
                      now.isoformat(), status))
+            if status == "ok":
+                _keep_points(st, pid, row.get("series") or {})
             log(f"{status:7} {pid}")
             time.sleep(random.uniform(*pacing))
     return out
@@ -482,19 +522,30 @@ def _identify(st, queue: list[tuple[str, str]]) -> tuple[dict, dict, dict, dict]
 
 
 def rows_for(st, pids: list[str]) -> dict[str, dict]:
-    """Stored cross-market rows for a set of printings, ready for the UI. Missing table means no rows."""
+    """Stored cross-market rows for a set of printings, ready for the UI. Missing table means no rows.
+    Series are the union of the latest capture and every point pc_point has accumulated."""
     if not pids:
         return {}
     have = {r[0] for r in st.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     if "pc_card" not in have:
         return {}
     marks = ",".join("?" * len(pids))
+    hist: dict[str, dict[str, dict[int, float]]] = {}
+    if "pc_point" in have:
+        for pid, name, x, v in st.db.execute(
+                f"SELECT printing_id, name, x, v FROM pc_point WHERE printing_id IN ({marks})", pids):
+            hist.setdefault(pid, {}).setdefault(name, {})[int(x)] = float(v)
     out = {}
     for pid, url, grades, series, pop, fetched in st.db.execute(
             f"SELECT printing_id, url, grades, series, pop, fetched FROM pc_card WHERE printing_id IN ({marks}) "
             "AND status='ok'", pids):
         try:
-            out[pid] = {"url": url, "grades": json.loads(grades or "{}"), "series": json.loads(series or "{}"),
+            ser = json.loads(series or "{}")
+            for name, pts in (hist.get(pid) or {}).items():
+                merged = {int(x): float(v) for x, v in (ser.get(name) or [])}
+                merged.update(pts)
+                ser[name] = [[x, round(merged[x], 2)] for x in sorted(merged)]
+            out[pid] = {"url": url, "grades": json.loads(grades or "{}"), "series": ser,
                         "pop": json.loads(pop or "{}"), "fetched": fetched}
         except ValueError:
             continue
@@ -545,12 +596,14 @@ def stats(st) -> str:
     rows = st.db.execute("SELECT status, COUNT(*), MAX(fetched) FROM pc_card GROUP BY status").fetchall()
     n = sum(r[1] for r in rows)
     lines = [f"{r[1]:5} {r[0]:8} last {r[2] or '-'}" for r in rows]
-    return f"{n} cards stored\n" + "\n".join(lines)
+    pts, deep = st.db.execute("SELECT COUNT(*), COUNT(DISTINCT printing_id) FROM pc_point").fetchone()
+    return f"{n} cards stored\n" + "\n".join(lines) + f"\n{pts} weekly points kept across {deep} cards"
 
 
 def ingest(st, path: str) -> int:
     """Import captured product pages: [{printing_id, game?, url?, payload:{...}}]. No network, same parse."""
     st.db.executescript(SCHEMA)
+    _seed(st)
     data = json.loads(Path(path).read_text())
     now = datetime.now(UTC).isoformat()
     n = 0
@@ -564,6 +617,7 @@ def ingest(st, path: str) -> int:
                 (pid, item.get("game") or ("pkm" if pid.startswith("pk:") else "ygo"),
                  row.get("url"), row.get("title"), item.get("query"), item.get("match_note"),
                  _dump(row["grades"]), _dump(row["series"]), _dump(row["pop"]), now, "ok"))
+            _keep_points(st, pid, row["series"])
             n += 1
     return n
 

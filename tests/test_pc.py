@@ -264,3 +264,26 @@ def test_chart_carries_a_dot_per_point_and_a_range_switch(tmp_path):
     assert "dots.push(" in PC_JS and "stop(best)" in PC_JS      # snap to nearest dot, not nearest x
     assert "setChangeTable()" in PC_JS and "months+' mo'" in PC_JS
     assert ".htip" in PC_CSS and "position:absolute" in PC_CSS
+
+
+def test_captures_accumulate_so_history_deepens_past_the_26_week_window(tmp_path):
+    """A capture carries ~26 weeks; pc_point keeps every point it has ever seen, and rows_for merges them."""
+    from cardman.pc import SCHEMA, ingest, rows_for
+    st = Store(tmp_path / "e.sqlite")
+    st.db.executescript(SCHEMA)
+    pid = "pk:EN:sv9-69:holo@pkm-sv9-69"
+    first = {"printing_id": pid, "game": "pkm", "payload": payload()}
+    a = tmp_path / "a.json"
+    a.write_text(json.dumps([first]))
+    assert ingest(st, str(a)) == 1
+    later = json.loads(json.dumps(first))
+    later["payload"]["series"] = {"Ungraded": [[1796114800000, 2.5]],
+                                  "PSA 10": [[1793512800000, 150.0], [1796114800000, 160.0]]}
+    b = tmp_path / "b.json"
+    b.write_text(json.dumps([later]))
+    assert ingest(st, str(b)) == 1
+    ser = rows_for(st, [pid])[pid]["series"]
+    assert len(ser["PSA 10"]) == 5                       # 4 from the first capture, one week reused, one new
+    assert ser["PSA 10"][-2] == [1793512800000, 150.0]   # same week restated wins
+    assert len(ser["Ungraded"]) == 5                     # 4 + 1 new
+    assert [x for x, _v in ser["PSA 10"]] == sorted(x for x, _v in ser["PSA 10"])

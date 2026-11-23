@@ -1514,7 +1514,9 @@ def _js_version() -> str:
         from .ui_decide import DECIDE_JS
         from .ui_pc import PC_JS
         from .ui_alerts import JS as ALERTS_JS
-        _JSV.append(hashlib.sha256((JS + HOME_JS + IMPORT_JS + DECIDE_JS + PC_JS + ALERTS_JS).encode()).hexdigest()[:10])
+        from .pile import PILE_JS
+        _JSV.append(hashlib.sha256((JS + HOME_JS + IMPORT_JS + DECIDE_JS + PC_JS + ALERTS_JS
+                                    + PILE_JS).encode()).hexdigest()[:10])
     return _JSV[0]
 
 
@@ -2143,7 +2145,9 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                 from .ui_decide import DECIDE_JS
                 from .ui_pc import PC_JS
                 from .ui_alerts import JS as ALERTS_JS
-                return self._send(200, (JS + HOME_JS + IMPORT_JS + DECIDE_JS + PC_JS + ALERTS_JS).encode(), "text/javascript; charset=utf-8")
+                from .pile import PILE_JS
+                return self._send(200, (JS + HOME_JS + IMPORT_JS + DECIDE_JS + PC_JS + ALERTS_JS
+                                        + PILE_JS).encode(), "text/javascript; charset=utf-8")
             if len(parts) == 3 and parts[0] == "card" and parts[1].isdigit() and parts[2] in ("history.json", "history.html"):
                 try:
                     from .identity import edition_variants
@@ -2402,14 +2406,21 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     if not key:
                         self._redirect(_pile_back(), err="Not in the store yet. Open the listing once under Listings, then add it here.")
                     else:
-                        self._redirect(_pile_back(), msg="Added to the pile." if pile_add(st, key, now) else "Already in the pile.")
+                        self._redirect(_pile_back(), msg="Dropped in the pile - sort it left or right." if pile_add(st, key, now) else "Already in the pile.")
                 elif parts == ["pile", "add"]:
                     from .pile import add as pile_add
                     key = form.get("key", "")[:512]
                     if not st.db.execute("SELECT 1 FROM listing WHERE key=?", (key,)).fetchone():
                         self._redirect(_pile_back(), err="That listing is not in the store.")
                     else:
-                        self._redirect(_pile_back(), msg="Set aside in the pile." if pile_add(st, key, now) else "Already in the pile.")
+                        self._redirect(_pile_back(), msg="Dropped in the pile - sort it left or right." if pile_add(st, key, now) else "Already in the pile.")
+                elif parts == ["pile", "sort"]:
+                    from .pile import sort as pile_sort
+                    res = pile_sort(st, form.get("key", "")[:512], form.get("side", ""), now, _engine_home(st))
+                    msg = {"nocard": "No card behind that listing to chase - it stays in the pile.",
+                           "noprice": "No price to set a chase against - it stays in the pile.",
+                           "missing": "That card is no longer in the pile."}.get(res, "Sorted.")
+                    self._redirect(_pile_back(), msg=msg)
                 elif parts == ["pile", "remove"]:
                     from .pile import remove as pile_remove
                     pile_remove(st, form.get("key", "")[:512])
