@@ -289,7 +289,7 @@ def _hun_head(base: str, v: str, t: str, counts: dict, stats: str = "", chips: s
     return head
 
 
-def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, base: str = "/", token: str = "", pulse: str = "", wiz: str = "", live: str = "") -> str:
+def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, base: str = "/", token: str = "", pulse: str = "", live: str = "") -> str:
     """The newest things actually posted, wherever they were posted: one tile per fresh listing, laser-coded."""
     if "listing" not in _tables(st):
         return ""
@@ -469,7 +469,7 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
         ("drop", "Price drops", "asking less than before, last 24 hours"),
         ("end", "Ending soon", "auctions and offers that close within six hours"))) + "</span>"
     head = _hun_head(base, v, t, counts, pulse, chips, x, live)
-    return ('<section class="hunzone home">' + wiz + '<span class="reg" aria-hidden="true"><i></i><i></i><i></i><i></i></span>' + head + grid +
+    return ('<section class="hunzone home"><span class="reg" aria-hidden="true"><i></i><i></i><i></i><i></i></span>' + head + grid +
             '<p class="hun-note small">Signal is the read on the price: green under what to pay, amber worth a '
             'second look, red above it; unrated has no sales history yet. Most asks sit above what a card really '
             'sells for, so red is the common read and green is rare on purpose.</p></section>')
@@ -555,8 +555,8 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", a
     out = [f'<section class="hero hunt"><h1 class="huntitle" aria-label="{e(_HUNT)}">{letters}</h1>'
             '<p class="huntag">Collect Wisely</p>'
             '<div class="huntline">' + _search_box(big=True, game=game) + '</div></section>']
-    feed = _just_posted(st, now, game, M, qs or {}, base, token, _pulse(st, now, game, M), scan, live)
-    out.append(feed)
+    feed = _just_posted(st, now, game, M, qs or {}, base, token, _pulse(st, now, game, M), live)
+    out.append('<div class="boardwrap">' + scan + feed + '</div>')
     wash = ('<style>main.page{max-width:min(95vw,1500px)}'
             'body{background:var(--bg)}'
             'body::before{content:"";position:fixed;inset:-32%;z-index:-1;pointer-events:none;will-change:transform;background:'
@@ -1553,7 +1553,9 @@ filter:drop-shadow(0 7px 16px rgba(0,0,0,.28));transition:transform .18s var(--e
 .hun-status b{font-size:11px;letter-spacing:.14em;color:var(--fg);text-transform:uppercase;font-weight:750}
 .hun-status small::before{content:"\00b7";margin-right:9px;color:var(--muted)}
 .hun-status small{font-size:12px;color:var(--muted);font-weight:400;letter-spacing:0;text-transform:none}
-.wizfloat{position:absolute;left:clamp(12px,2.6vw,38px);top:calc(-1*var(--wizup));z-index:3;display:block;padding:0;border:0;
+.boardwrap{position:relative;margin-top:14px;padding-top:calc(var(--wizh) - var(--wizdip));
+--wizh:clamp(120px,16vw,232px);--wizdip:calc(var(--wizh)*.1)}
+.wizfloat{position:absolute;top:0;left:clamp(12px,2.6vw,38px);z-index:6;display:block;padding:0;border:0;
 background:none;cursor:pointer;line-height:0}
 .wizfloat .hun-wiz{width:calc(var(--wizh)*.668);height:var(--wizh);object-fit:contain;
 filter:drop-shadow(0 10px 18px rgba(0,0,0,.30));transition:transform .18s var(--ease)}
@@ -1567,10 +1569,8 @@ filter:drop-shadow(0 10px 18px rgba(0,0,0,.30));transition:transform .18s var(--
 .hun-live.slow i{background:#e6a23c}
 @keyframes hunpulse{0%,100%{box-shadow:0 0 0 0 rgba(47,191,113,.35)}50%{box-shadow:0 0 0 6px rgba(47,191,113,0)}}
 .hunzone{transition:opacity .25s}
-.hunzone.home{--wizh:clamp(120px,16vw,232px);--wizup:calc(var(--wizh)*.9);overflow:visible;
-margin-top:calc(var(--wizup) + 14px)}
-.hunzone.home .reg i:nth-child(1){opacity:0}
-@media(max-width:640px){.hunzone.home{--wizh:112px}}
+.hunzone.home{margin-top:0}
+@media(max-width:640px){.boardwrap{--wizh:112px}.wizfloat{left:16px}}
 .hunzone.home::before{content:"";position:absolute;top:0;left:0;right:0;height:4px;border-radius:26px 26px 0 0;
 background:linear-gradient(90deg,#e05252 0 16.66%,#2f6ce0 16.66% 33.33%,#d4af6a 33.33% 50%,#2fbf71 50% 66.66%,#e6a23c 66.66% 83.33%,var(--fg) 83.33%)}
 .hunzone.home .hun-h{position:relative;padding-bottom:9px}
@@ -1711,7 +1711,7 @@ if(btn){btn.classList.toggle('busy',running);var s=btn.querySelector('span');if(
 function swap(){var had={};document.querySelectorAll('.hun[data-key]').forEach(function(n){had[n.getAttribute('data-key')]=1});
 return fetch(location.pathname+location.search).then(function(r){return r.text()}).then(function(html){
 var d=new DOMParser().parseFromString(html,'text/html');
-['.hunzone'].forEach(function(sl){var n=d.querySelector(sl),o=document.querySelector(sl);if(n&&o)o.replaceWith(n)});
+['.boardwrap'].forEach(function(sl){var n=d.querySelector(sl),o=document.querySelector(sl);if(n&&o)o.replaceWith(n)});
 var land=0;document.querySelectorAll('.hun[data-key]').forEach(function(t){if(!had[t.getAttribute('data-key')]){land++;t.classList.add('landed');
 setTimeout(function(){t.classList.remove('landed')},1700)}});
 if(land)landed+=land;sync()})}
