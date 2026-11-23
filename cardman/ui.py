@@ -427,6 +427,7 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     from .ui_decide import DECIDE_CSS
     from .ui_alerts import BELL, CSS as ALERTS_CSS
     from .pile import PILE_CSS
+    from .ui_board import BOARD_CSS
     from .zone import CHAR_CSS
     theme = theme if theme in THEMES else "market"
     where = NAV_OF.get(nav, "")
@@ -466,7 +467,7 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     tz = datetime.now().astimezone().strftime("UTC%z")
     return (f'<!doctype html><html lang="en" data-theme="{"vault" if theme == "vault" else "auto"}"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)} · CardMan</title>'
-            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{PC_CSS}{ICON_CSS}{EFFECTS_CSS}{PRINT_CSS}{SHELL_CSS}{DECIDE_CSS}{CHAR_CSS}{MARKET_CSS}{NOW_CSS}{ALERTS_CSS}{PILE_CSS}</style></head><body>{SPRITE}'
+            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{PC_CSS}{ICON_CSS}{EFFECTS_CSS}{PRINT_CSS}{SHELL_CSS}{DECIDE_CSS}{CHAR_CSS}{MARKET_CSS}{NOW_CSS}{ALERTS_CSS}{PILE_CSS}{BOARD_CSS}</style></head><body>{SPRITE}'
             + scope_links(f'<header class="top"><a class="logo" href="/"><span class="lmark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></span><span class="lword">CardMan<b class="lunder" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></b></span></a><nav class="main" aria-label="Main">{links}</nav>{BELL}{hsearch}'
                           f'{games}{curs}</header><main class="page">{crumb}{flash}{body}</main>', game) +
             f'<footer class="foot">Private to this Mac · times {e(tz)} · press <kbd>/</kbd> to search</footer>'
@@ -1515,8 +1516,9 @@ def _js_version() -> str:
         from .ui_pc import PC_JS
         from .ui_alerts import JS as ALERTS_JS
         from .pile import PILE_JS
+        from .ui_board import BOARD_JS
         _JSV.append(hashlib.sha256((JS + HOME_JS + IMPORT_JS + DECIDE_JS + PC_JS + ALERTS_JS
-                                    + PILE_JS).encode()).hexdigest()[:10])
+                                    + PILE_JS + BOARD_JS).encode()).hexdigest()[:10])
     return _JSV[0]
 
 
@@ -2033,17 +2035,12 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     from .ui_now import view_now
                     return self._page("market", "Now", view_now(st, now, self._cur(), _engine_home(st), qs, game="pkm", pkm=idx.cat), qs)
                 if parts == ["opportunities"]:
-                    from .ui_listing import view_list
+                    from .ui_board import view_board
                     if not _engine_ready(st):
                         return self._page("opportunities", "Listings", '<h1>Listings</h1><p class="empty">No listings checked yet.</p>', qs)
                     M = EngineMoney(st, _engine_home(st), self._cur(), now)
-                    v = qs.get("v", ["all"])[0]
-                    t = qs.get("t", ["any"])[0]
-                    return self._page("opportunities", "Listings", view_list(
-                        st, idx, now, M, v_filter=v if v in ("all", "BUY", "CHECK", "WATCH", "PASS", "every") else "all",
-                        t_filter=t if t in ("any", "singles", "lots") else "any", home_cur=M.cur,
-                        site=qs.get("site", ["any"])[0] if qs.get("site", ["any"])[0] in ("any", "ebay", "yahoo", "mercari", "other") else "any",
-                        game="pkm", token=token, back="/pkm/opportunities"), qs)
+                    return self._page("opportunities", "Listings", view_board(
+                        st, idx, now, M, qs=qs, home_cur=M.cur, game="pkm", token=token, back="/pkm/opportunities"), qs)
                 if parts[:1] in (["opp"], ["import"], ["settings"], ["costs"], ["static"]):
                     return self._go("/" + "/".join(parts) + (("?" + urlsplit(self.path).query) if urlsplit(self.path).query else ""))
                 return self._send(404, page("Not found", "<h1>Not found</h1>", nav="", store=store_path, game="pkm"))
@@ -2146,8 +2143,9 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                 from .ui_pc import PC_JS
                 from .ui_alerts import JS as ALERTS_JS
                 from .pile import PILE_JS
+                from .ui_board import BOARD_JS
                 return self._send(200, (JS + HOME_JS + IMPORT_JS + DECIDE_JS + PC_JS + ALERTS_JS
-                                        + PILE_JS).encode(), "text/javascript; charset=utf-8")
+                                        + PILE_JS + BOARD_JS).encode(), "text/javascript; charset=utf-8")
             if len(parts) == 3 and parts[0] == "card" and parts[1].isdigit() and parts[2] in ("history.json", "history.html"):
                 try:
                     from .identity import edition_variants
@@ -2301,18 +2299,10 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     if not _engine_ready(st):
                         self._page("opportunities", "Listings", view_opportunities(st, now, token, self._cur(), "open"), qs)
                     else:
-                        from .ui_listing import view_list
+                        from .ui_board import view_board
                         M = EngineMoney(st, _engine_home(st), self._cur(), now)
-                        v = qs.get("v", ["all"])[0]
-                        t = qs.get("t", ["any"])[0]
-                        tick = (f'<form method="post" action="/engine/tick" class="inline"><input type="hidden" name="t" value="{e(token)}">'
-                                '<button>Check for new listings now</button> <a class="small" href="/opportunities/engine">engine details</a></form>')
                         self._page("opportunities", "Listings",
-                                   view_list(st, cards, now, M, v_filter=v if v in ("all", "BUY", "CHECK", "WATCH", "PASS", "every") else "all",
-                                             t_filter=t if t in ("any", "singles", "lots") else "any", home_cur=M.cur,
-                                             site=qs.get("site", ["any"])[0] if qs.get("site", ["any"])[0] in ("any", "ebay", "yahoo", "mercari", "other") else "any",
-                                             token=token, back="/opportunities").replace(
-                                       '</p>', '</p>' + tick, 1), qs)
+                                   view_board(st, cards, now, M, qs=qs, home_cur=M.cur, token=token, back="/opportunities"), qs)
                 elif parts == ["alerts"]:
                     from .ui_alerts import view_alerts
                     self._page("alerts", "Alerts", view_alerts(st, now, _engine_home(st)), qs)
@@ -2400,6 +2390,62 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     b = form.get("back", "")
                     return b if b.startswith("/") and not b.startswith("//") else "/pile"
 
+                if parts[:1] == ["board"]:
+                    from . import ui_board as B
+                    B.ensure(st)
+                    ajax = form.get("ajax") == "1"
+                    back_to = form.get("back", "/opportunities")
+                    if not (back_to.startswith("/") and not back_to.startswith("//")):
+                        back_to = "/opportunities"
+                    raw_keys = ([] if ctype.startswith("multipart/form-data")
+                                else parse_qs(raw.decode(), keep_blank_values=True).get("keys", []))
+                    keys = list(dict.fromkeys(k.strip() for k in (form.get("keys", "").split("\n") + raw_keys) if k.strip()))[:500]
+
+                    def _done(payload, msg):
+                        if ajax:
+                            return self._send(200, json.dumps(payload).encode(), "application/json; charset=utf-8")
+                        self._redirect(back_to, msg=msg)
+
+                    if parts == ["board", "mark"]:
+                        if form.get("restore"):
+                            try:
+                                prev = json.loads(form["restore"])
+                            except ValueError:
+                                prev = {}
+                            B.restore_marks(st, {k: v for k, v in prev.items() if isinstance(v, str)}, now)
+                            return _done({"ok": 1}, "Marks restored.")
+                        mark = form.get("mark", "")
+                        if mark not in B.MARKS + ("none",):
+                            return _done({"ok": 0}, "Unknown mark.")
+                        prev = B.apply_mark(st, keys, mark, now)
+                        word = {"pinned": "Pinned to top.", "reviewed": "Marked reviewed.",
+                                "hidden": "Hidden from the board.", "none": "Marks cleared."}[mark]
+                        return _done({"ok": 1, "prev": prev}, word)
+                    if parts == ["board", "bulk"]:
+                        act = form.get("act", "")
+                        if act == "label":
+                            added = B.apply_label(st, keys, form.get("label", ""), form.get("color", "ink"), now)
+                            return _done({"ok": 1, "added": added}, f"Labeled {len(added)} listings.")
+                        if act in B.MARKS + ("none",):
+                            prev = B.apply_mark(st, keys, act, now)
+                            return _done({"ok": 1, "prev": prev}, "Handled.")
+                        return _done({"ok": 0}, "Unknown action.")
+                    if parts == ["board", "label"]:
+                        added = B.apply_label(st, keys, form.get("label", ""), form.get("color", "ink"), now)
+                        return _done({"ok": 1, "added": added}, "Labeled.")
+                    if parts == ["board", "unlabel"]:
+                        B.remove_label(st, keys, form.get("label", ""))
+                        return _done({"ok": 1}, "Label removed.")
+                    if parts == ["board", "view"]:
+                        vid = form.get("id", "")
+                        vid = int(vid) if vid.isdigit() else None
+                        new_id = B.save_view(st, form.get("name", ""), form.get("qs", ""), form.get("game", "ygo"), now, vid)
+                        return _done({"ok": 1, "id": new_id}, "View saved.")
+                    if parts == ["board", "viewdel"]:
+                        vid = form.get("id", "")
+                        gone = B.del_view(st, int(vid)) if vid.isdigit() else None
+                        return _done({"ok": 1 if gone else 0, "view": gone}, "View forgotten.")
+                    return self._send(404, page("Not found", "<h1>Not found</h1>", nav="", store=store_path))
                 if parts == ["pile"]:
                     from .pile import add as pile_add, resolve as pile_resolve
                     key = pile_resolve(st, form.get("url", "")[:2048])
