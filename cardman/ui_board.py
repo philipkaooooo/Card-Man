@@ -676,7 +676,7 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
                      f'<a href="{e(href(print="", grp="card", page=""))}">Back to all cards</a></p>')
     head = (f'<div class="bhead"><h1>Listings</h1>'
             f'<p class="sub">{sub}</p>{tick}</div>')
-    empty = ('<p class="empty">Nothing matches these filters. Widen a lane, or clear the search.</p>'
+    empty = (f'<p class="empty">Nothing matches these filters. <a href="{e(back)}">Show everything</a>, or widen a lane.</p>'
              if not cells else "")
     grid = (printnote + f'<div class="deals bgrid" id="b-grid">{"".join(cells)}</div>') if cells else printnote
     drawer = ('<div class="bshade" id="b-shade" hidden></div>'
@@ -687,7 +687,7 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
               '<div class="bd-body" id="bd-body"></div></aside>')
     toast = '<div class="btoast" id="b-toast" role="status" hidden><span id="bt-msg"></span><button type="button" id="bt-undo" hidden>Undo</button></div>'
     return (head + toolbar
-            + f'<div class="blayout">{facets}<section class="bmain" aria-label="Listings">{other_note}{empty}{grid}{pager}</section></div>'
+            + f'<div class="blayout">{facets}<section class="bmain" aria-label="Listings" data-empty="{0 if cells else 1}">{other_note}{empty}{grid}{pager}</section></div>'
             + bulk + drawer + toast)
 
 
@@ -871,11 +871,30 @@ body.b-tight .bart{display:none}
 
 BOARD_JS = """
 (function(){
+  var path=location.pathname, KEY='cm.board.'+path;
+  var $=function(id){return document.getElementById(id)};
+
+  /* memory: last filters per board, and row density. A filter that matched nothing is never remembered.
+     Runs even when the board is empty, so a dead-end view can never trap the next visit. */
+  try{
+    var bmain=document.querySelector('.bmain');
+    var bempty=bmain&&bmain.getAttribute('data-empty')==='1';
+    if(!location.search){var last=localStorage.getItem(KEY);if(last){sessionStorage.setItem('cm.board.jump','1');location.replace(path+'?'+last);return}}
+    else{var qs=location.search.slice(1);
+      var jumped=sessionStorage.getItem('cm.board.jump')==='1';sessionStorage.removeItem('cm.board.jump');
+      if(bempty){localStorage.removeItem(KEY);if(jumped){location.replace(path);return}}
+      else if(qs)localStorage.setItem(KEY,qs)}
+    if(localStorage.getItem('cm.board.tight')==='1'){document.body.classList.add('b-tight');$('b-dense').setAttribute('aria-pressed','true')}
+  }catch(err){}
+  $('b-dense').addEventListener('click',function(){
+    var on=document.body.classList.toggle('b-tight');
+    this.setAttribute('aria-pressed',on?'true':'false');
+    try{localStorage.setItem('cm.board.tight',on?'1':'0')}catch(err){}
+  });
+
   var grid=document.getElementById('b-grid');
   if(!grid)return;
-  var path=location.pathname, KEY='cm.board.'+path;
   var TOKEN=(document.querySelector('#bulkform [name=t]')||{}).value||'';
-  var $=function(id){return document.getElementById(id)};
   function post(url,data){
     data.append('ajax','1');
     return fetch(url,{method:'POST',body:data,headers:{'Accept':'application/json'}}).then(function(r){return r.json()});
@@ -894,18 +913,6 @@ BOARD_JS = """
     if(!undoFn)return;var f=undoFn;undoFn=null;$('b-toast').hidden=true;f();
   });
   function reload(){location.reload()}
-
-  /* memory: last filters per board, and row density */
-  try{
-    if(!location.search){var last=localStorage.getItem(KEY);if(last){location.replace(path+'?'+last);return}}
-    else{var qs=location.search.slice(1);if(qs)localStorage.setItem(KEY,qs)}
-    if(localStorage.getItem('cm.board.tight')==='1'){document.body.classList.add('b-tight');$('b-dense').setAttribute('aria-pressed','true')}
-  }catch(err){}
-  $('b-dense').addEventListener('click',function(){
-    var on=document.body.classList.toggle('b-tight');
-    this.setAttribute('aria-pressed',on?'true':'false');
-    try{localStorage.setItem('cm.board.tight',on?'1':'0')}catch(err){}
-  });
 
   /* selection + bulk bar */
   function picked(){return Array.prototype.slice.call(grid.querySelectorAll('.bsel:checked'))}

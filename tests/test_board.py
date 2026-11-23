@@ -217,3 +217,13 @@ def test_under_pc_badge_facet_and_sort(board):
     bypc = get("/opportunities?sort=pc:a")
     first = re.search(r'class="bcell[^"]*" data-key="([^"]+)"', bypc)
     assert first.group(1) == "ebay_browse:EBAY_US:buy"
+
+
+def test_empty_board_offers_a_way_out_and_is_marked_for_memory(board):
+    get, *_ = board
+    page = get("/opportunities")
+    assert 'data-empty="0"' in page
+    dead = get("/opportunities?v=NEW")
+    assert 'data-empty="1"' in dead
+    assert "Show everything" in dead
+    assert 'href="/opportunities"' in dead
