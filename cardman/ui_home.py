@@ -1670,9 +1670,9 @@ border-radius:9px 6px 10px 7px;overflow:hidden;box-shadow:2px 3px 0 rgba(0,0,0,.
 .hun-spark .spark{width:100%;height:30px}
 .hun-pc{display:block;font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hun-pc b.pclo{color:#2fbf71;font-weight:750}.hun-pc b.pchi{color:var(--fg2);font-weight:600}
-.hun-item .pilebtn{top:auto;bottom:8px}
+.hungrid .hun-item .pilebtn{top:auto;bottom:8px}
 .hun-item .pilebtn:has(.pbtn.on){opacity:1}
-@media(hover:none){.hun-item .pilebtn{opacity:1}}
+@media(hover:none){.hungrid .hun-item .pilebtn{opacity:1}}
 """
 
 HOME_JS = r"""
