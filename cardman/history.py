@@ -203,18 +203,58 @@ ASK_SCHEMA = """CREATE TABLE IF NOT EXISTS ask_daily (printing_id TEXT NOT NULL,
   low REAL, median REAL, n INTEGER NOT NULL, currency TEXT NOT NULL, PRIMARY KEY (printing_id, gkey, day));"""
 
 
+def _public_asks(st) -> list[tuple]:
+    """Stored TCGplayer asks as ask_daily rows: same printing, same grade key, all-in price in USD.
+
+    The listing's product id and finish label are joined to the catalog cross-reference; a pair the catalog
+    does not speak is skipped. The snapshot day is the day the feed saw it, not the day it was listed."""
+    import sqlite3
+
+    try:
+        rows = st.db.execute(
+            "SELECT product_id, printing, condition, price, shipping, seen_at FROM public_listing "
+            "WHERE source='tcgplayer'").fetchall()
+    except sqlite3.Error:
+        return []
+    if not rows:
+        return []
+    from .catalog.registry import DB as REG
+    try:
+        con = sqlite3.connect(f"file:{REG}?mode=ro", uri=True)
+        key = {(str(ext), (var or "").strip().lower()): pid
+               for pid, ext, var in con.execute(
+                   "SELECT pid, ext_id, ext_variant FROM xref WHERE source='tcgplayer'")}
+        con.close()
+    except sqlite3.Error:
+        return []
+    out = []
+    for product_id, printing, cond, price, ship, seen in rows:
+        pid = key.get((str(product_id), (printing or "").strip().lower()))
+        if not pid or not seen:
+            continue
+        try:
+            all_in = float(price) + (float(ship) if ship else 0.0)
+        except (TypeError, ValueError):
+            continue
+        if all_in <= 0:
+            continue
+        day = str(seen)[:10]
+        out.append((pid, str(round(all_in, 2)), "USD", day, day, None, "{}",
+                    f"{cond or 'raw'} TCGplayer ask"))
+    return out
+
+
 def update_ask_daily(st, now: datetime, home: str = "TWD") -> int:
     """Write one row per printing and grade for every day not yet stored, and rewrite today. Past days stay as written.
     A listing counts for a printing only when the engine is 95%+ sure of the card and 90%+ of the printing."""
     import json
     st.db.executescript(ASK_SCHEMA)
     have = {r[0] for r in st.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    if not {"card_listing", "listing"} <= have:
-        return 0
     rows = st.db.execute(
         "SELECT c.printing_id, l.price, l.currency, l.first_seen, l.last_seen, l.ended_at, l.data_json, l.title FROM card_listing c "
         "JOIN listing l ON l.key=c.key WHERE c.card_prob>=? AND c.printing_prob>=? AND c.lot=0 AND l.kind='ask' AND c.status<>'REJECTED'",
-        (ASK_CARD_PROB, ASK_PRINTING_PROB)).fetchall()
+        (ASK_CARD_PROB, ASK_PRINTING_PROB)).fetchall() if {"card_listing", "listing"} <= have else []
+    rows = list(rows) + _public_asks(st)
     if not rows:
         return 0
     first = min(date.fromisoformat(r[3][:10]) for r in rows if r[3])

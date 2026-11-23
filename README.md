@@ -10,6 +10,9 @@ Pricing rules: `docs/pricing-method.md` — a price comes from real sales of one
 - **Sold data:** saved result pages from eBay, 130point, Yahoo! Auctions and Mercari are read by the Import page
   (`cardman/sold_import.py`, `cardman/sold_pages.py`); manual CSV remains the fallback. A guide price is a lead,
   never a sale; each catalog version is priced from its own row (`cardman/tcgplayer.py`, `cardman/catalog/`).
+- **Live TCGplayer asks:** `python -m cardman.tcgplayer --feed all` stores one cheapest Near Mint page per Gen I
+  version in `public_listing`; the daily ask table joins it to the catalog by product id and finish, so the
+  character page, card page and market read TCGplayer asks next to eBay's. `scripts/tcg_feed_loop.py` repeats it daily.
 - **Catalogs:** Pokémon (`data/cache/pkm.sqlite`), Yu-Gi-Oh! (`identity.sqlite`) and the joined master list
   (`catalog.sqlite`, one TCGplayer price per version) are re-downloaded automatically when missing
   (`cardman/catalog_boot.py`).

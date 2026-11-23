@@ -83,7 +83,9 @@ def test_market_rows_rank_characters_and_open_on_cached_art(tmp_path):
     assert (priced, cards) == (3, 3) and rep == "c2"                # the tile opens on a card with cached art
 
 
-def test_character_page_leads_with_the_price_analysis(tmp_path):
+def test_character_page_leads_with_the_price_analysis(tmp_path, monkeypatch):
+    from cardman import char_market
+    monkeypatch.setattr(char_market, "CATALOG", tmp_path / "no-catalog.sqlite")
     import types
     from datetime import datetime, timezone
     from cardman.store import Store
@@ -95,8 +97,9 @@ def test_character_page_leads_with_the_price_analysis(tmp_path):
                           types.SimpleNamespace(fx=None))
     assert page.index("How Charizard is performing") < page.index("Every card of Charizard")
     assert 'class="chero"' in page and 'class="chero-stats"' in page and "Listed now" in page
-    assert 'class="chfacts"' in page and "Sales volume" in page and 'class="ladsvg"' in page
+    assert 'class="chmk"' in page and "Most valuable versions" in page and "Sales volume" in page
+    assert 'class="ladsvg"' not in page and 'class="chfacts"' not in page
     assert "Median" not in page and "percentile" not in page
-    assert "Guide prices, not sales." in page
+    assert "TCGplayer's numbers" in page
     assert "Add a sale" not in page and 'class="ct-name"' not in page and 'class="ct-price"' in page and 'class="ztile"' in page
     assert 'class="cgrid2"' in page and "data-hchart" not in page

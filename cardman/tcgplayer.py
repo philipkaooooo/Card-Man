@@ -1081,6 +1081,137 @@ def pull(product_id: int, span: str, store_path: str) -> int:
     return 0
 
 
+ASK_CONDS = ("Near Mint", "Lightly Played")
+
+
+def _feed_jobs(dex_max: int, canonical_only: bool):
+    """Every Gen I version with a TCGplayer product id: (product_id, printing id, variant, name, number).
+
+    The standard printing of each card comes first, so a stopped feed still covers every character."""
+    import sqlite3
+
+    from .catalog.registry import DB as REG
+    from .pc import _scope, canonical
+    from .pkm_catalog import DB, PkmCatalog
+
+    scope = _scope(dex_max)
+    if not scope:
+        return []
+    cat = PkmCatalog(DB)
+    want: dict[str, tuple[str, str, str]] = {}
+    for cid in scope:
+        std = canonical(cat, cid)
+        row = cat._cards.get(cid)
+        if not row:
+            continue
+        versions = cat.versions(cid)
+        if canonical_only:
+            versions = [v for v in versions if v.id == std]
+        for v in versions:
+            want[v.id] = (row[1], row[4], std or "")
+    con = sqlite3.connect(f"file:{REG}?mode=ro", uri=True)
+    jobs: dict[tuple[int, str], tuple[int, str, str, str, str]] = {}
+    try:
+        for pid, ext, var in con.execute(
+                "SELECT pid, ext_id, ext_variant FROM xref WHERE source='tcgplayer'"):
+            if pid not in want or not var:
+                continue
+            try:
+                product = int(ext)
+            except (TypeError, ValueError):
+                continue
+            name, number, std = want[pid]
+            jobs.setdefault((product, var.lower()), (product, pid, var, name, number))
+    except sqlite3.Error:
+        return []
+    finally:
+        con.close()
+    return sorted(jobs.values(), key=lambda j: (0 if j[1] == want[j[1]][2] else 1, j[1]))
+
+
+def feed(store_path: str = "data/store/evidence.sqlite", *, dex_max: int = 151, workers: int = 4,
+         canonical_only: bool = False, limit: int = 0, pause: float = 0.1,
+         now: datetime | None = None, log=print) -> dict:
+    """One cheapest page of current TCGplayer asks per version, stored as asks. Nothing here is a sale.
+
+    The page is sorted by all-in and capped at the first 50 rows, so a version's asks are pinned at the
+    low end. Only Near Mint and Lightly Played rows of the product's own variant are kept."""
+    import threading
+    from concurrent.futures import as_completed
+
+    from .store import Store
+
+    now = now or datetime.now(timezone.utc)
+    jobs = _feed_jobs(dex_max, canonical_only)
+    if limit:
+        jobs = jobs[:limit]
+    if not jobs:
+        log("no in-scope TCGplayer products")
+        return {"products": 0, "asks": 0, "failed": 0, "written": 0, "refused": 0, "seconds": 0.0}
+    store = Store(store_path)
+    lock = threading.Lock()
+    started = time.perf_counter()
+    stats = {"products": 0, "asks": 0, "failed": 0, "written": 0, "refused": 0, "seconds": 0.0}
+    batch: list[dict] = []
+
+    def flush():
+        if not batch:
+            return
+        written, refused = store.save_public_listings(list(batch), now)
+        stats["written"] += written
+        stats["refused"] += len(refused)
+        for line in refused:
+            log(f"refused {line}")
+        batch.clear()
+
+    def work(job):
+        product_id, pid, var, name, number = job
+        default = str(pid.split(":")[2]) if ":" in pid else ""
+        got = []
+        for cond in ASK_CONDS:                    # Near Mint first; Lightly Played only when there is no NM
+            term = {"condition": [cond], "language": ["English"]}
+            try:
+                raw, total = fetch_listings(product_id, max_pages=1, term=term)
+            except Exception as exc:
+                return product_id, None, f"{type(exc).__name__}"
+            time.sleep(pause)
+            got = [l for l in _listings(raw, product_id)
+                   if l.condition == cond and l.printing.lower() == var.lower()]
+            if got:
+                break
+        rows = [{"source": "tcgplayer", "listing_id": l.listing_id, "product_id": product_id,
+                 "card_key": f"tcg:{product_id}|{var}", "name": name or default,
+                 "number": number, "printing": l.printing, "condition": l.condition,
+                 "language": l.language or "English", "price": l.price, "shipping": l.shipping,
+                 "label": "ask", "sales": 0, "exit_low": None, "after_fees": None, "multiple": None,
+                 "why": "A current TCGplayer ask. Not a sale."} for l in got]
+        return product_id, rows, None
+
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        futures = [pool.submit(work, j) for j in jobs]
+        for done, fut in enumerate(as_completed(futures), 1):
+            product_id, rows, err = fut.result()
+            stats["products"] += 1
+            if err:
+                stats["failed"] += 1
+                if stats["failed"] <= 5:
+                    log(f"product {product_id} failed: {err}")
+            elif rows:
+                stats["asks"] += len(rows)
+                with lock:
+                    batch.extend(rows)
+                    if len(batch) >= 800:
+                        flush()
+            if done % 250 == 0:
+                log(f"{done}/{len(jobs)} products  {stats['asks']} asks  {stats['failed']} failed  "
+                    f"{time.perf_counter() - started:.0f}s")
+    flush()
+    stats["seconds"] = round(time.perf_counter() - started, 1)
+    log(f"{stats['products']} products, {stats['asks']} asks read, {stats['written']} stored, "
+        f"{stats['failed']} failed in {stats['seconds']}s")
+    return stats
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m cardman.tcgplayer")
     ap.add_argument("game", nargs="?", choices=sorted(LINE))
@@ -1092,7 +1223,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--scan", action="store_true",
                     help="sales-sorted page; cheap asks only, history only where a floor could clear fees")
     ap.add_argument("--html", help="write one chart per SKU, with the same numbers in a table")
+    ap.add_argument("--feed", nargs="?", const="all", choices=("all", "canonical"),
+                    help="store one cheapest page of live TCGplayer asks for every Gen I version")
     args = ap.parse_args(argv)
+    if args.feed:
+        stats = feed(args.store, canonical_only=args.feed == "canonical")
+        return 0 if stats["products"] else 1
     if args.product:
         return pull(args.product, args.span, args.store)
     if args.scan:

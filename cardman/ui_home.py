@@ -261,9 +261,9 @@ def _engine_line(st, now: datetime, base: str, token: str = "") -> str:
         except (ValueError, TypeError):
             sec = None
     cls = "ok" if sec is not None and sec < 1200 else ("slow" if sec is not None and sec < 86400 else "off")
-    scan = ('<button class="hun-scan" id="hun-scan" type="button" data-back="' + e(base) + '" data-t="' + e(token) + '" '
+    scan = ('<button class="hun-scan wizfloat" id="hun-scan" type="button" data-back="' + e(base) + '" data-t="' + e(token) + '" '
             'title="run a collector pass now"><img class="hun-wiz" src="/static/hunt.gif?v=2" alt="the hunt wizard, investigating" draggable="false">'
-            '<span>Run the hunt</span></button>')
+            '<span class="wizlab">Run the hunt</span></button>')
     if row is None:
         l1, l2 = "FEED IDLE", "no pass on record yet; the loop posts new asks here as it finds them"
     else:
@@ -273,7 +273,7 @@ def _engine_line(st, now: datetime, base: str, token: str = "") -> str:
                   '<b id="hun-status1">{}</b><small id="hun-status2">{}</small></span></span>').format(cls, e(l1), e(l2))
 
 
-def _hun_head(base: str, v: str, t: str, counts: dict, stats: str = "", chips: str = "", x: str = "", wiz: str = "") -> str:
+def _hun_head(base: str, v: str, t: str, counts: dict, stats: str = "", chips: str = "", x: str = "", live: str = "") -> str:
     sig = (("all", "All", "hsn"), ("good", "Good", "hsg"), ("avg", "Average", "hsa"), ("bad", "Bad", "hsb"),
            ("none", "Unrated", "hsn"))
     xs = "&x=" + x if x in ("drop", "end") else ""
@@ -282,14 +282,14 @@ def _hun_head(base: str, v: str, t: str, counts: dict, stats: str = "", chips: s
     fresh = "".join('<a{} href="{}?v={}&t={}{}">{}</a>'.format(
         ' class="on"' if t == code else "", base, v, code, xs, lab) for code, lab in (
         ("1h", "Last hour"), ("24h", "Last 24 hours"), ("all", "Any time")))
-    head = ('<div class="hun-head">' + wiz + '<div><p class="hun-kick">Freshest asks on the market, ranked by the read</p>'
-            '<h2 class="hun-h">New listings</h2></div><div class="hun-stats">' + cells + '</div></div>'
+    head = ('<div class="hun-head"><div><p class="hun-kick">Freshest asks on the market, ranked by the read</p>'
+            '<h2 class="hun-h">Newest listings</h2></div>' + live + '<div class="hun-stats">' + cells + '</div></div>'
             '<div class="hun-tools"><span class="hun-fresh">' + fresh + "</span>" + chips + stats +
             '<a class="hun-all" href="/opportunities">All listings →</a></div>')
     return head
 
 
-def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, base: str = "/", token: str = "", pulse: str = "", wiz: str = "") -> str:
+def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, base: str = "/", token: str = "", pulse: str = "", live: str = "") -> str:
     """The newest things actually posted, wherever they were posted: one tile per fresh listing, laser-coded."""
     if "listing" not in _tables(st):
         return ""
@@ -468,7 +468,7 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
             (("on" if x == code else "") + (" zero" if not D[code] else "")).strip(), base, v, t, "&x=" + code, tip, lab, D[code]) for code, lab, tip in (
         ("drop", "Price drops", "asking less than before, last 24 hours"),
         ("end", "Ending soon", "auctions and offers that close within six hours"))) + "</span>"
-    head = _hun_head(base, v, t, counts, pulse, chips, x, wiz)
+    head = _hun_head(base, v, t, counts, pulse, chips, x, live)
     return ('<section class="hunzone home"><span class="reg" aria-hidden="true"><i></i><i></i><i></i><i></i></span>' + head + grid +
             '<p class="hun-note small">Signal is the read on the price: green under what to pay, amber worth a '
             'second look, red above it; unrated has no sales history yet. Most asks sit above what a card really '
@@ -552,12 +552,11 @@ def view_home(st, idx, now: datetime, cur: str, theme: str, home: str = "TWD", a
     base = "/pkm/" if game == "pkm" else "/"
     scan, live = _engine_line(st, now, base, token)
     letters = "".join(f'<span style="--i:{i};--c:{_PAL[i % 6]}" data-c="{c if c != " " else "&nbsp;"}">{c if c != " " else "&nbsp;"}</span>' for i, c in enumerate(_HUNT))
-    wiz = '<section class="wizstrip" aria-label="the hunt">' + scan + live + '</section>'
     out = [f'<section class="hero hunt"><h1 class="huntitle" aria-label="{e(_HUNT)}">{letters}</h1>'
             '<p class="huntag">Collect Wisely</p>'
             '<div class="huntline">' + _search_box(big=True, game=game) + '</div></section>']
-    feed = _just_posted(st, now, game, M, qs or {}, base, token, _pulse(st, now, game, M), wiz)
-    out.append(feed)
+    feed = _just_posted(st, now, game, M, qs or {}, base, token, _pulse(st, now, game, M), live)
+    out.append('<div class="boardwrap">' + scan + feed + '</div>')
     wash = ('<style>main.page{max-width:min(95vw,1500px)}'
             'body{background:var(--bg)}'
             'body::before{content:"";position:fixed;inset:-32%;z-index:-1;pointer-events:none;will-change:transform;background:'
@@ -802,12 +801,17 @@ def _trend_box(st, printing_id: str | None, cur: str, now: datetime, M) -> str:
         pcr = None
     gs = pc.grade_series(pcr, "|")
 
-    def usd_to_cur(usd: float) -> float | None:
+    cur_home = getattr(M, "home", "USD")
+
+    def usd_home(usd: float) -> float | None:
+        """PriceCharting quotes dollars; Money expects an amount in the home currency, so convert once here."""
+        if cur_home == "USD":
+            return float(usd)
         try:
-            return float(FxTable(st.fx_rates()).convert(Decimal(str(usd)), "USD", cur, now))
+            return float(FxTable(st.fx_rates()).convert(Decimal(str(usd)), "USD", cur_home, now))
         except Exception:
             return None
-    pts = [(int(t), usd_to_cur(float(v))) for t, v in (gs[1] if gs else []) if v and float(v) > 0]
+    pts = [(int(t), usd_home(float(v))) for t, v in (gs[1] if gs else []) if v and float(v) > 0]
     pts = [(t, v) for t, v in pts if v]
     if not pts:
         url = (pcr or {}).get("url")
@@ -817,7 +821,7 @@ def _trend_box(st, printing_id: str | None, cur: str, now: datetime, M) -> str:
                 'The sweep fills it on its next pass.</p>'
                 + (f'<a class="tbx-src" href="{e(url)}" target="_blank" rel="noreferrer noopener">'
                    'Open it on PriceCharting →</a>' if url else "") + '</section>')
-    pc_chg = (pts[-1][1] / pts[0][1] - 1) * 100 if len(pts) >= 4 and pts[0][1] else None
+    pc_chg = pc.year_change(pts)
     lab = ("rising" if pc_chg >= 5 else "falling" if pc_chg <= -5 else "steady") if pc_chg is not None else "none"
     word = {"rising": "Climbing", "falling": "Slipping", "steady": "Holding"}.get(lab, "No call")
     pct_txt = ("flat" if abs(pc_chg) < 1 else f"{pc_chg:+.0f}%") if pc_chg is not None else "—"
@@ -1184,7 +1188,6 @@ def view_character(st, idx, species: str, token: str, now: datetime, cur: str, h
     variants = [v for cid in ids for v in cat.versions(cid)]
     tiles = []
     priced = []
-    where_of = {}
     gdays = []
     for cid in ids:
         row = cat._cards[cid]
@@ -1194,7 +1197,6 @@ def view_character(st, idx, species: str, token: str, now: datetime, cur: str, h
         for v in cat.versions(cid):
             label = v.edition or "Standard"
             where = f'{row[1]} · {s.get("name") or ""} {row[4]} · {label}'
-            where_of[v.id] = where
             g = cat.guide(v.id)
             if not g:
                 continue
@@ -1209,101 +1211,18 @@ def view_character(st, idx, species: str, token: str, now: datetime, cur: str, h
             tiles.append(f'<a class="ztile" href="{e(card_href(key))}">{img(key, "small", row[1])}'
                          f'<span class="ct-price">{price}</span></a>')
     hx = character_history(st, slug(species), variants, now, cur, home, book, cat.guide_history)
-    ser = hx["series"][0]
-    live = hx["live"]
-    latest_day = max((a["d"] for a in live.values()), default=None)
-    if latest_day:
-        live = {vid: a for vid, a in live.items() if a["d"] == latest_day}
-    months = ser["month"][-18:]
-    n_sales = len(ser["sales"])
+    from .char_market import section as market_section
+    block = market_section(st, cat, species, ids, variants, now, cur, home, book, hx)
     priced.sort(key=lambda p: p["v"])
-    guide_of = {p["id"]: p["v"] for p in priced}
-    for p in priced:
-        a = live.get(p["id"])
-        if a:
-            p["ask"] = a["low"]
-    n_buy = sum(a.get("n") or 0 for a in live.values())
-    deals = sorted(({"pct": (a["low"] - guide_of[vid]) / guide_of[vid] * 100, "name": where_of.get(vid, vid),
-                     "ask": a["low"], "guide": guide_of[vid]}
-                    for vid, a in live.items() if vid in guide_of and guide_of[vid] and a.get("low")),
-                   key=lambda d: d["pct"])
-    under = [d for d in deals if d["pct"] < 0]
-    fday = max(gdays) if gdays else None
+    lo_p = priced[0]["v"] if priced else None
+    hi_p = priced[-1]["v"] if priced else None
     first_day = min(gdays) if gdays else None
-    if priced:
-        lo_p, hi_p = priced[0]["v"], priced[-1]["v"]
-        bits = [f'<b>{len(priced)}</b> card versions priced from <b>{e(charts.fmt(lo_p, cur))}</b> to '
-                f'<b>{e(charts.fmt(hi_p, cur))}</b>' + (f' — {hi_p / lo_p:,.0f}× apart' if lo_p and hi_p / lo_p >= 10 else "") + '.']
-        if n_buy:
-            bits.append(f'<b>{n_buy}</b> listing{"s" if n_buy != 1 else ""} across <b>{len(live)}</b> cards in the '
-                        f'latest listing snapshot ({e(latest_day)}).')
-        else:
-            bits.append('Nothing is listed right now, so the guide prices are the only prices on record.')
-        if under:
-            d0 = under[0]
-            bits.append(f'<b>{len(under)}</b> version{"s" if len(under) != 1 else ""} sit'
-                        f'{"s" if len(under) == 1 else ""} under guide; the deepest is <b>{abs(d0["pct"]):.0f}%</b> under — '
-                        f'<b>{e(d0["name"])}</b> at <b>{e(charts.fmt(d0["ask"], cur))}</b> against a '
-                        f'<b>{e(charts.fmt(d0["guide"], cur))}</b> guide.')
-        elif deals:
-            bits.append('Everything listed asks at or above its guide right now.')
-        lead = " ".join(bits)
-        chart = (f'<div class="idxchart"><span class="lad-d">{_rank_svg(priced, cur)}</span>'
-                 f'<span class="lad-m">{_rank_svg(priced, cur, w=400, h=230, fs=11, compact=True)}</span></div>'
-                 f'<div class="idxleg"><span><i class="kdot"></i>Guide price, one dot per card version</span>'
-                 f'<span><i class="kask"></i>A version listed under its guide, hanging by the gap</span></div>')
-    else:
-        lead = 'No guide price exists for any card of this character yet.'
-        chart = ""
-    perf = []
-    if fday:
-        perf.append(f'Guides are TCGplayer market prices, latest snapshot <b>{e(fday)}</b>; they are not sales.')
-    if priced:
-        perf.append(f'Cheapest version: <b>{e(priced[0]["name"])}</b> at <b>{e(charts.fmt(priced[0]["v"], cur))}</b>. '
-                    f'Priciest: <b>{e(priced[-1]["name"])}</b> at <b>{e(charts.fmt(priced[-1]["v"], cur))}</b>. '
-                    'Different cards; the low price does not buy the high one.')
-    if under:
-        perf.append(f'<b>{len(under)}</b> versions are listed under guide right now. The table on the right is the shopping list.')
-    elif deals:
-        perf.append('No version is listed under guide right now; every ask is at or above its guide.')
-    perf.append(f'<b>{n_sales}</b> real sale{"s" if n_sales != 1 else ""} recorded across these cards.'
-                if n_sales else 'No real sale of any of these cards is recorded yet.')
     stats = (f'<div class="chero-stats">'
              f'<div><small>Cards</small><b>{len(ids)}</b></div>'
              f'<div><small>Versions priced</small><b>{len(priced)}</b></div>'
-             f'<div><small>Priciest</small><b>{e(charts.fmt(priced[-1]["v"], cur)) if priced else "—"}</b></div>'
-             f'<div><small>Listed now</small><b>{n_buy}</b></div>'
-             f'<div><small>Under guide</small><b>{len(under)}</b></div>'
-             f'<div><small>Sales recorded</small><b>{n_sales}</b></div></div>')
-    if deals:
-        rows = "".join(
-            f'<tr><td><span class="dname">{e(d["name"])}</span></td>'
-            f'<td class="n">{e(charts.fmt(d["ask"], cur))}</td><td class="n gcol">{e(charts.fmt(d["guide"], cur))}</td>'
-            f'<td class="n"><span class="{"dunder" if d["pct"] < 0 else "dover"}">{d["pct"]:+.0f}%</span></td></tr>'
-            for d in deals[:8])
-        more = f'<p class="why small">Plus {len(deals) - 8} more versions listed.</p>' if len(deals) > 8 else ""
-        board = (f'<h3>On sale right now</h3><table class="dbord"><thead><tr><th>Card version</th><th class="n">Live ask</th>'
-                 f'<th class="n gcol">Guide</th><th class="n">vs guide</th></tr></thead><tbody>{rows}</tbody></table>{more}'
-                 f'<p class="why small">From the {e(latest_day)} listing snapshot: lowest live listing of each version '
-                 'against its guide price; negative means listed under it. A gap past about 60% usually means the '
-                 'listing is a different printing — open the card first.</p>')
-        facts = (f'<div class="chcols"><div><h3>What the numbers say</h3><ul class="chfacts">'
-                 + "".join(f"<li>{p}</li>" for p in perf) + f'</ul></div><div>{board}</div></div>')
-    else:
-        facts = ('<h3>What the numbers say</h3><ul class="chfacts">' + "".join(f"<li>{p}</li>" for p in perf) + '</ul>')
-    foot = ('<p class="why small">Guide prices, not sales. No version has a second saved guide yet, so no price moves '
-            'are shown.</p>')
-    vmax = max((b["n"] for b in months), default=0)
-    if months and vmax:
-        bars = "".join(
-            f'<div class="vcol"><div class="vbar" style="height:{max(4, round(b["n"] / vmax * 100))}%" '
-            f'title="{e(b["start"][:7])}: {b["n"]} sale{"s" if b["n"] != 1 else ""}"></div>'
-            f'<small>{e(b["start"][5:7])}<br>{e(b["start"][2:4])}</small></div>' for b in months)
-        volbody = (f'<p class="why small">Real sales per month across every card of {e(species)}, last {len(months)} months. '
-                   f'Busiest month: {vmax}.</p><div class="vol">{bars}</div>')
-    else:
-        volbody = ('<p class="why small">No real sale of any of these cards is recorded yet, so there is no monthly '
-                   'volume to draw. Guides are not sales.</p>')
+             f'<div><small>Priciest</small><b>{e(charts.fmt(hi_p, cur)) if hi_p is not None else "—"}</b></div>'
+             f'<div><small>Cheapest</small><b>{e(charts.fmt(lo_p, cur)) if lo_p is not None else "—"}</b></div>'
+             f'</div>')
     dex = sprites().dex(species)
     portrait = (f'<img class="charport" src="/pkm/icon/{dex}.png" alt="{e(species)}" width="360" height="360" '
                 f'decoding="async">' if dex else "")
@@ -1312,9 +1231,7 @@ def view_character(st, idx, species: str, token: str, now: datetime, cur: str, h
             f'<p class="chero-kick">{len(variants)} card versions tracked'
             + (f' · guide history since {e(f"{datetime.fromisoformat(first_day):%b %Y}")}' if first_day else "") + '</p>'
             f'<h1>{e(species)}</h1>{stats}</div></section>'
-            f'<section class="char-analyse"><h2>How {e(species)} is performing</h2>'
-            f'<p class="chlead">{lead}</p>{chart}{facts}'
-            f'<h3>Sales volume</h3>{volbody}{foot}</section>'
+            f'{block}'
             f'<h2 class="cghead">Every card of {e(species)}</h2>'
             f'<div class="cgrid2">{"".join(tiles) or "<p class=empty>No cards of this character.</p>"}</div>')
 
@@ -1429,7 +1346,7 @@ border-radius:999px;padding:4px 16px;box-shadow:var(--shadow);font-variant-numer
 .shelf-h h2{font-size:19px;margin:0}.shelf-h a{font-size:13px}
 .tiles-l{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(250px,100%),1fr));gap:12px}
 @media(max-width:800px){.shell{grid-template-columns:minmax(0,1fr)!important}header{flex-wrap:wrap}header .hsearch{order:9;flex-basis:100%;max-width:none}
-header .store{display:none}form.search.big input{font-size:16px;padding:12px 16px}form.search.big button{padding:0 16px}.huntline{display:flex;flex-direction:column}.huntline .hun-wiz{width:76px;height:104px}}
+header .store{display:none}form.search.big input{font-size:16px;padding:12px 16px}form.search.big button{padding:0 16px}.huntline{display:flex;flex-direction:column}.huntline .hun-wiz{width:76px;height:104px}.wizfloat{left:16px}}
 .tile-l{display:flex;gap:12px;padding:12px;background:var(--surface);border:1px solid var(--line);border-radius:12px;color:var(--fg);
 text-decoration:none;transition:box-shadow .15s,transform .15s}.tile-l:hover{box-shadow:var(--shadow-hi);transform:translateY(-2px);border-color:var(--axis)}
 .tile-l .card{width:64px;height:93px;flex:none}.tl-body{display:flex;flex-direction:column;gap:3px;min-width:0}
@@ -1554,17 +1471,24 @@ filter:drop-shadow(0 7px 16px rgba(0,0,0,.28));transition:transform .18s var(--e
 .hun-status b{font-size:11px;letter-spacing:.14em;color:var(--fg);text-transform:uppercase;font-weight:750}
 .hun-status small::before{content:"\00b7";margin-right:9px;color:var(--muted)}
 .hun-status small{font-size:12px;color:var(--muted);font-weight:400;letter-spacing:0;text-transform:none}
-.wizstrip{display:flex;flex-direction:column;align-items:center;gap:8px;flex:none;margin:0;min-width:150px}
-.hun-head .wizstrip{align-self:flex-start;margin-right:4px}
-.wizstrip .hun-wiz{width:88px;height:120px}
-.wizstrip .hun-scan span{display:block;font-size:15px;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:var(--fg)}
+.boardwrap{position:relative;margin-top:14px;padding-top:calc(var(--wizh) - var(--wizdip));
+--wizh:clamp(120px,16vw,232px);--wizdip:calc(var(--wizh)*.1)}
+.wizfloat{position:absolute;top:0;left:clamp(12px,2.6vw,38px);z-index:6;display:block;padding:0;border:0;
+background:none;cursor:pointer;line-height:0}
+.wizfloat .hun-wiz{width:calc(var(--wizh)*.668);height:var(--wizh);object-fit:contain;
+filter:drop-shadow(0 10px 18px rgba(0,0,0,.30));transition:transform .18s var(--ease)}
+.wizfloat:hover .hun-wiz{transform:translateY(-4px) rotate(-1.5deg)}
+.wizfloat:focus-visible{outline:2px solid var(--accent);outline-offset:5px;border-radius:14px}
+.wizfloat .wizlab{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.hun-head .hun-live{align-self:flex-end;margin-bottom:7px}
 .hun-live{display:inline-flex;align-items:center;gap:9px;font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums;padding:4px 0}
 .hun-live i{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
 .hun-live.ok i{background:#2fbf71;animation:hunpulse 2.6s ease-in-out infinite}
 .hun-live.slow i{background:#e6a23c}
 @keyframes hunpulse{0%,100%{box-shadow:0 0 0 0 rgba(47,191,113,.35)}50%{box-shadow:0 0 0 6px rgba(47,191,113,0)}}
 .hunzone{transition:opacity .25s}
-.hunzone.home{margin-top:14px}
+.hunzone.home{margin-top:0}
+@media(max-width:640px){.boardwrap{--wizh:112px}.wizfloat{left:16px}}
 .hunzone.home::before{content:"";position:absolute;top:0;left:0;right:0;height:4px;border-radius:26px 26px 0 0;
 background:linear-gradient(90deg,#e05252 0 16.66%,#2f6ce0 16.66% 33.33%,#d4af6a 33.33% 50%,#2fbf71 50% 66.66%,#e6a23c 66.66% 83.33%,var(--fg) 83.33%)}
 .hunzone.home .hun-h{position:relative;padding-bottom:9px}
@@ -1596,14 +1520,14 @@ box-shadow:0 0 0 2px rgba(47,191,113,.6),0 10px 34px rgba(47,191,113,.3);animati
 .hun-note{color:var(--muted);margin:24px 2px 0;line-height:1.5;max-width:88ch}
 section.hero.hunt{padding:34px 4px 14px;max-width:none}
 .huntitle{font-family:"Avenir Next Condensed","Avenir Next","Avenir","Helvetica Neue",system-ui,-apple-system,"Segoe UI",sans-serif;
-font-style:normal;font-weight:800;font-size:clamp(42px,8vw,80px);letter-spacing:-.02em;text-transform:uppercase;margin:0 0 18px;cursor:default;
---grunge:url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='140'%20height='140'%3E%3Cfilter%20id='w'%3E%3CfeTurbulence%20type='fractalNoise'%20baseFrequency='0.3'%20numOctaves='3'%20seed='7'/%3E%3CfeColorMatrix%20type='matrix'%20values='0%200%200%200%200%200%200%200%200%200%200%200%200%200%200%200%200%200%201.2%200.4'/%3E%3C/filter%3E%3Crect%20width='140'%20height='140'%20fill='white'%20filter='url(%23w)'/%3E%3C/svg%3E")}
-.huntitle span{position:relative;display:inline-block;white-space:pre;color:var(--c,var(--fg));-webkit-text-stroke:2px #000;paint-order:stroke fill;
+font-style:normal;font-weight:900;font-size:clamp(48px,9vw,96px);letter-spacing:-.02em;text-transform:uppercase;margin:0 0 14px;cursor:default;
+--grunge:url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='140'%20height='140'%3E%3Cfilter%20id='w'%3E%3CfeTurbulence%20type='fractalNoise'%20baseFrequency='0.25'%20numOctaves='3'%20seed='7'/%3E%3CfeColorMatrix%20type='matrix'%20values='0%200%200%200%200%200%200%200%200%200%200%200%200%200%200%200%200%200%201.1%200.3'/%3E%3C/filter%3E%3Crect%20width='140'%20height='140'%20fill='white'%20filter='url(%23w)'/%3E%3C/svg%3E")}
+.huntitle span{position:relative;display:inline-block;white-space:pre;color:var(--c,var(--fg));-webkit-text-stroke:3px #000;paint-order:stroke fill;
 transition:transform .35s cubic-bezier(.2,1.8,.4,1);transition-delay:calc(var(--i)*30ms)}
-.huntitle span::after{content:attr(data-c);position:absolute;inset:0;color:#fff;-webkit-text-stroke:2px #000;paint-order:stroke fill;
-transform:translate(1px,1px);pointer-events:none;
+.huntitle span::after{content:attr(data-c);position:absolute;inset:0;color:#fff;-webkit-text-stroke:3px #000;paint-order:stroke fill;
+transform:translate(1.5px,1.5px);pointer-events:none;
 -webkit-mask-image:var(--grunge);mask-image:var(--grunge);
--webkit-mask-size:160px 160px;mask-size:160px 160px;
+-webkit-mask-size:150px 150px;mask-size:150px 150px;
 -webkit-mask-position:calc(var(--i)*-9px) calc(var(--i)*3px);mask-position:calc(var(--i)*-9px) calc(var(--i)*3px)}
 .huntitle:hover span{transform:translateY(-8px) rotate(-5deg)}
 .hungrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:22px}
@@ -1664,6 +1588,9 @@ border-radius:9px 6px 10px 7px;overflow:hidden;box-shadow:2px 3px 0 rgba(0,0,0,.
 .hun-spark .spark{width:100%;height:30px}
 .hun-pc{display:block;font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hun-pc b.pclo{color:#2fbf71;font-weight:750}.hun-pc b.pchi{color:var(--fg2);font-weight:600}
+.hungrid .hun-item .pilebtn{top:auto;bottom:8px}
+.hun-item .pilebtn:has(.pbtn.on){opacity:1}
+@media(hover:none){.hungrid .hun-item .pilebtn{opacity:1}}
 """
 
 HOME_JS = r"""
@@ -1702,7 +1629,7 @@ if(btn){btn.classList.toggle('busy',running);var s=btn.querySelector('span');if(
 function swap(){var had={};document.querySelectorAll('.hun[data-key]').forEach(function(n){had[n.getAttribute('data-key')]=1});
 return fetch(location.pathname+location.search).then(function(r){return r.text()}).then(function(html){
 var d=new DOMParser().parseFromString(html,'text/html');
-['.hunzone'].forEach(function(sl){var n=d.querySelector(sl),o=document.querySelector(sl);if(n&&o)o.replaceWith(n)});
+['.boardwrap'].forEach(function(sl){var n=d.querySelector(sl),o=document.querySelector(sl);if(n&&o)o.replaceWith(n)});
 var land=0;document.querySelectorAll('.hun[data-key]').forEach(function(t){if(!had[t.getAttribute('data-key')]){land++;t.classList.add('landed');
 setTimeout(function(){t.classList.remove('landed')},1700)}});
 if(land)landed+=land;sync()})}
