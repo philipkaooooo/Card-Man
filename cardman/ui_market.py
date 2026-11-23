@@ -20,7 +20,7 @@ MARKET_CSS = """
 .mk-games a{padding:7px 16px;border-radius:999px;text-decoration:none;font-weight:700;font-size:14px;color:var(--fg2)}
 .mk-games a:hover{color:var(--fg)}
 .mk-games a.on{background:var(--surface);color:var(--fg);box-shadow:var(--shadow)}
-.mhead{display:grid;grid-template-columns:minmax(0,1.6fr) 150px minmax(0,1fr) 230px;gap:18px;padding:0 16px 6px;
+.mhead{display:grid;grid-template-columns:minmax(0,1.7fr) 128px 128px 172px 100px;gap:14px;padding:0 16px 6px;
 font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
 .mhead span{cursor:help;border-bottom:1px dotted color-mix(in srgb,var(--muted) 45%,transparent);justify-self:start}
 @media(max-width:900px){.mhead{display:none}}
@@ -38,7 +38,7 @@ ul.mini li:last-child{border-bottom:0}.up{color:var(--teal-deep);font-weight:600
 .mk-pulse-k i.p-up,.mk-pulse-k i.p-down,.mk-pulse-k i.p-hold,.mk-pulse-k i.p-none{display:inline-block}
 .mkstat{margin-left:auto;color:var(--muted)}.mkstat b{color:var(--fg);font-variant-numeric:tabular-nums}
 .mlist{list-style:none;margin:0 0 10px;padding:0;display:grid;gap:10px}
-.mrow{display:grid;grid-template-columns:minmax(0,1.6fr) 150px minmax(0,1fr) 230px;gap:18px;align-items:center;
+.mrow{display:grid;grid-template-columns:minmax(0,1.7fr) 128px 128px 172px 100px;gap:14px;align-items:center;
 background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--line);border-radius:14px;padding:10px 16px 10px 13px;
 transition:box-shadow .2s,border-color .2s}
 .mrow:hover{box-shadow:var(--shadow)}
@@ -57,25 +57,24 @@ a.mname:hover{color:var(--teal-deep)}
 .mgrade{flex:none;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:.03em;
 background:color-mix(in srgb,var(--teal) 13%,transparent);color:var(--teal-deep)}
 .mgrade.raw{background:var(--soft);color:var(--fg2);font-weight:600}
-.msell b{font-size:19px;font-weight:800;font-variant-numeric:tabular-nums;display:block;color:var(--fg)}
-.msell small{display:none;font-size:10.5px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase}
-.mtick .mchip{display:inline-block;font-size:12.5px;font-weight:600;border-radius:999px;padding:3px 10px}
+.mfair,.mturn,.mask,.mtick{min-width:0}
+.mfair b,.mturn b,.mask b{font-size:17px;font-weight:800;font-variant-numeric:tabular-nums;display:block;color:var(--fg)}
+.mturn b span{font-size:11px;font-weight:600;color:var(--muted)}
+.mfair small,.mturn small,.mask small{display:block;font-size:11.5px;color:var(--muted);margin-top:3px;
+font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.edge{display:inline-block;font-size:11.5px;font-weight:700;margin-left:6px;vertical-align:2px}
+.edge.under{color:var(--teal-deep)}.edge.over{color:#b3261e}.edge.at{color:var(--muted)}
+.mask .none{font-size:13px;color:var(--muted)}
+.mtick .mchip{display:inline-block;font-size:12.5px;font-weight:600;border-radius:999px;padding:3px 10px;
+font-variant-numeric:tabular-nums;white-space:nowrap}
 .mchip.up{background:color-mix(in srgb,var(--teal) 14%,transparent);color:var(--teal-deep)}
 .mchip.down{background:color-mix(in srgb,#c4553b 14%,transparent);color:#a2452f}
 .mchip.hold,.mchip.none{background:var(--soft);color:var(--fg2)}
-.mtick small{display:block;font-size:12px;color:var(--muted);margin-top:5px}
-.mask{min-width:0}
-.abars{display:grid;gap:4px}
-.abar{display:grid;grid-template-columns:48px minmax(0,1fr) auto;gap:8px;align-items:center;font-size:12px;color:var(--fg2)}
-.abar i{height:8px;border-radius:4px;background:var(--soft);position:relative;display:block}
-.abar i span{position:absolute;left:0;top:0;bottom:0;border-radius:4px}
-.abar em{font-style:normal;font-variant-numeric:tabular-nums}
-.abar.sold i span{background:var(--fg2);opacity:.5}
-.abar.ask i span{background:var(--teal)}
-.abar.ask.over i span{background:#c4553b}
-.ask-gap{font-size:12px;color:var(--muted);margin-top:4px}
-@media(max-width:900px){.mrow{grid-template-columns:minmax(0,1fr) 150px;gap:8px 16px}
-.mtick{grid-column:1/-1}.mask{grid-column:1/-1}.msell small{display:block}}
+small.cl{display:none}
+@media(max-width:900px){.mrow{grid-template-columns:1fr 1fr;gap:10px 16px}
+.mmain{grid-column:1/-1}
+small.cl{display:block;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:2px;
+font-weight:600}}
 """
 
 
@@ -125,6 +124,14 @@ def _short_day(iso) -> str:
         return "—"
 
 
+def _days_since(iso, now: datetime) -> int | None:
+    try:
+        d = date.fromisoformat(str(iso)[:10])
+        return max(0, (now.date() - d).days)
+    except (ValueError, TypeError):
+        return None
+
+
 def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "ygo",
                 cards=None, pkm=None) -> str:
     M = Money(st, home, cur, now)
@@ -134,7 +141,7 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
     label = qs.get("label", ["all"])[0]
     label = label if label in ("all", "rising", "falling", "steady", "none") else "all"
     sort = qs.get("sort", ["move"])[0]
-    sort = sort if sort in ("move", "sales", "spread", "recent") else "move"
+    sort = sort if sort in ("move", "edge", "sales", "spread", "recent") else "move"
     min_sales = qs.get("min", ["0"])[0]
     min_sales = int(min_sales) if min_sales.isdigit() else 0
     s = trends.summary(st, game)
@@ -162,24 +169,29 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
                       f'{e(lab)}</a>' for g, lab in (("ygo", "Yu-Gi-Oh!"), ("pkm", "Pokémon")))
             + '</div>')
     head = (f'<h1>The {e(name)} market</h1>' + tabs +
-            f'<p class="mk-sub">Every card here has sold at least once. The big number is what copies <b>sold for</b> — the '
-            f'middle of the real sales, not a seller\'s hope. Ask bars are the cheapest live listing, kept separate.</p>'
+            f'<p class="mk-sub">One row per exact printing and grade. <b>Fair</b> is the middle of this version\'s real '
+            f'sales. <b>Ask</b> is the cheapest live copy. The distance between them is the edge you get today.</p>'
             + pulse)
     chips = _chips({**qs, "sort": sort, "min": str(min_sales)}, {
         "label": [("all", "Everything"), ("rising", "Climbing"), ("falling", "Slipping"), ("steady", "Holding"),
                   ("none", "Too new to call")],
         "min": [("0", "Any history"), ("3", "3+ sales"), ("6", "6+ sales")],
-        "sort": [("move", "Biggest move"), ("sales", "Bestsellers"), ("spread", "Widest ask gap"), ("recent", "Newest sale")],
+        "sort": [("move", "Biggest move"), ("edge", "Below fair"), ("sales", "Bestsellers"), ("recent", "Newest sale")],
     })
     if not rows:
         return (head + chips + '<p class="empty">Nothing matches those filters yet. A version shows up once real sales of '
                 'that exact printing and grade are stored.</p>')
     cols = ('<div class="mhead">'
             '<span>Card</span>'
-            '<span title="The middle of this version\'s real sales: half the copies sold for less, half for more.">Sells for</span>'
-            '<span title="Which way recent sales moved, and how many sales back the call.">Moved</span>'
-            '<span title="Cheapest live listing against the sold price. A gap of three times or more usually means a '
-            'different variant is on sale - open the card before believing it.">Sold vs asking</span>'
+            '<span title="Middle sold price of this exact version, in your currency. Uses the last 30 days when 3+ sales '
+            'sit there, otherwise all stored sales. The line under it is the middle half (p25-p75).">Fair now</span>'
+            '<span title="Copies sold per month. The line under it: newest sale and how many sales back the number.">'
+            'Sales pace</span>'
+            '<span title="Cheapest live listing in the newest snapshot (up to 3 days old) and its gap to fair. Under fair '
+            'means the copy is cheaper than what copies actually sell for. Supply: listed count divided by the monthly '
+            'sales pace.">Cheapest ask</span>'
+            '<span title="90-day change when 3+ sales sit at each end of the window; otherwise the last week; otherwise '
+            'steady or too new.">Trend</span>'
             '</div>')
     name_of = _name_of(cards, pkm)
     body = []
@@ -196,50 +208,75 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
                  if key else '<span class="mthumb ph" aria-hidden="true"></span>')
         grade = _grade(gkey)
         pill = f'<span class="mgrade{" raw" if not grade else ""}">{e(grade or "Raw")}</span>'
-        lab = r["trend_label"] or r["move_label"]
+        lab = r["trend_label"] if r["trend_label"] in ("rising", "falling") else r["move_label"]
         cls = "up" if lab == "rising" else "down" if lab == "falling" else "hold" if lab == "steady" else "none"
-        chip = r["plain"] or "Too new to call"
-        ch90 = (f' <span class="muted small">{r["change_90"]:+.0f}% in 3 months</span>'
-                if r["change_90"] is not None else "")
         why = e(r["trend_why"] or r["change_why"] or
                 ("the middle of the last 7 days of sales against the 7 before it" if r.get("short_move") is not None
                  else "not enough dated sales for a trend yet"))
-        sold = r["median"]
+        if r["change_90"] is not None:
+            pct, span = r["change_90"], "3mo"
+        elif r["short_move"] is not None:
+            pct, span = r["short_move"], "1wk"
+        elif r["change_span"] is not None:
+            pct, span = r["change_span"], "total"
+        else:
+            pct, span = None, ""
+        if pct is not None and abs(pct) >= 1:
+            chip = f"{pct:+.0f}% {span}"
+            if span == "total":
+                cls = "up" if pct > 0 else "down"
+                why = e("the middle of the newest three sales against the middle of the earliest three")
+        elif pct is not None or lab == "steady" or (r["plain"] or "").startswith("Steady"):
+            chip = "flat"
+        else:
+            chip = "too soon" if r["n_sales"] >= 6 else "thin"
+        if chip == "flat":
+            cls = "hold"
+        use30 = (r["n_30"] or 0) >= 3
+        fair = r["median_30"] if use30 else r["median"]
+        typ_lo = r["p25"] if r["p25"] is not None else r["low"]
+        typ_hi = r["p75"] if r["p75"] is not None else r["high"]
+        n = r["n_sales"]
+        rng = f"{M(typ_lo)}–{M(typ_hi)}" if typ_lo != typ_hi else M(typ_lo)
+        last = _days_since(r["last_sale"], now)
+        last_txt = "today" if last == 0 else f"{last}d" if last is not None else "—"
+        pace = r["sales_month"]
+        pace_txt = (f"{pace:.1f}" if pace < 10 else f"{pace:.0f}") if pace else "—"
+        supd = (r["ask_n"] / (pace / 30.44)) if r["ask_n"] and pace else None
+        sup_txt = ("<1d" if supd < 1 else f"≈{supd:.0f}d") if supd is not None else None
         askv = r["ask_low"] if r["ask_low"] is not None else r["ask_median"]
         if askv:
-            soldv = sold or 0
-            gap = (askv / soldv - 1) * 100 if soldv else None
-            capped = bool(soldv) and askv > soldv * 3
-            top = max(soldv, soldv * 3 if capped else askv) or 1
-            over = askv > soldv
-            gaptxt = ("Asking far above the sold price — three times or more" if capped else
-                      "Asking in line with the sold price" if gap is not None and abs(gap) < 2 else
-                      f"Asking {abs(gap):.0f}% above the sold price" if over and gap is not None else
-                      f"Asking {abs(gap):.0f}% below the sold price" if gap is not None else
-                      "Asking price against the sold price")
-            if r["ask_n"] and r["ask_day"]:
-                gaptxt += f' · {r["ask_n"]} listed {_short_day(r["ask_day"])}'
-            bars = (f'<div class="abars">'
-                    f'<div class="abar sold"><em>Sold</em><i><span style="width:{soldv / top * 100:.0f}%"></span></i>'
-                    f'<em>{M(sold)}</em></div>'
-                    f'<div class="abar ask{" over" if over else ""}"><em>Asking</em>'
-                    f'<i><span style="width:{min(askv / top * 100, 100):.0f}%"></span></i><em>{M(askv)}</em></div></div>'
-                    f'<div class="ask-gap">{e(gaptxt)}</div>')
+            edge = (fair - askv) / fair * 100 if fair else None
+            ecls = ("under" if edge >= 2 else "over" if edge <= -2 else "at") if edge is not None else "at"
+            etxt = (f"{edge:.0f}% under fair" if ecls == "under" else f"{abs(edge):.0f}% above fair" if ecls == "over"
+                    else "at fair")
+            asub = f'{r["ask_n"]} listed {sup_txt}' if r["ask_n"] and sup_txt else (
+                f'{r["ask_n"]} listed' if r["ask_n"] else _short_day(r["ask_day"]))
+            atitle = (f'Cheapest of {r["ask_n"]} live listings in the {_short_day(r["ask_day"])} snapshot; '
+                      f'{"under a day" if supd < 1 else f"about {supd:.0f} days"} of supply at the current sales pace'
+                      if supd is not None else
+                      f'Cheapest live listing in the {_short_day(r["ask_day"])} snapshot')
+            ask_html = (f'<b title="{e(atitle)}">{M(askv)}<span class="edge {ecls}">{e(etxt)}</span></b>'
+                        f'<small>{e(asub)}</small>')
         else:
-            bars = '<div class="ask-gap">No copy is listed right now, so the sold price stands alone.</div>'
+            ask_html = '<span class="none">no live ask</span>'
         body.append(
             f'<li class="mrow {cls}"><div class="mmain">{thumb}'
             f'<span class="mid">{nm_html}<span class="mmeta"><span class="mcode">{e(r["label"])}</span>{pill}</span></span></div>'
-            f'<div class="msell"><b title="Middle of this version\'s real sales: {r["n_sales"]} sold between '
-            f'{M(r["low"])} and {M(r["high"])}">{M(sold)}</b><small>Sells for</small></div>'
-            f'<div class="mtick"><span class="mchip {cls}" title="{why}">{e(chip)}</span>{ch90}'
-            f'<small>{r["n_sales"]} sale{"s" if r["n_sales"] != 1 else ""} · last sold {_short_day(r["last_sale"])}'
-            + (f' · {r["n_30"]} in the last 30 days' if r["n_30"] else "") + '</small></div>'
-            f'<div class="mask">{bars}</div></li>')
+            f'<div class="mfair"><small class="cl">Fair now</small>'
+            f'<b title="Middle of the {"last 30 days of" if use30 else ""} sales of this exact version: {n} sold between '
+            f'{M(r["low"])} and {M(r["high"])}">{M(fair)}</b>'
+            f'<small title="Middle half of all sales of this version">{n} sold · {rng}</small></div>'
+            f'<div class="mturn"><small class="cl">Sales pace</small>'
+            f'<b title="Copies sold per month across {n} stored sales">{pace_txt}<span>/mo</span></b>'
+            f'<small>last {last_txt} · n={n}</small></div>'
+            f'<div class="mask"><small class="cl">Cheapest ask</small>{ask_html}</div>'
+            f'<div class="mtick"><small class="cl">Trend</small>'
+            f'<span class="mchip {cls}" title="{why}">{chip}</span></div></li>')
     shown = (f'<p class="muted small">Showing {len(rows)} of {s["series"]:,} versions'
              + (", the top 200 for this sort" if len(rows) >= 200 else "") + '.</p>')
-    note = ('<p class="muted small">Prices in your display currency, each sale converted at its own date. The ask bar is '
-            'the cheapest copy in the newest nightly snapshot and never moves the sold number.</p>')
+    note = ('<p class="muted small">Prices in your display currency, each sale converted at its own date. Fair is sold '
+            'evidence only; asks come from the newest nightly snapshot and never move it.</p>')
     return head + chips + cols + f'<ul class="mlist">{"".join(body)}</ul>' + shown + note
 
 

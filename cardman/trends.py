@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS price_trend (
   n_sales INTEGER NOT NULL, n_30 INTEGER, last_sale TEXT, first_sale TEXT, sales_month REAL,
   median REAL, median_30 REAL, low REAL, high REAL, p25 REAL, p75 REAL,
   trend_label TEXT, trend_pct REAL, trend_ci_lo REAL, trend_ci_hi REAL, trend_why TEXT,
-  change_90 REAL, change_why TEXT, plain TEXT,
+  change_90 REAL, change_why TEXT, change_span REAL, plain TEXT,
   short_move REAL, short_days INTEGER, move_label TEXT,
   ask_n INTEGER, ask_low REAL, ask_median REAL, ask_day TEXT, spread REAL,
   updated TEXT NOT NULL, PRIMARY KEY (printing_id, gkey));
@@ -94,7 +94,7 @@ def refresh(st, now: datetime | None = None, home: str = "TWD") -> int:
     now = now or datetime.now(UTC)
     st.db.executescript(SCHEMA)
     cols = {r[1] for r in st.db.execute("PRAGMA table_info(price_trend)")}
-    for c, t in (("short_move", "REAL"), ("short_days", "INTEGER"), ("move_label", "TEXT")):
+    for c, t in (("short_move", "REAL"), ("short_days", "INTEGER"), ("move_label", "TEXT"), ("change_span", "REAL")):
         if c not in cols:
             st.db.execute(f"ALTER TABLE price_trend ADD COLUMN {c} {t}")
     pids = [r[0] for r in st.db.execute(
@@ -129,6 +129,12 @@ def refresh(st, now: datetime | None = None, home: str = "TWD") -> int:
         move_label = tl or (("rising" if m >= 5 else "falling" if m <= -5 else "steady") if m is not None
                             else ("steady" if plain and plain.startswith("Steady") else None))
         span_days = max(1.0, (now - points[0][0]).total_seconds() / 86400)
+        span_pct = None
+        if len(prices) >= 6 and points[-1][0] > points[0][0]:
+            k = min(3, len(prices) // 2)
+            first, last = statistics.median(prices[:k]), statistics.median(prices[-k:])
+            if first > 0:
+                span_pct = (last / first - 1) * 100
         gkey = f"{gc}|{gr}"
         ask = asks.get((pid, gkey))
         med = statistics.median(prices)
@@ -139,7 +145,7 @@ def refresh(st, now: datetime | None = None, home: str = "TWD") -> int:
             len(points), s["n_30"], points[-1][0].isoformat(), points[0][0].isoformat(), len(points) / (span_days / 30.44),
             med, s["median_30"], min(prices), max(prices), _pct(prices, .25), _pct(prices, .75),
             tr.get("label"), tr.get("monthly_pct"), (tr.get("ci") or [None, None])[0], (tr.get("ci") or [None, None])[1],
-            tr.get("why"), ch.get("pct"), ch.get("why"), plain,
+            tr.get("why"), ch.get("pct"), ch.get("why"), span_pct, plain,
             m, 7 if m is not None else None, move_label,
             ask["n"] if ask else None, ask["low"] if ask else None, ask["median"] if ask else None, ask["day"] if ask else None,
             spread, now.isoformat()))
@@ -148,13 +154,14 @@ def refresh(st, now: datetime | None = None, home: str = "TWD") -> int:
         st.db.executemany(
             "INSERT INTO price_trend (printing_id, gkey, game, label, n_sales, n_30, last_sale, first_sale, sales_month, "
             "median, median_30, low, high, p25, p75, trend_label, trend_pct, trend_ci_lo, trend_ci_hi, trend_why, "
-            "change_90, change_why, plain, short_move, short_days, move_label, ask_n, ask_low, ask_median, ask_day, "
-            "spread, updated) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+            "change_90, change_why, change_span, plain, short_move, short_days, move_label, ask_n, ask_low, ask_median, ask_day, "
+            "spread, updated) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
     return len(rows)
 
 
 _MOVE = "CASE WHEN trend_label IN ('rising','falling') THEN trend_label ELSE move_label END"
 _SORTS = {"move": "ABS(COALESCE(change_90, 0)) DESC, ABS(COALESCE(trend_pct, 0)) DESC, ABS(COALESCE(short_move, 0)) DESC",
+          "edge": "(COALESCE(median_30, median) - ask_low) / NULLIF(COALESCE(median_30, median), 0) DESC",
           "sales": "n_sales DESC, last_sale DESC",
           "spread": "ABS(COALESCE(spread, 0)) DESC",
           "recent": "last_sale DESC",
@@ -167,7 +174,7 @@ def _ensure(st) -> bool:
     if "price_trend" not in have:
         return False
     cols = {r[1] for r in st.db.execute("PRAGMA table_info(price_trend)")}
-    for c, t in (("short_move", "REAL"), ("short_days", "INTEGER"), ("move_label", "TEXT")):
+    for c, t in (("short_move", "REAL"), ("short_days", "INTEGER"), ("move_label", "TEXT"), ("change_span", "REAL")):
         if c not in cols:
             st.db.execute(f"ALTER TABLE price_trend ADD COLUMN {c} {t}")
     return True
