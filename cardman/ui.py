@@ -2044,6 +2044,11 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     _fc.flock(lockh, _fc.LOCK_UN)
                     lockh.close()
                 return self._send(200, json.dumps(out).encode(), "application/json")
+            if parts == ["static", "hunt.gif"] or parts == ["static", "hunt-still.png"]:
+                fp = Path(__file__).resolve().parent / "assets" / parts[1]
+                if not fp.exists():
+                    return self._send(404, b"", "text/plain")
+                return self._send(200, fp.read_bytes(), "image/gif" if parts[1].endswith("gif") else "image/png")
             if not parts and self.game == "ygo" and self._cookie("game") == "pkm" and "g" not in qs and not u.query:
                 return self._go("/pkm/")
             if self.game == "ygo" and parts == ["market"] and self._cookie("game") == "pkm":
@@ -2338,7 +2343,12 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     try:
                         import subprocess
                         import sys as _sys
-                        subprocess.Popen([_sys.executable, "-m", "cardman.engine", "once", "--store", store_path],
+                        qv = form.get("quick")
+                        qv = qv[0] if isinstance(qv, list) else qv
+                        argv = [_sys.executable, "-m", "cardman.engine", "once", "--store", store_path]
+                        if str(qv or "") == "1":
+                            argv.append("--quick")
+                        subprocess.Popen(argv,
                                          cwd=str(Path(__file__).resolve().parent.parent),
                                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                          start_new_session=True)

@@ -252,9 +252,8 @@ def _engine_line(st, now: datetime, base: str, token: str = "") -> str:
             sec = None
     cls = "ok" if sec is not None and sec < 1200 else ("slow" if sec is not None and sec < 86400 else "off")
     scan = ('<button class="hun-scan" id="hun-scan" type="button" data-back="' + e(base) + '" data-t="' + e(token) + '" '
-            'title="run a collector pass now"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
-            'stroke-linecap="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/>'
-            '<circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/></svg><span>Scan now</span></button>')
+            'title="run a collector pass now"><img class="hun-wiz" src="/static/hunt-still.png" alt="" draggable="false">'
+            '<span>Scan now</span></button>')
     return scan, '<span class="hun-live {}" id="hun-live"><i></i>{}</span>'.format(cls, e(txt))
 
 
@@ -1265,18 +1264,23 @@ border-radius:14px;background:var(--surface);text-decoration:none;transition:bor
 border:1px solid var(--axis);border-radius:999px;background:var(--surface);cursor:pointer;transition:color .15s,border-color .15s,transform .12s}
 .hun-scan:hover{color:var(--fg);border-color:var(--fg2)}
 .hun-scan:active{transform:scale(.96)}
-.hun-scan svg{width:14px;height:14px}
-.hun-scan.busy{color:var(--muted)}
-.hun-scan.busy svg{animation:hunspin 1.1s linear infinite}
-@keyframes hunspin{to{transform:rotate(360deg)}}
+.hun-wiz{width:28px;height:28px;border-radius:50%;object-fit:cover;margin:-4px 0;flex:none}
+.hun-scan.busy{color:var(--accent)}
+.hun-scan.busy .hun-wiz{box-shadow:0 0 0 2px var(--accent),0 0 18px rgba(47,191,113,.4)}
 .hun-live{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
 .hun-live i{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
 .hun-live.ok i{background:#2fbf71;animation:hunpulse 2.6s ease-in-out infinite}
 .hun-live.slow i{background:#e6a23c}
 @keyframes hunpulse{0%,100%{box-shadow:0 0 0 0 rgba(47,191,113,.35)}50%{box-shadow:0 0 0 6px rgba(47,191,113,0)}}
 .hunzone{transition:opacity .25s}
-.hunzone.armed .hungrid{animation:hunarmed 2.4s ease-in-out infinite}
-@keyframes hunarmed{50%{opacity:.72}}
+.hun.landed{animation:hunland .9s cubic-bezier(.22,.9,.3,1.08) both;z-index:2}
+.hun.landed::after{content:"";position:absolute;inset:0;border-radius:16px;pointer-events:none;
+box-shadow:0 0 0 2px rgba(47,191,113,.6),0 10px 34px rgba(47,191,113,.3);animation:hunfade 1.7s ease both}
+@keyframes hunland{0%{opacity:0;transform:translate(30px,-34px) rotate(8deg) scale(.78)}
+60%{opacity:1;transform:translate(0,4px) rotate(-1.5deg) scale(1.04)}100%{opacity:1;transform:none}}
+@keyframes hunfade{0%{opacity:0}25%{opacity:1}100%{opacity:0}}
+.hun.landed .laser{animation:laserpop 1.2s ease both}
+@keyframes laserpop{0%,55%{filter:brightness(2.4);transform:scaleY(2.2)}100%{filter:none;transform:none}}
 .hungrid>.hun{animation:hunin .5s cubic-bezier(.2,.7,.3,1) backwards}
 .hungrid>.hun:nth-child(2){animation-delay:40ms}
 .hungrid>.hun:nth-child(3){animation-delay:80ms}
@@ -1290,7 +1294,7 @@ border:1px solid var(--axis);border-radius:999px;background:var(--surface);curso
 .hungrid>.hun:nth-child(11){animation-delay:400ms}
 .hungrid>.hun:nth-child(12){animation-delay:440ms}
 @keyframes hunin{from{opacity:0;transform:translateY(12px)}}
-@media(prefers-reduced-motion:reduce){.hungrid>.hun,.hun-scan.busy svg,.hun-live.ok i{animation:none}.hunzone{transition:none}}
+@media(prefers-reduced-motion:reduce){.hungrid>.hun,.hun-live.ok i{animation:none}.hunzone{transition:none}.hun.landed{animation:none}.hun.landed::after,.hun.landed .laser{animation:none}}
 .hun-all{margin-left:auto;font-size:14px;font-weight:600}
 .hun-note{color:var(--muted);margin:24px 2px 0;line-height:1.5;max-width:88ch}
 section.hero.hunt{padding:26px 12px 10px}
@@ -1343,18 +1347,24 @@ else if(ev.key==='Escape'){box.hidden=true}});
 document.addEventListener('click',function(ev){if(!f.contains(ev.target))box.hidden=true})})})();
 (function(){if(!document.querySelector('.hunzone'))return;var running=false;
 function st(){return fetch('/engine/status').then(function(r){return r.json()}).catch(function(){return null})}
-function sync(){var btn=document.querySelector('.hun-scan'),z=document.querySelector('.hunzone');
-if(btn){btn.classList.toggle('busy',running);var s=btn.querySelector('span');if(s)s.textContent=running?'Streaming…':'Scan now'}
-if(z)z.classList.toggle('armed',running)}
-function swap(){return fetch(location.pathname+location.search).then(function(r){return r.text()}).then(function(html){
+function sync(){var btn=document.querySelector('.hun-scan');
+if(btn){btn.classList.toggle('busy',running);var s=btn.querySelector('span');if(s)s.textContent=running?'Scanning…':'Scan now';
+var im=btn.querySelector('img');if(im)im.src=running?'/static/hunt.gif?r='+((Date.now()/1000)|0):'/static/hunt-still.png'}}
+function swap(){var had={};document.querySelectorAll('.hun[data-key]').forEach(function(n){had[n.getAttribute('data-key')]=1});
+return fetch(location.pathname+location.search).then(function(r){return r.text()}).then(function(html){
 var d=new DOMParser().parseFromString(html,'text/html');
-['.hun-rail','.hunzone'].forEach(function(sel){var n=d.querySelector(sel),o=document.querySelector(sel);if(n&&o)o.replaceWith(n)});sync()})}
+['.hun-rail','.hunzone'].forEach(function(sel){var n=d.querySelector(sel),o=document.querySelector(sel);if(n&&o)o.replaceWith(n)});
+var land=0;document.querySelectorAll('.hun[data-key]').forEach(function(n){if(!had[n.getAttribute('data-key')]){land++;n.classList.add('landed');
+setTimeout(function(){n.classList.remove('landed')},1700)}});
+if(land&&!running){var lv=document.getElementById('hun-live');if(lv){var b=document.createElement('b');b.textContent=' · +'+land+' landed';lv.appendChild(b)}}
+sync()})}
 function livePoll(){var seen=null,t0=Date.now();var iv=setInterval(function(){st().then(function(s){if(!s)return;
 if(s.fresh_at&&s.fresh_at!==seen){seen=s.fresh_at;swap()}
-if((!s.scanning&&(seen||Date.now()-t0>60000))||Date.now()-t0>330000){clearInterval(iv);running=false;swap()}})},12000)}
+if((!s.scanning&&(seen||Date.now()-t0>45000))||Date.now()-t0>240000){clearInterval(iv);running=false;swap()}})},6000)}
 async function run(auto){if(running)return;running=true;sync();try{var before=await st();
 if(auto&&before&&before.age_s!==null&&before.age_s<480){await swap();running=false;sync();return}
 var b=document.querySelector('.hun-scan')||{dataset:{}};var fd=new FormData();fd.append('back',b.dataset.back||'/');fd.append('t',b.dataset.t||'');
+if(!auto)fd.append('quick','1');
 try{await fetch('/engine/tick',{method:'POST',body:fd})}catch(e){}
 livePoll()}catch(e){running=false;sync()}}
 document.addEventListener('click',function(ev){var b=ev.target.closest&&ev.target.closest('.hun-scan');if(b)run(false)});

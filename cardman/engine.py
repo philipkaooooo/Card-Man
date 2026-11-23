@@ -496,25 +496,27 @@ class Engine:
         return added
 
     # -- the tick -------------------------------------------------------------------------------------------------
-    def tick(self, now: datetime | None = None) -> TickReport:
+    def tick(self, now: datetime | None = None, quick: bool = False) -> TickReport:
         started = time.monotonic()
         now = now or datetime.now(timezone.utc)
         rep = TickReport(at=now.isoformat())
         self.__dict__.pop("_ev_memo", None)
         home = self.profile["home_currency"]
-        for base in ("USD", "JPY", "TWD"):
-            if base != home:
-                try:
-                    self.fx.sync_latest(base, (home,))
-                except Exception as x:
-                    rep.errors.append(f"FX {base}/{home}: {x}")
-        try:
-            from .ebay_deletion import sync as sync_deletions
-            sync_deletions(databases=[Path(self.store_path), ROOT / "data" / "cache" / "market.sqlite"], raw=self.raw.root)
-            # A long-running engine keeps decoded records in memory: drop them so an erased seller is gone there too.
-            self.store.__dict__.pop("_original_memo", None)
-        except Exception as x:   # stays queued online and is retried next pass
-            rep.errors.append(f"eBay deletions: {type(x).__name__}")
+        if not quick:
+            for base in ("USD", "JPY", "TWD"):
+                if base != home:
+                    try:
+                        self.fx.sync_latest(base, (home,))
+                    except Exception as x:
+                        rep.errors.append(f"FX {base}/{home}: {x}")
+        if not quick:
+            try:
+                from .ebay_deletion import sync as sync_deletions
+                sync_deletions(databases=[Path(self.store_path), ROOT / "data" / "cache" / "market.sqlite"], raw=self.raw.root)
+                # A long-running engine keeps decoded records in memory: drop them so an erased seller is gone there too.
+                self.store.__dict__.pop("_original_memo", None)
+            except Exception as x:   # stays queued online and is retried next pass
+                rep.errors.append(f"eBay deletions: {type(x).__name__}")
         cal = self.ledger.calibration(now)      # the book exists before the first batch, so streamed listings get priced on arrival
         book = PriceBook(self.store, self.fx, self.profile, now, bias=cal.resale_bias, reference=self.reference)
         from .games import guess_game
@@ -549,6 +551,9 @@ class Engine:
                 rep.errors.append(f"{route.name}: {x}")
         if self.reference:
             rep.routes.append(asdict(self.reference.status()))
+        if quick:   # a preview pass: the board has the new listings and their lasers; the rest can wait for the loop
+            rep.seconds = round(time.monotonic() - started, 3)
+            return rep
         if self.ebay.status().on:
             # Sales seen through eBay's own API: sold counts that rose on tracked fixed-price listings.
             from .ebay_sold_watch import check as check_sold_counts
@@ -629,6 +634,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("key", nargs="?")
     ap.add_argument("--store", default=str(ROOT / "data" / "store" / "evidence.sqlite"))
     ap.add_argument("--interval", type=int, default=900)
+    ap.add_argument("--quick", action="store_true")
     for f in ("printed-code", "rarity", "edition", "product", "language", "authentic"):
         ap.add_argument(f"--{f}")
     a = ap.parse_args(argv)
@@ -659,7 +665,7 @@ def main(argv: list[str] | None = None) -> None:
     eng = Engine(a.store)
     eng._skip_daily_catalog = False          # the long-running engine keeps the master card list fresh
     if a.cmd != "run":
-        print(json.dumps(asdict(eng.tick()), indent=1, ensure_ascii=False), flush=True)
+        print(json.dumps(asdict(eng.tick(quick=a.quick)), indent=1, ensure_ascii=False), flush=True)
         return
     while True:
         with eng.db:
