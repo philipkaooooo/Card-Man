@@ -280,6 +280,13 @@ def pair_art(key: str, d: dict, photos: dict | None, *, big: bool = False) -> st
         official = '<span class="card ph" role="img" aria-label="Not one card yet"><span>?</span></span>'
     if has:
         real = lphoto(iid, 0, "m" if big else "s", "Listing photo", cls="shot-photo")
+        if d.get("photo") == "clash":
+            # The seller's photo is a different card than the matched print: the photo is the truth, lead with it.
+            size = " big" if big else ""
+            return (f'<span class="shot{size} clash"><span class="shot-real">{real}'
+                    f'<small>Seller photo · the matched card differs</small></span>'
+                    f'<button type="button" class="shot-off" data-reveal '
+                    f'aria-label="Matched card picture. Click to toggle the seller photo.">{official}</button></span>')
         return _shot(official, real, d.get("photo"), big=big)
     return official if pc else _art(d, None)
 
