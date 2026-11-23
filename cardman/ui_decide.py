@@ -266,7 +266,7 @@ rails.forEach(function(r){var on=r.querySelector('.lane.on'),ind=r.querySelector
  addEventListener('resize',function(){place(on)})});
 if(!calm){[].slice.call(document.querySelectorAll('.lane-n[data-n]')).forEach(function(n){var to=+n.getAttribute('data-n');if(!to)return;
  var t0=null;function step(t){t0=t0||t;var k=Math.min(1,(t-t0)/400),v=Math.round(to*(1-Math.pow(1-k,3)));n.textContent=v.toLocaleString();
- if(k<1)requestAnimationFrame(step)}n.textContent='0';requestAnimationFrame(step)})}
+ if(k<1)requestAnimationFrame(step)}requestAnimationFrame(function(t){n.textContent='0';step(t)})})}
 var cards=[].slice.call(document.querySelectorAll('.deal'));if(!cards.length||calm||!('IntersectionObserver' in window))return;
 root.classList.add('cm-motion');var batch=0,timer=null;
 var io=new IntersectionObserver(function(es){es.forEach(function(en){if(!en.isIntersecting)return;var c=en.target;io.unobserve(c);
