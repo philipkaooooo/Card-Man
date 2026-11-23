@@ -343,8 +343,11 @@ def _under_table(under: list[dict], cur: str) -> str:
         f'<td class="n">{_mn(p["market"], cur)}</td>'
         f'<td class="n"><span class="under">'
         f'{_pct((p["ask"]["ask"] - p["market"]) / p["market"] * 100)}</span></td></tr>' for p in under[:8])
+    deep = min(((p["ask"]["ask"] - p["market"]) / p["market"] for p in under), default=0.0) < -0.6
+    tail = ('<p class="cmfoot">A gap past 60% is usually a mismatched printing or a listing that is not the card. '
+            'Open it before buying.</p>' if deep else '')
     return (f'<table class="cmtab"><thead><tr><th>Card version</th><th class="n">Ask</th><th class="n">Market</th>'
-            f'<th class="n">Gap</th></tr></thead><tbody>{rows}</tbody></table>')
+            f'<th class="n">Gap</th></tr></thead><tbody>{rows}</tbody></table>{tail}')
 
 
 CSS = """
