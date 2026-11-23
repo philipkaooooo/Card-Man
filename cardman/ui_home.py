@@ -353,6 +353,8 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
                 pass
     counts = {"all": 0, "good": 0, "avg": 0, "bad": 0, "none": 0}
     entries = []
+    from .pile import keys as _pile_keys
+    _piled = frozenset(_pile_keys(st)) if token else frozenset()
     for key, source, title, url, price, currency, seen, dj, payload, status, iid, imgs in rows:
         try:
             d = json.loads(payload) if payload else (json.loads(dj) if dj else {})
@@ -418,18 +420,29 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
         rank = {"good": 0, "avg": 1, "bad": 2}.get(code, 3)
         if gkey in pcvals:      # a cross-market comp beats a bare internal read for board space
             rank = min(rank, 0.8) if code == "none" else rank - 0.4
+        pilef = ""
+        if token and key and url:
+            piled = key in _piled
+            pilef = ('<form class="pilebtn" method="post" action="/pile/{}">'
+                     '<input type="hidden" name="t" value="{}"><input type="hidden" name="key" value="{}">'
+                     '<input type="hidden" name="back" value="{}">'
+                     '<button class="pbtn{}" type="submit" title="{}" aria-label="{}">{}</button></form>').format(
+                "remove" if piled else "add", e(token), e(key), e(base), " on" if piled else "",
+                "In the pile - remove" if piled else "Set aside in the card pile",
+                "Remove from the card pile" if piled else "Set aside in the card pile", "✓" if piled else "＋")
         entries.append((rank, seen or "",
+                        '<div class="hun-item">'
                         '<a class="hun" href="{}" data-key="{}" data-signal="{}">{}'
                         '<span class="hun-b"><span class="hun-name">{}</span>{}'
                         '<span class="hun-row"><span class="hun-price">{}{}</span>'
                         '<span class="hun-meta">{}{}{}</span></span>{}{}</span>'
-                        '<span class="laser l-{}"></span></a>'.format(
+                        '<span class="laser l-{}"></span></a>{}</div>'.format(
                             e(url), e(key), e(code), art, e((title or "")[:90]),
                             '<span class="hun-sub">' + e(sub) + "</span>" if sub else "",
                             e(price_txt), chip, _mkt_icon(source),
                             (" " + e(when)) if when else "", (" \u00b7 {} pics".format(own) if own > 1 else ""),
                             pcrow, ('<span class="hun-spark">' + spk + "</span>") if spk else "",
-                            e(code))))
+                            e(code), pilef)))
     entries.sort(key=lambda x: x[1], reverse=True)
     entries.sort(key=lambda x: x[0])
     tiles = [h for _r, _s, h in entries[:30]]
@@ -700,7 +713,7 @@ def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalo
             + _market_section(passcode, market, chosen, by_id, M, now, f)
             + _sold_panel(st, all_v, chosen, M)
             + _versions_table(passcode, all_v, chosen, value, listed, M)
-            + (_sale_form(passcode, all_v, chosen, token, now) if token else ""))
+            + (_sale_form(passcode, all_v, chosen, token, now) + _chase_form(passcode, all_v, chosen, token, c.get("name_en") or "") if token else ""))
     return (
         f'<div class="cardpage"><div class="cp-img">{img(passcode, "", c.get("name_en") or "", cls="card big")}</div>'
         f'<div class="cp-info"><p class="crumb">{e(c.get("card_type") or "")}{" · " + e(c["type_line"]) if c.get("type_line") else ""}</p>'
@@ -715,7 +728,7 @@ def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalo
         + _market_section(passcode, market, chosen, by_id, M, now, f)
         + _sold_panel(st, all_v, chosen, M)
         + _versions_table(passcode, all_v, chosen, value, listed, M)
-        + (_sale_form(passcode, all_v, chosen, token, now) if token else ""))
+        + (_sale_form(passcode, all_v, chosen, token, now) + _chase_form(passcode, all_v, chosen, token, c.get("name_en") or "") if token else ""))
 
 
 def _pkm_details(c: dict) -> str:
@@ -1009,6 +1022,21 @@ def _sale_form(passcode: str, variants, chosen, token: str, now: datetime) -> st
             '<option>ARS</option></select></label><label>Grade<input name="grade" size="4"></label>'
             '<label>Link<input name="url" type="url" placeholder="https://…" size="28"></label>'
             '<button>Add sale</button></form></details></section>')
+
+
+def _chase_form(passcode: str, variants, chosen, token: str, name: str = "") -> str:
+    """Watch one card and get the bell when a live ask lands under your number. Any version, or exactly the
+    printing picked - the board prices each printing separately, so the choice decides which typical it tests."""
+    opts = ('<option value="">Any version</option>'
+            + "".join(f'<option value="{e(v.id)}"{" selected" if v.id == chosen else ""}>{e(_vlabel(v))}</option>' for v in variants))
+    return (f'<section id="chase"><details><summary>Chase this card - fire the bell when it is under your number</summary>'
+            '<p class="why">An ask under your number that still beats fees triggers one alert per price point; sold '
+            'comps ride along so you can see whether the market already agrees with you.</p>'
+            f'<form method="post" action="/pile/chase" class="inline chase"><input type="hidden" name="t" value="{e(token)}">'
+            f'<input type="hidden" name="passcode" value="{e(passcode)}"><input type="hidden" name="label" value="{e(name)}">'
+            f'<label>Version<select name="printing">{opts}</select></label>'
+            '<label>Notify below<input name="threshold" inputmode="decimal" required size="9" placeholder="75"></label>'
+            '<button>Start chasing</button></form></details></section>')
 
 
 def record_sale(st, catalog, passcode: str, form: dict, now: datetime) -> str:

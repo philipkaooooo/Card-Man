@@ -152,7 +152,8 @@ def recent(st, days: int = 7, limit: int = 30, now: datetime | None = None) -> l
     now = now or datetime.now(timezone.utc)
     cutoff = (now - timedelta(days=days)).isoformat()
     rows = st.db.execute("SELECT id, at, printing_id, detail_json FROM market_signal "
-                         "WHERE kind='ASK_UNDER' AND at>=? ORDER BY at DESC LIMIT ?", (cutoff, limit)).fetchall()
+                         "WHERE kind IN ('ASK_UNDER','CHASE_UNDER') AND at>=? ORDER BY at DESC LIMIT ?",
+                         (cutoff, limit)).fetchall()
     from .games import card_href
     from .ui_market import _card_key
     states, hits = {}, {}
@@ -172,11 +173,14 @@ def recent(st, days: int = 7, limit: int = 30, now: datetime | None = None) -> l
             d = json.loads(dj or "{}")
         except Exception:
             d = {}
-        key = _card_key(pid)
+        chase = sid.startswith("CHASE_UNDER:")
+        key = d.get("href") or (None if chase else _card_key(pid))
+        href = (key or "/pile") if chase else (card_href(key) if key else None)
         out.append({"id": sid, "at": at, "pid": pid, "label": d.get("label") or pid,
                     "ask": d.get("ask"), "typical": d.get("typical"), "pct": d.get("pct"),
                     "cur": d.get("cur") or "TWD", "game": d.get("game") or _game(pid),
-                    "href": card_href(key) if key else None,
+                    "href": href,
+                    "chase": chase,
                     "text": d.get("text") or "",
                     "state": (states.get(sid) or ("OPEN", None, None))[0],
                     "days": (states.get(sid) or ("OPEN", None, None))[1],

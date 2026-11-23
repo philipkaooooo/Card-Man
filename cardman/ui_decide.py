@@ -107,7 +107,7 @@ def price_track(price: float | None, value: float | None, M) -> str:
 
 
 def deal_card(key: str, d: dict, v: Verdict, cards, M, now: datetime, photos: dict | None = None, since: str | None = None,
-              spark: str = "") -> str:
+              spark: str = "", token: str = "", piled: frozenset = frozenset(), back: str = "/opportunities") -> str:
     lot = "LOT" in (d.get("kinds") or [])
     top = v.top or {}
     name = d.get("title") or key
@@ -140,6 +140,13 @@ def deal_card(key: str, d: dict, v: Verdict, cards, M, now: datetime, photos: di
     lane = LANE[v.code]
     pill = (f'<span class="dpill p-{lane}" data-tip="{e(LABEL[v.code] + ": " + LANE_WHY[v.code])}">{_icon(v.code)}{e(LABEL[v.code])}</span>'
             + (f'<span class="cpoint">{e(check_point(d, v))}</span>' if v.code == CHECK else ""))
+    pilef = (f'<form class="pilebtn" method="post" action="/pile/{"remove" if key in piled else "add"}">'
+             f'<input type="hidden" name="t" value="{e(token)}"><input type="hidden" name="key" value="{e(key)}">'
+             f'<input type="hidden" name="back" value="{e(back)}">'
+             f'<button class="pbtn{" on" if key in piled else ""}" type="submit" '
+             f'title="{"In the pile - remove" if key in piled else "Set aside in the card pile"}" '
+             f'aria-label="{"Remove from the card pile" if key in piled else "Set aside in the card pile"}">'
+             f'{"✓" if key in piled else "＋"}</button></form>')
     more = (f'<details class="dmore"><summary>Details</summary><div class="dm-body">{listing_icons(d, now)}{spark or ""}'
             + (f'<p class="dm-line">Worth paying up to <b>{e(M(top["max_buy"]))}</b></p>' if top.get("max_buy") and top.get("basis") == "sales" else "")
             + f'<p class="dm-line"><a href="{href}">Open the full listing</a></p></div></details>')
@@ -147,7 +154,7 @@ def deal_card(key: str, d: dict, v: Verdict, cards, M, now: datetime, photos: di
             f'<div class="dart">{art}</div>'
             f'<div class="dbody"><a class="dtitle" href="{href}">{e(name)}</a>{f"<span class=dsub>{e(sub)}</span>" if sub else ""}'
             f'<p class="dinfo">{"".join(info)}<span class="i-basis">{e(_basis(v))}</span></p>'
-            f'{price_track(price, value, M)}<div class="dpills">{pill}</div>'
+            f'{price_track(price, value, M)}<div class="dpills">{pill}<span class="dpile">{pilef}</span></div>'
             f'<p class="dwhy">{e(v.reason)}</p>{more}</div></article>')
 
 

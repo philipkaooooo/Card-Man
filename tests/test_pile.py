@@ -10,6 +10,9 @@ KEY = "ebay_browse:EBAY_US:123456789012"
 
 
 class M:
+    def __init__(self, now=NOW, home="USD"):
+        self.now, self.home = now, home
+
     def __call__(self, v, sign=False):
         return "—" if v is None else f"${v:,.0f}"
 
@@ -64,17 +67,18 @@ def test_view_prices_from_sales_and_flags_the_ones_without_a_comp(tmp_path):
     st = seed(tmp_path)
     add(st, KEY, NOW)
     add(st, "ebay_browse:EBAY_US:999999999999", NOW)
-    page = view(st, M(), NOW, "tok")
+    page = view(st, None, M(), NOW, "tok")
     assert "Card Pile" in page and "Blue-Eyes White Dragon LOB 1st Edition" in page
     assert "1 of 2 price from real sales" in page
-    assert "spare capital" not in page
     assert "$159" in page and "0.32×" in page                      # 159 / 500
     assert "Best return per dollar" in page
-    assert "Dark Magician LOB no comps" in page and "no sale price yet" in page
+    assert "Dark Magician LOB no comps" in page
     assert page.count('action="/pile/remove"') == 2
     assert "2 listings set aside" in page
+    assert "0 chases running" in page
 
 
 def test_view_with_an_empty_pile_says_so(tmp_path):
-    page = view(seed(tmp_path), M(), NOW, "tok")
-    assert "The pile is empty" in page
+    page = view(seed(tmp_path), None, M(), NOW, "tok")
+    assert "Nothing set aside yet." in page
+    assert "0 listings set aside" in page
