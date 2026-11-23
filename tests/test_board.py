@@ -134,3 +134,86 @@ def test_token_is_required(board):
     with pytest.raises(urllib.error.HTTPError) as x:
         post("/board/mark", {"keys": "ebay_browse:EBAY_US:buy", "mark": "pinned"})
     assert x.value.code == 403
+
+def _add_listing(db, suffix, *, payload=None, data="{}", title=None):
+    st = Store(db)
+    key = f"ebay_browse:EBAY_US:{suffix}"
+    t = title or f"Blue-Eyes White Dragon LOB-EN001 {suffix}"
+    with st.db:
+        st.db.execute("INSERT INTO listing VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                      (key, "ebay_browse:EBAY_US", suffix, "INTL", t, "https://www.ebay.com/itm/1", None, "ask", "250", "USD", None,
+                       "2026-11-01T00:00:00+00:00", "2026-11-02T00:00:00+00:00", None, "f", data))
+        if payload is not None:
+            st.db.execute("INSERT INTO opportunity VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                          (key, "SPECTATE", "OPEN", 1.0, None, 0.0, json.dumps(payload.get("kinds")), payload.get("printing_id"),
+                           None, "fp", json.dumps(payload), "t", "t"))
+    st.db.close()
+    return key
+
+
+def test_condition_badges_name_the_grade_and_where_it_came_from(board):
+    get, post, ajax, db = board
+    st = Store(db)
+    with st.db:
+        st.db.execute("UPDATE listing SET data_json=? WHERE key=?", (json.dumps({"condition": "Near Mint"}), "ebay_browse:EBAY_US:buy"))
+        st.db.execute("UPDATE listing SET title=? WHERE key=?", ("Blue-Eyes White Dragon LOB-EN001 Lightly Played", "ebay_browse:EBAY_US:check"))
+    st.db.close()
+    page = get("/opportunities")
+    assert "<b>NM</b> Near Mint" in page
+    assert "condition field" in page
+    assert "<b>LP</b> Lightly Played" in page
+    assert "named in the listing title" in page
+    assert "Condition unstated" in page
+    narrow = get("/opportunities?cond=NM")
+    assert "ebay_browse:EBAY_US:buy" in narrow
+    assert "ebay_browse:EBAY_US:check" not in narrow
+
+
+def test_unchecked_lane_holds_listings_the_engine_has_not_priced(board):
+    get, post, ajax, db = board
+    key = _add_listing(db, "fresh", data=json.dumps({"game": "ygo"}))
+    page = get("/opportunities")
+    assert "Unchecked" in page and "l-new" in page
+    lane = get("/opportunities?v=NEW")
+    assert key in lane
+    assert "ebay_browse:EBAY_US:buy" not in lane
+    assert "b-new" in lane
+
+
+def test_group_by_card_collapses_asks_and_opens_them(board):
+    from tests.test_listing_verdict import D, sc
+    get, post, ajax, db = board
+    pid = "p:EN_TCG:LOB-EN001:legend-of-blue-eyes-white-dragon:ultra-rare@89631139"
+    for n, ask in (("ask2", 310.0), ("ask3", 320.0)):
+        _add_listing(db, n, payload=D(kinds=["UNDERPRICED"], printing_id=pid, scenarios=[sc(pid=pid)],
+                                      all_in_home=ask, priced_share=1.0))
+    page = get("/opportunities")
+    assert "3 asks" in page
+    assert page.count('class="bcell') == 5
+    assert "One by one" in page and "By card" in page
+    flat = get("/opportunities?grp=list")
+    assert flat.count('class="bcell') == 7
+    one = get("/opportunities?print=" + urllib.parse.quote(pid, safe=""))
+    assert one.count('class="bcell') == 3
+    assert "Every ask of one card" in one and "Back to all cards" in one
+
+
+def test_under_pc_badge_facet_and_sort(board):
+    get, post, ajax, db = board
+    pid = "p:EN_TCG:LOB-EN001:legend-of-blue-eyes-white-dragon:ultra-rare@89631139"
+    st = Store(db)
+    with st.db:
+        st.db.execute("CREATE TABLE pc_card (printing_id TEXT, grades TEXT, status TEXT)")
+        st.db.execute("INSERT INTO pc_card VALUES (?,?,?)", (pid, json.dumps({"Ungraded": {"p": 12.0}}), "ok"))
+        st.db.execute("INSERT INTO fx_rate (base, quote, mid, as_of, source, spread_pct, recorded_at) VALUES (?,?,?,?,?,?,?)",
+                      ("USD", "TWD", "32", "2026-11-03T12:00:00+00:00", "test", "0", "2026-11-03T12:00:00+00:00"))
+    st.db.close()
+    page = get("/opportunities")
+    assert re.search(r"Under PC −\d+%", page)
+    assert "Under the PC market" in page
+    only = get("/opportunities?pc=1")
+    assert "ebay_browse:EBAY_US:buy" in only
+    assert "ebay_browse:EBAY_US:lot" not in only
+    bypc = get("/opportunities?sort=pc:a")
+    first = re.search(r'class="bcell[^"]*" data-key="([^"]+)"', bypc)
+    assert first.group(1) == "ebay_browse:EBAY_US:buy"

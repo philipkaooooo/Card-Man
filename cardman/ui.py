@@ -385,18 +385,25 @@ header.top{position:sticky;top:0;z-index:30;background:color-mix(in srgb,var(--s
 border-bottom:1px solid var(--line);box-shadow:0 1px 0 rgba(15,30,45,.03),0 10px 30px rgba(15,30,45,.05);
 padding:0 22px;display:flex;align-items:center;gap:20px;height:64px}
 header.top .logo{display:inline-flex;align-items:center;gap:9px;font-weight:800;font-size:18px;color:var(--fg);text-decoration:none;letter-spacing:-.01em}
-.lmark{position:relative;display:inline-flex;width:26px;height:17px;flex:none;border:1.5px solid color-mix(in srgb,var(--fg2) 48%,transparent);border-radius:999px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.14)}
-.lmark>i{flex:1}
-.lmark>i:nth-child(1){background:#e05252}.lmark>i:nth-child(2){background:#2f6ce0}.lmark>i:nth-child(3){background:#d4af6a}
-.lmark>i:nth-child(4){background:#2fbf71}.lmark>i:nth-child(5){background:#e6a23c}.lmark>i:nth-child(6){background:var(--fg)}
+.rmark{display:inline-flex;gap:2px;height:15px;width:26px;flex:none}
+.rmark>i{flex:1;border-radius:1.5px}
+.rmark>i:nth-child(1){background:#e05252}.rmark>i:nth-child(2){background:#2f6ce0}.rmark>i:nth-child(3){background:#d4af6a}
+.rmark>i:nth-child(4){background:#2fbf71}.rmark>i:nth-child(5){background:#e6a23c}.rmark>i:nth-child(6){background:var(--fg)}
 .lword{position:relative;display:inline-block;padding-bottom:5px}
 .lunder{position:absolute;left:0;right:0;bottom:0;display:flex;height:3.5px;border-radius:2px;overflow:hidden}
 .lunder i{flex:1 1 0;min-width:0}
 .lunder i:nth-child(1){background:#e05252}.lunder i:nth-child(2){background:#2f6ce0}.lunder i:nth-child(3){background:#d4af6a}
 .lunder i:nth-child(4){background:#2fbf71}.lunder i:nth-child(5){background:#e6a23c}.lunder i:nth-child(6){background:var(--fg)}
-nav.main{display:flex;gap:5px;align-items:center}nav.main a{color:var(--fg2);text-decoration:none;padding:9px 15px;border-radius:11px;
-font-weight:650;font-size:15px;letter-spacing:-.01em;white-space:nowrap}nav.main a:hover{background:var(--surface);color:var(--fg);box-shadow:var(--shadow)}
-nav.main a.on{color:var(--fg);background:var(--surface);box-shadow:var(--shadow),inset 0 -2px 0 var(--accent)}
+nav.main{display:flex;gap:5px;align-items:center}nav.main a{position:relative;color:var(--fg2);text-decoration:none;padding:9px 15px;border-radius:11px;
+font-weight:650;font-size:15px;letter-spacing:-.01em;white-space:nowrap}
+nav.main>a::after,nav.main>.nwrap>a::after{content:"";position:absolute;left:12px;right:12px;bottom:4px;height:2.5px;border-radius:2px;
+background:var(--nc,var(--accent));transform:scaleX(0);transform-origin:left;transition:transform .16s ease}
+nav.main a:hover{color:var(--nc,var(--fg));background:color-mix(in srgb,var(--nc,var(--accent)) 10%,transparent);box-shadow:none}
+nav.main>a:hover::after,nav.main>.nwrap>a:hover::after{transform:scaleX(1)}
+nav.main a.on{color:var(--nc,var(--fg));background:color-mix(in srgb,var(--nc,var(--accent)) 13%,transparent);box-shadow:none}
+nav.main>a.on::after,nav.main>.nwrap>a.on::after{transform:scaleX(1)}
+nav.main .n-home{--nc:#e05252}nav.main .n-listings{--nc:#2f6ce0}nav.main .n-market{--nc:#2fbf71}
+nav.main .n-cards{--nc:#b8862f}nav.main .n-add{--nc:#e6a23c}nav.main .n-settings{--nc:#8a7ef0}
 nav.main .nwrap{position:relative}
 nav.main .caret{display:inline-block;margin-left:5px;font-size:9px;color:var(--muted);transform:translateY(-1px)}
 nav.main .nsub{position:absolute;top:100%;left:0;min-width:190px;display:none;flex-direction:column;gap:1px;padding:6px;
@@ -439,10 +446,10 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
         if k in SUBS:
             items = "".join(f'<a href="{swap.get(sh, sh)}"{ON if sk == where else ""}>{e(st)}</a>'
                             for sk, st, sh in SUBS[k])
-            links += (f'<div class="nwrap"><a href="{h}"{ON if k == where else ""}>{e(t)}'
+            links += (f'<div class="nwrap"><a class="n-{k}" href="{h}"{ON if k == where else ""}>{e(t)}'
                       f'<span class="caret" aria-hidden="true">▾</span></a><div class="nsub">{items}</div></div>')
         else:
-            links += f'<a href="{h}"{ON if k == where else ""}>{e(t)}</a>'
+            links += f'<a class="n-{k}" href="{h}"{ON if k == where else ""}>{e(t)}</a>'
     ICO_EYE = ('<svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path fill="currentColor" '
                'd="M12 5.2c5.1 0 9.3 3.6 10 6.8-.7 3.2-4.9 6.8-10 6.8S2.7 15.2 2 12c.7-3.2 4.9-6.8 10-6.8Zm0 2.6a4.2 4.2 0 1 0 0 8.4 4.2 4.2 0 0 0 0-8.4Zm0 2.1a2.1 2.1 0 1 1 0 4.2 2.1 2.1 0 0 1 0-4.2Z"/></svg>')
     ICO_BALL = ('<svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><circle cx="12" cy="12" r="8.6" fill="none" '
@@ -468,8 +475,8 @@ def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str
     return (f'<!doctype html><html lang="en" data-theme="{"vault" if theme == "vault" else "auto"}"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)} · CardMan</title>'
             f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{PC_CSS}{ICON_CSS}{EFFECTS_CSS}{PRINT_CSS}{SHELL_CSS}{DECIDE_CSS}{CHAR_CSS}{MARKET_CSS}{NOW_CSS}{ALERTS_CSS}{PILE_CSS}{BOARD_CSS}</style></head><body>{SPRITE}'
-            + scope_links(f'<header class="top"><a class="logo" href="/"><span class="lmark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></span><span class="lword">CardMan<b class="lunder" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></b></span></a><nav class="main" aria-label="Main">{links}</nav>{BELL}{hsearch}'
-                          f'{games}{curs}</header><main class="page">{crumb}{flash}{body}</main>', game) +
+            + scope_links(f'<header class="top"><a class="logo" href="/"><span class="lword">CardMan<b class="lunder" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></b></span></a><nav class="main" aria-label="Main">{links}</nav>{BELL}{hsearch}'
+                          f'<span class="rmark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></span>{games}{curs}</header><main class="page">{crumb}{flash}{body}</main>', game) +
             f'<footer class="foot">Private to this Mac · times {e(tz)} · press <kbd>/</kbd> to search</footer>'
             f'<script src="/static/ui.js?v={_js_version()}"></script></body></html>').encode()
 
@@ -2194,6 +2201,15 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     items = _alerts.recent(st, cards=cards)
                 except Exception:
                     items = []
+                try:
+                    disp = Disp(self._cur(), _engine_home(st), FxTable(st.fx_rates()), now)
+                    for it in items:
+                        it["ask"] = disp.f(it.get("ask"))
+                        it["typical"] = disp.f(it.get("typical"))
+                        it["sale"] = disp.f(it.get("sale"))
+                        it["cur"] = disp.cur
+                except Exception:
+                    pass
                 st.db.close()
                 return self._send(200, json.dumps({"items": items}, ensure_ascii=False).encode(), "application/json; charset=utf-8")
             if parts == ["theme"]:

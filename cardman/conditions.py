@@ -1,6 +1,6 @@
 """Raw card condition, normalized to one scale, and the price ratios used when a comp set is thin.
 
-Codes: NM, EX, LP, MP, HP, DMG. Anything that is not a condition ("Used", "Pre-owned", an empty
+Codes: MT, NM, EX, LP, MP, HP, DMG. Anything that is not a condition ("Used", "Pre-owned", an empty
 field) maps to None: unknown, never guessed. eBay's coarse item condition is therefore None; the
 listing title or a manual import has to name the condition for it to count.
 
@@ -12,12 +12,13 @@ from __future__ import annotations
 
 import re
 
-CODES = ("NM", "EX", "LP", "MP", "HP", "DMG")
+CODES = ("MT", "NM", "EX", "LP", "MP", "HP", "DMG")
 
-FACTOR = {"NM": 1.00, "EX": 0.90, "LP": 0.78, "MP": 0.62, "HP": 0.45, "DMG": 0.30}
+FACTOR = {"MT": 1.00, "NM": 1.00, "EX": 0.90, "LP": 0.78, "MP": 0.62, "HP": 0.45, "DMG": 0.30}
 
 _ALIASES = {
-    "nm": "NM", "near mint": "NM", "nmmt": "NM", "mint": "NM", "m": "NM",
+    "mt": "MT", "mint": "MT", "gem mint": "MT", "mint condition": "MT",
+    "nm": "NM", "near mint": "NM", "nmmt": "NM", "m": "NM",
     "ex": "EX", "excellent": "EX", "excellent condition": "EX", "excellent plus": "EX",
     "lp": "LP", "lightly played": "LP", "light play": "LP", "lightly played condition": "LP",
     "mp": "MP", "moderately played": "MP", "played": "MP", "good": "MP", "gd": "MP",
@@ -25,7 +26,7 @@ _ALIASES = {
     "dmg": "DMG", "damaged": "DMG", "damage": "DMG",
 }
 _PHRASES = (
-    ("near mint", "NM"), ("near-mint", "NM"), ("lightly played", "LP"), ("light play", "LP"),
+    ("gem mint", "MT"), ("near mint", "NM"), ("near-mint", "NM"), ("lightly played", "LP"), ("light play", "LP"),
     ("moderately played", "MP"), ("heavily played", "HP"), ("heavy play", "HP"),
     ("excellent", "EX"), ("damaged", "DMG"),
     ("\u6975\u7f8e\u54c1", "NM"), ("\u5b8c\u7f8e\u54c1", "NM"), ("\u7f8e\u54c1", "EX"),
@@ -66,3 +67,31 @@ def adjust(amount: float, comp: str | None, target: str | None) -> float:
 
 def label(code: str | None) -> str:
     return code if code else "condition not known"
+
+
+_TITLE_RE = re.compile(
+    r"(?<![a-z0-9])(?:gem[ -]?mint|near[ -]?mint|lightly[ -]?played|light[ -]?play|"
+    r"moderately[ -]?played|heavily[ -]?played|heavy[ -]?play|excellent|damaged|damage|"
+    r"mt|nm|nmmt|ex|lp|mp|hp|dmg)(?![a-z0-9])", re.I)
+_TITLE_MAP = {"gem mint": "MT", "gem-mint": "MT", "mint": "MT", "mt": "MT",
+              "near mint": "NM", "near-mint": "NM", "nm": "NM", "nmmt": "NM",
+              "excellent": "EX", "ex": "EX",
+              "lightly played": "LP", "lightly-played": "LP", "light play": "LP", "light-play": "LP", "lp": "LP",
+              "moderately played": "MP", "moderately-played": "MP", "mp": "MP",
+              "heavily played": "HP", "heavily-played": "HP", "heavy play": "HP", "heavy-play": "HP", "hp": "HP",
+              "damaged": "DMG", "damage": "DMG", "dmg": "DMG"}
+
+
+def title_condition(title: str | None) -> str | None:
+    """The condition a listing title names, longest phrase first. A grade is not a condition."""
+    if not title:
+        return None
+    best = None
+    for m in _TITLE_RE.finditer(str(title)):
+        tok = re.sub(r"[ -]+", " ", m.group(0).casefold()).strip()
+        code = _TITLE_MAP.get(tok) or _TITLE_MAP.get(tok.replace(" ", "-"))
+        if code == "EX" and m.group(0) != "EX":
+            continue    # "Charizard ex" is a card name, not a condition
+        if code and (best is None or len(m.group(0)) > best[0]):
+            best = (len(m.group(0)), code)
+    return best[1] if best else None

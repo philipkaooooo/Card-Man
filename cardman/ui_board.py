@@ -29,12 +29,41 @@ COLORS = (("red", "#e05252"), ("blue", "#2f6ce0"), ("gold", "#d4af6a"), ("green"
           ("amber", "#e6a23c"), ("ink", ""), ("violet", "#b05fd6"), ("teal", "#3fb8c9"))
 COLOR_NAMES = {c for c, _ in COLORS}
 SORTS = (("lane", "Best lane", "a"), ("profit", "Profit", "d"), ("ask", "Price", "a"),
-         ("value", "Value", "d"), ("fresh", "Newness", "d"), ("ends", "Ending", "a"))
+         ("value", "Value", "d"), ("fresh", "Newness", "d"), ("ends", "Ending", "a"),
+         ("pc", "Under PC", "a"))
 SORT_KEYS = {k for k, _, _ in SORTS}
 SORT_LABEL = {k: lab for k, lab, _ in SORTS}
 SORT_DEFAULT_DIR = {k: d for k, _, d in SORTS}
 FRESH = (("1h", "Past hour", 3600), ("24h", "Past day", 86400), ("7d", "Past week", 604800))
 PER_PAGE = 48
+NEW = "NEW"
+COND = (("MT", "Mint", "green"), ("NM", "Near Mint", "blue"), ("EX", "Excellent", "blue"),
+        ("LP", "Lightly Played", "gold"), ("MP", "Moderately Played", "amber"),
+        ("HP", "Heavily Played", "red"), ("DMG", "Damaged", "ink"))
+COND_LABEL = {c: lab for c, lab, _ in COND}
+_GEM = "M7 3h10l4 6-9 12L3 9z"
+COND_ICON = {
+    "MT": f'<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="{_GEM}" fill="currentColor"/>'
+          '<path d="M8.6 7.6l1.8-1.8" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/></svg>',
+    "NM": f'<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="{_GEM}" fill="currentColor"/>'
+          '<path d="M3 9h18M12 3v18" stroke="var(--bg)" stroke-width="1.1" opacity=".45"/></svg>',
+    "EX": f'<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="{_GEM}" fill="currentColor" opacity=".8"/>'
+          '<path d="M3 9h18" stroke="var(--bg)" stroke-width="1.6"/></svg>',
+    "LP": f'<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="{_GEM}" fill="none" stroke="currentColor" stroke-width="2"/>'
+          '<path d="M5.4 12h13.2L12 20.6z" fill="currentColor"/></svg>',
+    "MP": f'<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="{_GEM}" fill="none" stroke="currentColor" stroke-width="2"/>'
+          '<path d="M8.6 16h6.8L12 20.6z" fill="currentColor"/></svg>',
+    "HP": f'<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="{_GEM}" fill="none" stroke="currentColor" stroke-width="2"/>'
+          '<path d="M12 4l-1.6 5 3.2 3-2.2 5.4" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>',
+    "DMG": '<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="M7 3h4.4l-1.2 7.4-4.6.8z" fill="currentColor"/>'
+           '<path d="M13.6 3H17l4 6-7.4 9.6-1.8-5.4z" fill="currentColor" opacity=".5"/></svg>',
+}
+GRADE_ICON = ('<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><rect x="5" y="2.5" width="14" height="19" rx="2" '
+              'fill="none" stroke="currentColor" stroke-width="2"/><rect x="8" y="6" width="8" height="5" rx="1" fill="currentColor"/>'
+              '<path d="M8 14h8M8 17h5" stroke="currentColor" stroke-width="1.6"/></svg>')
+NEW_ICON = ('<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" '
+            'stroke="currentColor" stroke-width="2"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.3 2.4c-.8.3-.9.9-.9 1.6" fill="none" '
+            'stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="16.8" r="1.2" fill="currentColor"/></svg>')
 
 
 def ensure(st) -> None:
@@ -171,8 +200,13 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
                game: str = "ygo", token: str = "", back: str = "/opportunities") -> str:
     from .ui_decide import deal_card, first_seen, rail
     from .ui_listing import ORDER, open_listings, photo_counts, item_id_of, site_of, SITES
+    from .ui_home import _pc_grade, _listing_art
     from .pile import keys as pile_keys
     from .history import sparks as _sparks
+    from . import conditions
+    from .fx import FxTable
+    from decimal import Decimal
+    from datetime import timedelta
     ensure(st)
     qs = dict(qs or {})
     g1 = lambda k, d="": (qs.get(k) or [d])[0]
@@ -190,7 +224,7 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
             g1 = lambda k, d="": (qs.get(k) or [d])[0]
 
     v = g1("v", "all")
-    v = v if v in ("all", "BUY", "CHECK", "WATCH", "PASS", "every") else "all"
+    v = v if v in ("all", "BUY", "CHECK", "WATCH", "PASS", "NEW", "every") else "all"
     t = g1("t", "any")
     t = t if t in ("any", "singles", "lots") else "any"
     site = g1("site", "any")
@@ -209,6 +243,14 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
         pmax = float(g1("pmax")) if g1("pmax") else None
     except ValueError:
         pmax = None
+    cond = g1("cond")
+    cond = cond if cond in COND_LABEL else ""
+    pcflag = g1("pc") == "1"
+    print_id = g1("print")[:160]
+    grp = g1("grp", "card")
+    grp = grp if grp in ("card", "list") else "card"
+    if print_id:
+        grp = "list"
     stack = parse_sort(g1("sort"))
     try:
         page = max(1, int(g1("page", "1")))
@@ -217,15 +259,16 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
 
     state = {"v": v, "t": t, "site": site, "q": q, "fresh": fresh, "mk": mk, "lab": lab,
              "pmin": g1("pmin") if pmin is not None else "", "pmax": g1("pmax") if pmax is not None else "",
-             "sort": sort_str(stack), "page": str(page) if page > 1 else ""}
+             "sort": sort_str(stack), "page": str(page) if page > 1 else "",
+             "cond": cond, "pc": "1" if pcflag else "", "print": print_id, "grp": grp if grp != "card" else ""}
 
     def href(**kw):
         merged = {**state, **kw}
-        if "v" in kw or "t" in kw or "site" in kw or "q" in kw or "fresh" in kw or "mk" in kw or "lab" in kw or "pmin" in kw or "pmax" in kw:
+        if any(a in kw for a in ("v", "t", "site", "q", "fresh", "mk", "lab", "pmin", "pmax", "cond", "pc", "print", "grp")):
             merged["page"] = ""
         clean = {a: b for a, b in merged.items()
                  if b not in ("", None) and not (a == "v" and b == "all") and not (a in ("t", "site") and b == "any")
-                 and not (a == "sort" and b == "lane:a,profit:d")}
+                 and not (a == "sort" and b == "lane:a,profit:d") and not (a == "grp" and b == "card")}
         return back + ("?" + urlencode(clean) if clean else "")
 
     items = open_listings(st, M, game)
@@ -233,6 +276,51 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
     marks = marks_of(st)
     labels = labels_of(st)
     piled = frozenset(pile_keys(st))
+    analyzed = {k for k, in st.db.execute("SELECT key FROM opportunity WHERE payload_json IS NOT NULL")}
+    cond_of: dict[str, tuple[str, str]] = {}
+    for k, raw, title in st.db.execute("SELECT key, json_extract(data_json,'$.condition'), title FROM listing WHERE ended_at IS NULL"):
+        code = conditions.normalize(raw)
+        src = "seller" if code else ""
+        if not code:
+            code = conditions.title_condition(title)
+            src = "title" if code else ""
+        if code:
+            cond_of[k] = (code, src)
+    pcm: dict[str, dict] = {}
+    if "pc_card" in {r[0] for r in st.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}:
+        for pid, grades in st.db.execute("SELECT printing_id, grades FROM pc_card WHERE status='ok' AND grades IS NOT NULL"):
+            try:
+                row = {g: float(u["p"]) for g, u in (json.loads(grades) or {}).items() if isinstance(u, dict) and u.get("p")}
+                if row:
+                    pcm[pid] = row
+            except Exception:
+                pass
+    pc_pct: dict[str, float] = {}
+    try:
+        fx = FxTable(st.fx_rates(), max_age=timedelta(days=7))
+        rate_cache: dict[tuple, float] = {}
+        for key, status, d, vd in items:
+            pid = d.get("printing_id")
+            ask = d.get("all_in_home")
+            if not pid or not ask or pid not in pcm:
+                continue
+            gk = _pc_grade(d.get("grade"))
+            p = pcm[pid].get(gk)
+            if not p:
+                continue
+            ck = (pid, gk)
+            if ck not in rate_cache:
+                try:
+                    rate_cache[ck] = float(fx.convert(Decimal(str(p)), "USD", M.home, now))
+                except Exception:
+                    rate_cache[ck] = 0.0
+            rate = rate_cache[ck]
+            if rate > 0:
+                pct = (float(ask) - rate) / rate * 100
+                if pct <= -3:
+                    pc_pct[key] = pct
+    except Exception:
+        pc_pct = {}
     is_lot = lambda d: "LOT" in (d.get("kinds") or [])
     now_ts = now.timestamp()
     win = dict((a, c) for a, b, c in FRESH).get(fresh)
@@ -257,10 +345,18 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
             return False
         if pmax is not None and (ask is None or ask > pmax):
             return False
+        if cond and cond_of.get(key, ("", ""))[0] != cond:
+            return False
+        if pcflag and key not in pc_pct:
+            return False
+        if print_id and d.get("printing_id") != print_id:
+            return False
         return True
 
     pool = [i for i in items if base_ok(i)]
-    counts = {c: sum(1 for i in pool if i[3].code == c) for c in ORDER}
+    ecode = lambda i: i[3].code if i[0] in analyzed else NEW
+    board_order = {**ORDER, NEW: 4}
+    counts = {c: sum(1 for i in pool if ecode(i) == c) for c in list(ORDER) + [NEW]}
     mk_counts = {m: sum(1 for i in pool if marks.get(i[0]) == m) for m in MARKS}
     lab_counts: dict[str, list] = {}
     for i in pool:
@@ -268,7 +364,7 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
             ent = lab_counts.setdefault(lname, [0, c])
             ent[0] += 1
 
-    shown = [i for i in pool if v in ("all", "every") or i[3].code == v]
+    shown = [i for i in pool if v in ("all", "every") or ecode(i) == v]
     if mk:
         shown = [i for i in shown if marks.get(i[0]) == mk]
     else:
@@ -279,7 +375,7 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
     def sval(i, k):
         key, status, d, vd = i
         if k == "lane":
-            return ORDER[vd.code]
+            return board_order[ecode(i)]
         if k == "profit":
             return vd.margin if vd.margin is not None else -1e18
         if k == "ask":
@@ -293,6 +389,8 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
             return _ep(seen.get(key) or "") or 0.0
         if k == "ends":
             return _ep(d.get("ends_at") or "") or 1e18
+        if k == "pc":
+            return pc_pct.get(key, 1e18)
         return 0
 
     def skey(i):
@@ -300,7 +398,32 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
         return (0 if marks.get(i[0]) == "pinned" else 1,) + vals + (i[0],)
 
     shown.sort(key=skey)
-    total = len(shown)
+    group_info: dict[str, tuple] = {}
+    n_listings = len(shown)
+    n_groups = len(shown)
+    if grp == "card":
+        seen_g: dict[str, list] = {}
+        order_g: list[str] = []
+        for i in shown:
+            gk = i[2].get("printing_id") or ("solo:" + i[0])
+            a = i[2].get("all_in_home")
+            if gk in seen_g:
+                ent = seen_g[gk]
+                ent[1] += 1
+                if a is not None:
+                    ent[2] = min(ent[2], a)
+                    ent[3] = max(ent[3], a)
+            else:
+                seen_g[gk] = [i[0], 1, a if a is not None else 1e18, a if a is not None else -1e18, gk]
+                order_g.append(gk)
+        n_groups = len(order_g)
+        for gk in order_g:
+            rep_key, cnt, lo, hi, _ = seen_g[gk]
+            if cnt > 1:
+                group_info[rep_key] = (cnt, lo, hi, gk)
+        reps = {seen_g[gk][0] for gk in order_g}
+        shown = [i for i in shown if i[0] in reps]
+    total = n_groups
     pages = max(1, (total + PER_PAGE - 1) // PER_PAGE)
     page = min(page, pages)
     page_items = shown[(page - 1) * PER_PAGE:page * PER_PAGE]
@@ -338,6 +461,13 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
         return f'<a class="fchip{" on" if on else ""}" href="{e(href(**{param: val}))}"{current}>{d}{e(text)}{count}</a>'
 
     rail_html = rail(counts, v if v in ORDER else None, lambda code, on: href(v="all" if on else code))
+    new_on = v == NEW
+    new_pill = (f'<a class="lane l-new{" on" if new_on else ""}" href="{e(href(v="all" if new_on else NEW))}"'
+                f'{" aria-current=" + chr(34) + "true" + chr(34) if new_on else ""} '
+                f'data-tip="{e("Unchecked: the engine has not priced this listing yet")}">'
+                f'<span class="lane-i">{NEW_ICON}</span><span class="lane-w">Unchecked</span>'
+                f'<b class="lane-n" data-n="{counts[NEW]}">{counts[NEW]:,}</b></a>')
+    rail_html = rail_html.replace("</nav>", new_pill + "</nav>")
     type_sec = ('<div class="fsec" role="group" aria-label="Card kind"><h3>Card kind</h3>'
                 + chip("t", "any", "All cards", t == "any") + chip("t", "singles", "Single cards", t == "singles")
                 + chip("t", "lots", "Lots", t == "lots") + '</div>')
@@ -365,7 +495,23 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
         chips = "".join(chip("lab", lname if lab != lname else "", lname, lab == lname, n, c)
                         for lname, (n, c) in sorted(lab_counts.items(), key=lambda kv: -kv[1][0])[:14])
         lab_sec = ('<div class="fsec" role="group" aria-label="Labels"><h3>Labels</h3>' + chips + '</div>')
-    facets = (f'<aside class="brail" aria-label="Filters">{rail_html}{type_sec}{site_sec}{fresh_sec}{price_sec}{mark_sec}{lab_sec}</aside>')
+    cond_counts = {c: 0 for c in COND_LABEL}
+    for i in pool:
+        c = cond_of.get(i[0], ("", ""))[0]
+        if c in cond_counts:
+            cond_counts[c] += 1
+    cond_chips = "".join(
+        f'<a class="fchip{" on" if cond == c else ""}" href="{e(href(cond="" if cond == c else c))}"'
+        f'{" aria-current=" + chr(34) + "true" + chr(34) if cond == c else ""}>'
+        f'<span class="fc-cnd c-{col}">{COND_ICON[c]}</span>{e(lab)}<b class="fc-n">{cond_counts[c]:,}</b></a>'
+        for c, lab, col in COND if cond_counts[c])
+    cond_sec = ('<div class="fsec" role="group" aria-label="Condition"><h3>Condition</h3>' + cond_chips + '</div>') if cond_chips else ""
+    pc_sec = ""
+    n_pc = sum(1 for i in pool if i[0] in pc_pct)
+    if n_pc:
+        pc_sec = ('<div class="fsec" role="group" aria-label="PriceCharting"><h3>PriceCharting</h3>'
+                  + chip("pc", "" if pcflag else "1", "Under the PC market", pcflag, n_pc) + '</div>')
+    facets = (f'<aside class="brail" aria-label="Filters">{rail_html}{type_sec}{site_sec}{fresh_sec}{price_sec}{cond_sec}{pc_sec}{mark_sec}{lab_sec}</aside>')
 
     # -- saved views
     views = views_of(st, game)
@@ -393,7 +539,10 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
                + f'<button type="submit" aria-label="Search">→</button></form>')
     keys_hint = ('<span class="bkeys" aria-hidden="true"><kbd>j</kbd><kbd>k</kbd> move <kbd>x</kbd> pick '
                  '<kbd>p</kbd> pin <kbd>r</kbd> reviewed <kbd>/</kbd> find</span>')
-    toolbar = (f'<div class="bbar"><div class="bbar1">{searchf}{studio}'
+    grptoggle = ('<span class="bgrp-toggle" role="group" aria-label="Grouping">'
+                 + f'<a class="fchip{" on" if grp == "card" else ""}" href="{e(href(grp="card", print=""))}">By card</a>'
+                 + f'<a class="fchip{" on" if grp == "list" else ""}" href="{e(href(grp="list"))}">One by one</a></span>')
+    toolbar = (f'<div class="bbar"><div class="bbar1">{searchf}{studio}{grptoggle}'
                f'<button type="button" class="bdense" id="b-dense" aria-pressed="false" '
                f'data-tip="Tight rows fit more on screen" aria-label="Toggle tight rows">Tight</button>'
                f'<label class="ball"><input type="checkbox" id="b-all"> pick page</label>{keys_hint}</div>{viewsrow}</div>')
@@ -440,8 +589,38 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
         card = deal_card(key, d, vd, cards, M, now, ph, seen.get(key),
                          (sp or {}).get(d.get("printing_id") or "", "") if not is_lot(d) else "",
                          token=token, piled=piled, back=back)
-        cells.append(f'<div class="bcell{" mk-pinned" if pin_on else ""}{" mk-reviewed" if rev_on else ""}" '
-                     f'data-key="{e(key)}" tabindex="0">{ctl}{card}{labrow}</div>')
+        meta = []
+        if key not in analyzed:
+            meta.append(f'<span class="dpill p-new" data-tip="{e("Unchecked: the engine has not priced this listing yet")}">{NEW_ICON} Unchecked</span>')
+        if d.get("grade"):
+            gtxt = ((d.get("grade_company") or "") + " " + str(d.get("grade"))).strip()
+            meta.append(f'<span class="cnd c-grade" data-tip="{e("Graded and slabbed: " + gtxt)}" title="{e("Graded: " + gtxt)}">{GRADE_ICON}<b>{e(gtxt)}</b></span>')
+        elif key in cond_of:
+            ccode, csrc = cond_of[key]
+            where = "named in the listing title" if csrc == "title" else "from the seller's condition field"
+            tip = COND_LABEL[ccode] + " - " + where
+            meta.append(f'<span class="cnd c-{dict((c, col) for c, _, col in COND)[ccode]}" data-tip="{e(tip)}" title="{e(tip)}">'
+                        f'{COND_ICON[ccode]}<b>{ccode}</b> {e(COND_LABEL[ccode])}</span>')
+        else:
+            meta.append(f'<span class="cnd c-none" data-tip="{e("Neither the title nor the seller names a condition")}" '
+                        f'title="{e("Condition unstated")}">Condition unstated</span>')
+        if key in pc_pct:
+            meta.append(f'<span class="bpc" data-tip="{e("Asking price is " + str(round(-pc_pct[key])) + "% under the PriceCharting sold-market comp for this grade")}" '
+                        f'title="{e("Under PriceCharting")}">Under PC −{round(-pc_pct[key])}%</span>')
+        gi = group_info.get(key)
+        if gi:
+            cnt, lo, hi, gk = gi
+            span = f"{M(lo)}–{M(hi)}" if hi > lo else M(lo) if hi >= lo else "prices vary"
+            meta.append(f'<a class="bgrp" href="{e(href(print=gk, grp="list", page=""))}" '
+                        f'data-tip="{e("See every ask of this card")}" title="{e("See every ask")}">{cnt} asks · {e(span)}</a>')
+        metarow = f'<div class="bmeta">{"".join(meta)}</div>'
+        iid = item_id_of(key, d)
+        has_shot = bool(iid and ph.get(iid))
+        art_tag = ("Lot photo" if is_lot(d) else "Official art" if _listing_art(d)
+                   else "Seller photo" if has_shot else "No photo yet")
+        arttag = f'<span class="bart" data-tip="{e("The picture shown: " + art_tag.lower())}">{e(art_tag)}</span>'
+        cells.append(f'<div class="bcell{" mk-pinned" if pin_on else ""}{" mk-reviewed" if rev_on else ""}{" b-new" if key not in analyzed else ""}" '
+                     f'data-key="{e(key)}" tabindex="0">{ctl}{metarow}{arttag}{card}{labrow}</div>')
 
     # -- pager
     pager = ""
@@ -487,11 +666,19 @@ def view_board(st, cards, now: datetime, M, *, qs: dict | None = None, home_cur:
             other_note = (f'<p class="empty">{n_other:,} live eBay listings are under the other game. '
                           f'Switch the game in the top bar.</p>')
 
+    if grp == "card":
+        sub = f'{n_groups:,} cards from {n_listings:,} live listings. One tile per card, its best ask leads.'
+    else:
+        sub = f'{total:,} of {len(items):,} public listings match. A Skip is still shown. Nothing here was deleted.'
+    printnote = ""
+    if print_id:
+        printnote = (f'<p class="bprintnote">Every ask of one card. '
+                     f'<a href="{e(href(print="", grp="card", page=""))}">Back to all cards</a></p>')
     head = (f'<div class="bhead"><h1>Listings</h1>'
-            f'<p class="sub">{total:,} of {len(items):,} public listings match. A Skip is still shown. Nothing here was deleted.</p>{tick}</div>')
+            f'<p class="sub">{sub}</p>{tick}</div>')
     empty = ('<p class="empty">Nothing matches these filters. Widen a lane, or clear the search.</p>'
              if not cells else "")
-    grid = f'<div class="deals bgrid" id="b-grid">{"".join(cells)}</div>' if cells else ""
+    grid = (printnote + f'<div class="deals bgrid" id="b-grid">{"".join(cells)}</div>') if cells else printnote
     drawer = ('<div class="bshade" id="b-shade" hidden></div>'
               '<aside class="bdrawer" id="b-drawer" aria-label="Listing peek" aria-hidden="true">'
               '<div class="bd-head"><b id="bd-title">Listing</b>'
@@ -637,6 +824,36 @@ body.b-sel .bbulk{display:flex}
  padding:9px 14px;font-size:13.5px;max-width:92vw}
 .btoast button{font:inherit;font-size:12.5px;border:1px solid var(--fg);background:var(--fg);color:var(--bg);padding:3px 10px;cursor:pointer}
 .btoast button:hover{background:#2fbf71;border-color:var(--fg);color:#0e1a12}
+.bmeta{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin:0 0 6px}
+.cnd{display:inline-flex;align-items:center;gap:4px;font-size:11px;line-height:1.5;border:1px solid var(--lc,var(--fg));
+ color:var(--fg);background:color-mix(in srgb,var(--lc,var(--fg)) 13%,var(--surface));padding:1px 6px;white-space:nowrap}
+.cnd svg{color:var(--lc,var(--fg));flex:none}
+.cnd b{font-size:10.5px;letter-spacing:.03em}
+.cnd.c-grade{--lc:#d4af6a}
+.cnd.c-none{border-style:dashed;opacity:.7;background:none}
+.bpc{display:inline-flex;align-items:center;font-size:11px;font-weight:650;border:1px solid var(--fg);
+ background:#2fbf71;color:#0e1a12;padding:1px 7px;white-space:nowrap}
+.bgrp{display:inline-flex;align-items:center;font-size:11px;border:1px solid var(--fg);background:var(--surface);
+ color:var(--fg);text-decoration:none;padding:1px 7px;white-space:nowrap}
+.bgrp:hover{background:#d4af6a;color:#1c1710}
+.bart{position:absolute;left:14px;top:44px;z-index:4;font-size:9px;text-transform:uppercase;letter-spacing:.07em;
+ background:var(--fg);color:var(--bg);padding:1px 5px;pointer-events:none;opacity:.92}
+.bcell.b-new .deal{border-style:dashed}
+.bcell.b-new .dpill{display:none}
+.dpill.p-new{display:inline-flex;align-items:center;gap:5px;border:1px dashed var(--fg);background:var(--surface);
+ color:var(--fg);font-size:12px;padding:2px 8px}
+.dpill.p-new svg{width:13px;height:13px}
+.rail .lane.l-new{--lane:var(--fg2)}
+.fc-cnd{display:inline-flex;align-items:center;color:var(--lc,var(--fg))}
+.fc-cnd svg{width:12px;height:12px}
+.fchip.on .fc-cnd{color:var(--bg)}
+.bgrp-toggle{display:inline-flex;border:1px solid var(--fg)}
+.bgrp-toggle .fchip{border:0;margin:0;padding:5px 9px;font-size:12.5px;color:var(--fg);text-decoration:none}
+.bgrp-toggle .fchip.on{background:var(--fg);color:var(--bg)}
+.bprintnote{margin:0 0 10px;font-size:13px}
+.bprintnote a{color:var(--fg)}
+body.b-tight .bmeta{margin-bottom:4px}
+body.b-tight .bart{display:none}
 @media(max-width:900px){
  .blayout{grid-template-columns:1fr}
  .brail{position:static;max-height:none;overflow:visible;flex-direction:row;flex-wrap:wrap}
@@ -850,7 +1067,7 @@ BOARD_JS = """
   if(add)add.addEventListener('change',function(){
     if(!this.value)return;
     var cur=Array.prototype.map.call(list.children,function(li){return li.getAttribute('data-k')+':'+li.getAttribute('data-d')});
-    var def={lane:'a',profit:'d',ask:'a',value:'d',fresh:'d',ends:'a'}[this.value]||'d';
+    var def={lane:'a',profit:'d',ask:'a',value:'d',fresh:'d',ends:'a',pc:'a'}[this.value]||'d';
     cur.push(this.value+':'+def);
     navSort(cur.join(','));
   });

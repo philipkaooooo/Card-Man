@@ -131,13 +131,14 @@ def test_pick_link_keeps_the_rarity_we_track():
 
 
 def test_pick_link_refuses_a_product_for_another_card():
-    links = [{"h": "/game/pokemon-secret-wonders/lugia-14", "t": "Lugia #14 Prices | Pokemon Secret Wonders"}]
-    url, why = pc.pick_link(links, name="Wormadam Plant Cloak", number="41")
-    assert url is None and why == "no confident match"
-    # the promo scheme differs from the slug number: the name in the anchor carries it
+    links = [{"h": "/game/pokemon-secret-wonders/lugia-14", "t": "Lugia #14"},
+             {"h": "/game/pokemon-secret-wonders/mew-15", "t": "Mew #15"}]
+    url, why = pc.pick_link(links, name="Wormadam Plant Cloak Secret Wonders", number="41")
+    assert url is None and why == "no confident match"     # set words sit in every candidate's path
+    # a promo whose number PC lists under another scheme cannot be corroborated: no confident page
     links = [{"h": "/game/pokemon-promo/volcarona-100", "t": "Volcarona [Staff] #100 Prices | Promo"}]
-    url, _ = pc.pick_link(links, name="Volcarona", number="BW40")
-    assert url.endswith("/volcarona-100")
+    url, why = pc.pick_link(links, name="Volcarona", number="BW40", set_name="BW Black Star Promos")
+    assert url is None and why == "no confident match"
 
 
 def test_sweep_skips_fresh_rows_and_ingest_parses_captures(tmp_path):

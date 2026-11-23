@@ -215,12 +215,14 @@ def _slug(path_or_url: str) -> str:
 
 
 def pick_link(links: list[dict], *, name: str = "", number: str = "", code: str = "",
-              rarity: str = "") -> tuple[str | None, str]:
+              rarity: str = "", set_name: str = "") -> tuple[str | None, str]:
     """Best product href for a card. Exact number suffix and set code first, then name tokens; a bracketed
     variant beats the base page only when its bracket names the rarity we track."""
     words = [w for w in re.split(r"[^a-z0-9]+", name.lower()) if len(w) >= 4]
+    compact = re.sub(r"[^a-z0-9]+", "", name.lower())
     generic = {"rare", "holo", "holofoil", "foil", "card", "edition", "pokemon"}
     rwords = {w for w in re.split(r"[^a-z0-9]+", (rarity or "").lower()) if w and w not in generic}
+    set_words = [w for w in re.split(r"[^a-z0-9]+", (set_name or "").lower()) if len(w) >= 4 and w != "pokemon"]
     best, best_t, why, top = None, "", "", float("-inf")
     for i, x in enumerate(links[:12]):
         h = x.get("h") or ""
@@ -245,14 +247,16 @@ def pick_link(links: list[dict], *, name: str = "", number: str = "", code: str 
             best, best_t, top, why = h, t, score, f"score {score:g}"
     if best is None:
         return None, "no candidates"
-    # An anchor with the right shape but the wrong card (a Lugia page answered a Wormadam search) scores zero on
-    # every real signal. Without the number, the set code, or a name word in the slug or the anchor, ship a
-    # nomatch instead of a confident wrong product.
-    slug = _slug(best)
-    num_ok = bool(number) and bool(re.search(rf"-{re.escape(str(number))}$", slug))
+    # A confident product needs both halves: the right card (name in the slug, the compact name, or the set it
+    # belongs to) and the right printing (the number on the page, or the set code). Same-name cards in other sets
+    # scored on the name alone - Minccino #182 for BW13 - so a name without a number is not evidence.
+    slug, tl = _slug(best), best_t.lower()
+    num_ok = bool(number) and (bool(re.search(rf"-{re.escape(str(number))}$", slug))
+                               or f"#{str(number).lower()}" in tl)
     code_ok = bool(code) and code != "-" and code.lower().replace("-", "") in best.lower().replace("-", "")
-    name_ok = any(w in best.lower() or w in best_t.lower() for w in words)
-    if not (num_ok or code_ok or name_ok):
+    name_ok = any(w in slug or w in tl for w in words) or (len(compact) >= 3 and compact in slug)
+    set_ok = bool(set_words) and any(w in slug or w in tl for w in set_words)
+    if not (num_ok or code_ok) or not (name_ok or set_ok or code_ok):
         return None, "no confident match"
     return best, why
 
@@ -407,12 +411,12 @@ def find_product(b: Browser, query: str) -> tuple[str | None, list[dict]]:
 
 
 def fetch_card(b: Browser, *, query: str, name: str = "", number: str = "", code: str = "",
-               rarity: str = "", url: str | None = None) -> dict:
+               rarity: str = "", url: str | None = None, set_name: str = "") -> dict:
     """One card: resolve the product page if needed, then read it. Returns the row pieces or a status."""
     note = ""
     if not url:
         _title, links = find_product(b, query)
-        url, note = pick_link(links, name=name, number=number, code=code, rarity=rarity)
+        url, note = pick_link(links, name=name, number=number, code=code, rarity=rarity, set_name=set_name)
         if not url:
             return {"status": "nomatch"}
         if url.startswith("/"):
@@ -614,13 +618,13 @@ def sweep(st, *, limit: int = 40, game: str | None = None, refetch: bool = False
     if not queue:
         return {"done": 0, "note": "nothing due"}
 
-    names, numbers, codes, rarities = _identify(st, queue)
+    names, numbers, codes, rarities, sets = _identify(st, queue)
     out = {"done": 0, "ok": 0, "nomatch": 0, "empty": 0, "failed": 0}
     seen: dict[str, dict] = {}     # one navigation per product page; printings of it reuse the parse
     with Browser(profile=profile, chrome=chrome, headless=headless) as b:
         for pid, g in queue:
             name, number, code = names.get(pid, ""), numbers.get(pid, ""), codes.get(pid, "")
-            query = _query_for(pid, name, number, code)
+            query = _query_for(pid, " ".join(x for x in (name, sets.get(pid, "")) if x), number, code)
             prior = known.get(pid)
             url = prior[1] if prior and prior[1] and not refetch else None
             hit = seen.get(url) if url else None
@@ -630,7 +634,7 @@ def sweep(st, *, limit: int = 40, game: str | None = None, refetch: bool = False
             else:
                 try:
                     row = fetch_card(b, query=query, name=name, number=number, code=code,
-                                     rarity=rarities.get(pid, ""), url=url)
+                                     rarity=rarities.get(pid, ""), url=url, set_name=sets.get(pid, ""))
                 except Challenge:
                     log(f"challenge on {pid}; stopping this pass")
                     out["failed"] += 1
@@ -659,12 +663,13 @@ def sweep(st, *, limit: int = 40, game: str | None = None, refetch: bool = False
     return out
 
 
-def _identify(st, queue: list[tuple[str, str]]) -> tuple[dict, dict, dict, dict]:
-    """Card name, printed number, set code and rarity, from the local catalogs only - never a second request."""
+def _identify(st, queue: list[tuple[str, str]]) -> tuple[dict, dict, dict, dict, dict]:
+    """Card name, printed number, set code, rarity and set name, from the local catalogs only - never a second request."""
     names: dict[str, str] = {}
     numbers: dict[str, str] = {}
     codes: dict[str, str] = {}
     rarities: dict[str, str] = {}
+    sets: dict[str, str] = {}
     cards = None
     pkm = None
     for pid, g in queue:
@@ -684,8 +689,9 @@ def _identify(st, queue: list[tuple[str, str]]) -> tuple[dict, dict, dict, dict]
                 r = pkm.execute("SELECT c.name, c.number, s.name FROM pkm_card c LEFT JOIN pkm_set s ON s.id=c.set_id "
                                 "WHERE c.id=?", (cid,)).fetchone()
                 if r:
-                    names[pid] = " ".join(x for x in (r[0], r[2]) if x)
+                    names[pid] = r[0] or ""
                     numbers[pid] = (r[1] or "").split("/")[0]
+                    sets[pid] = r[2] or ""
                     ed = (parts[3].split("@")[0] if len(parts) > 3 else "").replace("-", " ")
                     if ed:
                         rarities[pid] = ed     # 1st edition, unlimited, holo: the variant, not a rarity
@@ -706,7 +712,7 @@ def _identify(st, queue: list[tuple[str, str]]) -> tuple[dict, dict, dict, dict]
                 if cards and pc:
                     c = cards.card(pc.group(1)) or {}
                     names[pid] = c.get("name_en") or ""
-    return names, numbers, codes, rarities
+    return names, numbers, codes, rarities, sets
 
 
 def rows_for(st, pids: list[str]) -> dict[str, dict]:

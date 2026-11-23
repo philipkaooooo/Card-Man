@@ -55,18 +55,23 @@ def label_for(pid: str) -> str:
 
 
 def _asks(st, now: datetime) -> dict[tuple[str, str], dict]:
-    """The newest daily ask snapshot, and only that day: a listing counts as live now only if the snapshot still
-    carries it. A dead listing last seen six days ago is not a price anyone can pay today."""
+    """Each printing's newest ask snapshot within the last week, carrying its own day. One day's sweep is
+    partial, so pinning the board to a single calendar day blanks rows whose listing was seen on another day;
+    a listing unseen for more than a week is not a price anyone can pay today."""
     have = {r[0] for r in st.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     if "ask_daily" not in have:
         return {}
     day = st.db.execute("SELECT MAX(day) FROM ask_daily").fetchone()[0]
     if not day or (now.date() - date.fromisoformat(day)).days > 3:
         return {}
+    floor = (now.date() - timedelta(days=7)).isoformat()
     out: dict[tuple[str, str], dict] = {}
-    for pid, g, low, med, n in st.db.execute(
-            "SELECT printing_id, gkey, low, median, n FROM ask_daily WHERE day=?", (day,)):
-        out[(pid, g or "|")] = {"day": day, "low": low, "median": med, "n": n}
+    for pid, g, low, med, n, seen in st.db.execute(
+            "SELECT a.printing_id, a.gkey, a.low, a.median, a.n, a.day FROM ask_daily a "
+            "JOIN (SELECT printing_id, gkey, MAX(day) d FROM ask_daily WHERE day>=? "
+            "GROUP BY printing_id, gkey) m "
+            "ON m.printing_id=a.printing_id AND m.gkey=a.gkey AND m.d=a.day", (floor,)):
+        out[(pid, g or "|")] = {"day": seen, "low": low, "median": med, "n": n}
     return out
 
 
@@ -170,7 +175,7 @@ def refresh(st, now: datetime | None = None, home: str = "TWD") -> int:
             if first > 0:
                 span_pct = (last / first - 1) * 100
         gkey = f"{gc}|{gr}"
-        # PriceCharting's own weekly sold series for the same printing and grade: the fallback trend when our
+        # PriceCharting's own monthly sold points for the same printing and grade: the fallback trend when our
         # sales are too thin to split, and the year context the card page shows alongside ours. The change is
         # relative, so it stands even where the two markets disagree on the level.
         med = statistics.median(prices)
@@ -203,17 +208,16 @@ def _pc_change(pc_row: dict | None, gkey: str) -> tuple[float | None, str | None
     gs = pc.grade_series(pc_row, gkey)
     if not gs:
         return None, None, None
-    pts = [(t, float(v)) for t, v in gs[1] if v and float(v) > 0]
+    pts = sorted((t, float(v)) for t, v in gs[1] if v and float(v) > 0)
     if len(pts) < 4:
         return None, None, None
-    first, last = pts[0][1], pts[-1][1]
-    if first <= 0:
+    chg = pc.year_change(pts)
+    if chg is None:
         return None, None, None
-    chg = (last / first - 1) * 100
-    # A jump with no sales behind it (a zero week kept as a placeholder) is noise, not a trend.
+    # A jump with no sales behind it (a zero month kept as a placeholder) is noise, not a trend.
     if abs(chg) > 400:
         return None, None, None
-    return chg, ("rising" if chg >= 5 else "falling" if chg <= -5 else "steady"), last
+    return chg, ("rising" if chg >= 5 else "falling" if chg <= -5 else "steady"), pts[-1][1]
 
 
 _MOVE = "COALESCE(pc_move_label, move_recent_label)"
