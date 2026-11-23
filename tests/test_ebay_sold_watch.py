@@ -151,7 +151,7 @@ def test_home_lists_recorded_sales_without_crashing(tmp_path):
     check(e, NOW + timedelta(hours=7), browse=b)
     page = view_home(e.store, None, NOW + timedelta(hours=8), "USD", "market")
     # Home is the decisions only: search, then nothing that has no decision to make (no "Recently sold" shelf)
-    assert "Recently sold" not in page and "And The Hunt Begins..." in page and "New listings" in page
+    assert "Recently sold" not in page and "And The Hunt Begins..." in page and "Newest listings" in page
 
 
 def test_a_unit_is_pinned_to_the_printing_its_own_listing_resolved_to(tmp_path):

@@ -189,6 +189,8 @@ _HUNT = "And The Hunt Begins..."
 _PAL = ("#e05252", "#2f6ce0", "#b8862f", "#2fbf71", "#e6a23c", "#8a7ef0")
 
 _CLS_OF = {"BUY": "good", "CHECK": "avg", "WATCH": "avg", "PASS": "bad"}
+_READ = {"good": "Under what to pay", "avg": "Worth a second look", "bad": "Above what it sells for", "none": "No sales history yet"}
+_SEAL = {"good": "\u2713", "avg": "!", "bad": "\u2715", "none": "?"}
 _WINDOW = {"1h": timedelta(hours=1), "24h": timedelta(hours=24)}
 
 
@@ -367,6 +369,7 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
             except (ValueError, TypeError):
                 pass
         code, sub, chip, ai, mb = "none", "", "", None, None
+        why, worth = "", None
         if M is not None and payload:
             try:
                 vv = verdict(d, status or "OPEN", M)
@@ -378,6 +381,8 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
                 bits.append("Lot" if "LOT" in (d.get("kinds") or []) else (d.get("grade") or "").upper())
                 sub = " \u00b7 ".join(b for b in bits if b)
                 ai, mb = d.get("all_in_home"), tp.get("max_buy")
+                why = vv.reason
+                worth = M(mb) if mb else None
                 if code in ("good", "avg") and ai and mb and mb > ai:
                     pct = (mb - ai) / ai * 100
                     chip = '<span class="hun-deal d-{}" title="worth up to {:.0f}% over the ask">+{:.0f}%</span>'.format(code, pct, pct)
@@ -441,19 +446,29 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
                 "remove" if piled else "add", e(token), e(key), e(base), " on" if piled else "",
                 "In the pile - remove" if piled else "Set aside in the card pile",
                 "Remove from the card pile" if piled else "Set aside in the card pile", "✓" if piled else "＋")
+        read = _READ.get(code, _READ["none"])
+        info = ('<span class="bi-read r-{}">{}</span>'.format(e(code), e(read))
+                + ('<span class="bi-sub">' + e(sub) + "</span>" if sub else "")
+                + ('<span class="bi-worth">Worth up to ' + e(worth) + "</span>" if worth else "")
+                + pcrow
+                + ('<span class="hun-spark">' + spk + "</span>" if spk else "")
+                + ('<span class="bi-why">' + e(why) + "</span>" if why else ""))
         entries.append((rank, seen or "",
                         '<div class="hun-item">'
-                        '<a class="hun" href="{}" data-key="{}" data-signal="{}">{}'
-                        '<span class="hun-b"><span class="hun-name">{}</span>{}'
-                        '<span class="hun-row"><span class="hun-price">{}{}</span>'
-                        '<span class="hun-meta">{}{}{}</span></span>{}{}</span>'
-                        '<span class="laser l-{}"></span></a>{}</div>'.format(
-                            e(url), e(key), e(code), art, e((title or "")[:90]),
-                            '<span class="hun-sub">' + e(sub) + "</span>" if sub else "",
+                        '<a class="hun card sig-{}" href="{}" data-key="{}" data-signal="{}">'
+                        '<span class="card-face">{}'
+                        '<span class="card-seal s-{}" title="{}" aria-label="{}" data-tip="{}">{}</span>'
+                        '<span class="card-info">{}</span>'
+                        '<span class="laser l-{}"></span></span>'
+                        '<span class="card-pi"><span class="card-price">{}</span>{}</span>'
+                        '<span class="card-meta">{}<span class="card-when">{}</span></span>'
+                        '</a>{}</div>'.format(
+                            e(code), e(url), e(key), e(code), art,
+                            e(code), e(read), e(read), e(read), e(_SEAL.get(code, "?")),
+                            info, e(code),
                             e(price_txt), chip, _mkt_icon(source),
-                            (" " + e(when)) if when else "", (" \u00b7 {} pics".format(own) if own > 1 else ""),
-                            pcrow, ('<span class="hun-spark">' + spk + "</span>") if spk else "",
-                            e(code), pilef)))
+                            ((e(when)) if when else "") + (" \u00b7 {} pics".format(own) if own > 1 else ""),
+                            pilef)))
     entries.sort(key=lambda x: x[1], reverse=True)
     entries.sort(key=lambda x: x[0])
     tiles = [h for _r, _s, h in entries[:30]]
@@ -708,20 +723,6 @@ def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalo
     details = [("Card number", c["passcode"]), ("Konami ID", c.get("konami_id"))] + [
         (f"Tournament status ({k.upper()})", lim) for k, lim in limits.items() if k in ("tcg", "ocg")]
     pend = f'<div class="pend"><small>Pendulum effect</small>{_para(c.get("pend_en"))}</div>' if c.get("pend_en") else ""
-    cpile = ""
-    if token and chosen:
-        try:
-            from .pile import keys as _pile_keys
-            _has = ("card:" + chosen) in frozenset(_pile_keys(st))
-        except Exception:
-            _has = False
-        _back = f"/pkm/card/{passcode[4:]}" if pkm else f"/card/{passcode}"
-        _say = "In the Card Pile - remove" if _has else "Add this version to the Card Pile"
-        cpile = (f'<form class="cpile" method="post" action="/pile/{"remove" if _has else "add"}">'
-                 f'<input type="hidden" name="t" value="{e(token)}"><input type="hidden" name="key" value="card:{e(chosen)}">'
-                 f'<input type="hidden" name="back" value="{e(_back)}">'
-                 f'<button class="pbtn{" on" if _has else ""}" type="submit" title="{_say}" aria-label="{_say}">'
-                 f'{"✓" if _has else "＋"}</button></form>')
     from .ui_pc import section as pc_section
     if pkm:
         from .character import slug as _slug, species_of
@@ -731,7 +732,7 @@ def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalo
                f'<p class="cja"><a href="/pkm/character/{e(_slug(who))}">{e(who)} market</a> · each card priced on its own</p>'
                f'<p class="cja">{e(c.get("set_name"))} · {e(c.get("number"))}/{e(c.get("printed_total"))} · {e(c.get("rarity") or "")}</p>')
         return (
-            f'<div class="cardpage"><div class="cp-img">{img(passcode, "", c.get("name_en") or "", cls="card big")}{cpile}</div>'
+            f'<div class="cardpage"><div class="cp-img">{img(passcode, "", c.get("name_en") or "", cls="card big")}</div>'
             f'<div class="cp-info">{top}' + picker + price_row + _pkm_details(c) + '</div></div>'
             + pc_section(st, chosen, cur, now)
             + _market_section(passcode, market, chosen, by_id, M, now, f)
@@ -739,7 +740,7 @@ def view_card(st, idx, passcode: str, now: datetime, cur: str, book=None, catalo
             + _versions_table(passcode, all_v, chosen, value, listed, M)
             + (_sale_form(passcode, all_v, chosen, token, now) + _chase_form(passcode, all_v, chosen, token, c.get("name_en") or "") if token else ""))
     return (
-        f'<div class="cardpage"><div class="cp-img">{img(passcode, "", c.get("name_en") or "", cls="card big")}{cpile}</div>'
+        f'<div class="cardpage"><div class="cp-img">{img(passcode, "", c.get("name_en") or "", cls="card big")}</div>'
         f'<div class="cp-info"><p class="crumb">{e(c.get("card_type") or "")}{" · " + e(c["type_line"]) if c.get("type_line") else ""}</p>'
         f'<h1 class="cname">{e(c.get("name_en") or ja)}</h1>'
         + (f'<p class="cja">{e(ja)}{" <span>(" + e(c["reading"]) + ")</span>" if c.get("reading") and c.get("reading") != ja else ""}</p>' if ja else "")
@@ -815,17 +816,12 @@ def _trend_box(st, printing_id: str | None, cur: str, now: datetime, M) -> str:
         pcr = None
     gs = pc.grade_series(pcr, "|")
 
-    cur_home = getattr(M, "home", "USD")
-
-    def usd_home(usd: float) -> float | None:
-        """PriceCharting quotes dollars; Money expects an amount in the home currency, so convert once here."""
-        if cur_home == "USD":
-            return float(usd)
+    def usd_to_cur(usd: float) -> float | None:
         try:
-            return float(FxTable(st.fx_rates()).convert(Decimal(str(usd)), "USD", cur_home, now))
+            return float(FxTable(st.fx_rates()).convert(Decimal(str(usd)), "USD", cur, now))
         except Exception:
             return None
-    pts = [(int(t), usd_home(float(v))) for t, v in (gs[1] if gs else []) if v and float(v) > 0]
+    pts = [(int(t), usd_to_cur(float(v))) for t, v in (gs[1] if gs else []) if v and float(v) > 0]
     pts = [(t, v) for t, v in pts if v]
     if not pts:
         url = (pcr or {}).get("url")
@@ -835,7 +831,7 @@ def _trend_box(st, printing_id: str | None, cur: str, now: datetime, M) -> str:
                 'The sweep fills it on its next pass.</p>'
                 + (f'<a class="tbx-src" href="{e(url)}" target="_blank" rel="noreferrer noopener">'
                    'Open it on PriceCharting →</a>' if url else "") + '</section>')
-    pc_chg = pc.year_change(pts)
+    pc_chg = (pts[-1][1] / pts[0][1] - 1) * 100 if len(pts) >= 4 and pts[0][1] else None
     lab = ("rising" if pc_chg >= 5 else "falling" if pc_chg <= -5 else "steady") if pc_chg is not None else "none"
     word = {"rising": "Climbing", "falling": "Slipping", "steady": "Holding"}.get(lab, "No call")
     pct_txt = ("flat" if abs(pc_chg) < 1 else f"{pc_chg:+.0f}%") if pc_chg is not None else "—"
@@ -1202,6 +1198,7 @@ def view_character(st, idx, species: str, token: str, now: datetime, cur: str, h
     variants = [v for cid in ids for v in cat.versions(cid)]
     tiles = []
     priced = []
+    where_of = {}
     gdays = []
     for cid in ids:
         row = cat._cards[cid]
@@ -1211,6 +1208,7 @@ def view_character(st, idx, species: str, token: str, now: datetime, cur: str, h
         for v in cat.versions(cid):
             label = v.edition or "Standard"
             where = f'{row[1]} · {s.get("name") or ""} {row[4]} · {label}'
+            where_of[v.id] = where
             g = cat.guide(v.id)
             if not g:
                 continue
@@ -1225,18 +1223,101 @@ def view_character(st, idx, species: str, token: str, now: datetime, cur: str, h
             tiles.append(f'<a class="ztile" href="{e(card_href(key))}">{img(key, "small", row[1])}'
                          f'<span class="ct-price">{price}</span></a>')
     hx = character_history(st, slug(species), variants, now, cur, home, book, cat.guide_history)
-    from .char_market import section as market_section
-    block = market_section(st, cat, species, ids, variants, now, cur, home, book, hx)
+    ser = hx["series"][0]
+    live = hx["live"]
+    latest_day = max((a["d"] for a in live.values()), default=None)
+    if latest_day:
+        live = {vid: a for vid, a in live.items() if a["d"] == latest_day}
+    months = ser["month"][-18:]
+    n_sales = len(ser["sales"])
     priced.sort(key=lambda p: p["v"])
-    lo_p = priced[0]["v"] if priced else None
-    hi_p = priced[-1]["v"] if priced else None
+    guide_of = {p["id"]: p["v"] for p in priced}
+    for p in priced:
+        a = live.get(p["id"])
+        if a:
+            p["ask"] = a["low"]
+    n_buy = sum(a.get("n") or 0 for a in live.values())
+    deals = sorted(({"pct": (a["low"] - guide_of[vid]) / guide_of[vid] * 100, "name": where_of.get(vid, vid),
+                     "ask": a["low"], "guide": guide_of[vid]}
+                    for vid, a in live.items() if vid in guide_of and guide_of[vid] and a.get("low")),
+                   key=lambda d: d["pct"])
+    under = [d for d in deals if d["pct"] < 0]
+    fday = max(gdays) if gdays else None
     first_day = min(gdays) if gdays else None
+    if priced:
+        lo_p, hi_p = priced[0]["v"], priced[-1]["v"]
+        bits = [f'<b>{len(priced)}</b> card versions priced from <b>{e(charts.fmt(lo_p, cur))}</b> to '
+                f'<b>{e(charts.fmt(hi_p, cur))}</b>' + (f' — {hi_p / lo_p:,.0f}× apart' if lo_p and hi_p / lo_p >= 10 else "") + '.']
+        if n_buy:
+            bits.append(f'<b>{n_buy}</b> listing{"s" if n_buy != 1 else ""} across <b>{len(live)}</b> cards in the '
+                        f'latest listing snapshot ({e(latest_day)}).')
+        else:
+            bits.append('Nothing is listed right now, so the guide prices are the only prices on record.')
+        if under:
+            d0 = under[0]
+            bits.append(f'<b>{len(under)}</b> version{"s" if len(under) != 1 else ""} sit'
+                        f'{"s" if len(under) == 1 else ""} under guide; the deepest is <b>{abs(d0["pct"]):.0f}%</b> under — '
+                        f'<b>{e(d0["name"])}</b> at <b>{e(charts.fmt(d0["ask"], cur))}</b> against a '
+                        f'<b>{e(charts.fmt(d0["guide"], cur))}</b> guide.')
+        elif deals:
+            bits.append('Everything listed asks at or above its guide right now.')
+        lead = " ".join(bits)
+        chart = (f'<div class="idxchart"><span class="lad-d">{_rank_svg(priced, cur)}</span>'
+                 f'<span class="lad-m">{_rank_svg(priced, cur, w=400, h=230, fs=11, compact=True)}</span></div>'
+                 f'<div class="idxleg"><span><i class="kdot"></i>Guide price, one dot per card version</span>'
+                 f'<span><i class="kask"></i>A version listed under its guide, hanging by the gap</span></div>')
+    else:
+        lead = 'No guide price exists for any card of this character yet.'
+        chart = ""
+    perf = []
+    if fday:
+        perf.append(f'Guides are TCGplayer market prices, latest snapshot <b>{e(fday)}</b>; they are not sales.')
+    if priced:
+        perf.append(f'Cheapest version: <b>{e(priced[0]["name"])}</b> at <b>{e(charts.fmt(priced[0]["v"], cur))}</b>. '
+                    f'Priciest: <b>{e(priced[-1]["name"])}</b> at <b>{e(charts.fmt(priced[-1]["v"], cur))}</b>. '
+                    'Different cards; the low price does not buy the high one.')
+    if under:
+        perf.append(f'<b>{len(under)}</b> versions are listed under guide right now. The table on the right is the shopping list.')
+    elif deals:
+        perf.append('No version is listed under guide right now; every ask is at or above its guide.')
+    perf.append(f'<b>{n_sales}</b> real sale{"s" if n_sales != 1 else ""} recorded across these cards.'
+                if n_sales else 'No real sale of any of these cards is recorded yet.')
     stats = (f'<div class="chero-stats">'
              f'<div><small>Cards</small><b>{len(ids)}</b></div>'
              f'<div><small>Versions priced</small><b>{len(priced)}</b></div>'
-             f'<div><small>Priciest</small><b>{e(charts.fmt(hi_p, cur)) if hi_p is not None else "—"}</b></div>'
-             f'<div><small>Cheapest</small><b>{e(charts.fmt(lo_p, cur)) if lo_p is not None else "—"}</b></div>'
-             f'</div>')
+             f'<div><small>Priciest</small><b>{e(charts.fmt(priced[-1]["v"], cur)) if priced else "—"}</b></div>'
+             f'<div><small>Listed now</small><b>{n_buy}</b></div>'
+             f'<div><small>Under guide</small><b>{len(under)}</b></div>'
+             f'<div><small>Sales recorded</small><b>{n_sales}</b></div></div>')
+    if deals:
+        rows = "".join(
+            f'<tr><td><span class="dname">{e(d["name"])}</span></td>'
+            f'<td class="n">{e(charts.fmt(d["ask"], cur))}</td><td class="n gcol">{e(charts.fmt(d["guide"], cur))}</td>'
+            f'<td class="n"><span class="{"dunder" if d["pct"] < 0 else "dover"}">{d["pct"]:+.0f}%</span></td></tr>'
+            for d in deals[:8])
+        more = f'<p class="why small">Plus {len(deals) - 8} more versions listed.</p>' if len(deals) > 8 else ""
+        board = (f'<h3>On sale right now</h3><table class="dbord"><thead><tr><th>Card version</th><th class="n">Live ask</th>'
+                 f'<th class="n gcol">Guide</th><th class="n">vs guide</th></tr></thead><tbody>{rows}</tbody></table>{more}'
+                 f'<p class="why small">From the {e(latest_day)} listing snapshot: lowest live listing of each version '
+                 'against its guide price; negative means listed under it. A gap past about 60% usually means the '
+                 'listing is a different printing — open the card first.</p>')
+        facts = (f'<div class="chcols"><div><h3>What the numbers say</h3><ul class="chfacts">'
+                 + "".join(f"<li>{p}</li>" for p in perf) + f'</ul></div><div>{board}</div></div>')
+    else:
+        facts = ('<h3>What the numbers say</h3><ul class="chfacts">' + "".join(f"<li>{p}</li>" for p in perf) + '</ul>')
+    foot = ('<p class="why small">Guide prices, not sales. No version has a second saved guide yet, so no price moves '
+            'are shown.</p>')
+    vmax = max((b["n"] for b in months), default=0)
+    if months and vmax:
+        bars = "".join(
+            f'<div class="vcol"><div class="vbar" style="height:{max(4, round(b["n"] / vmax * 100))}%" '
+            f'title="{e(b["start"][:7])}: {b["n"]} sale{"s" if b["n"] != 1 else ""}"></div>'
+            f'<small>{e(b["start"][5:7])}<br>{e(b["start"][2:4])}</small></div>' for b in months)
+        volbody = (f'<p class="why small">Real sales per month across every card of {e(species)}, last {len(months)} months. '
+                   f'Busiest month: {vmax}.</p><div class="vol">{bars}</div>')
+    else:
+        volbody = ('<p class="why small">No real sale of any of these cards is recorded yet, so there is no monthly '
+                   'volume to draw. Guides are not sales.</p>')
     dex = sprites().dex(species)
     portrait = (f'<img class="charport" src="/pkm/icon/{dex}.png" alt="{e(species)}" width="360" height="360" '
                 f'decoding="async">' if dex else "")
@@ -1245,7 +1326,9 @@ def view_character(st, idx, species: str, token: str, now: datetime, cur: str, h
             f'<p class="chero-kick">{len(variants)} card versions tracked'
             + (f' · guide history since {e(f"{datetime.fromisoformat(first_day):%b %Y}")}' if first_day else "") + '</p>'
             f'<h1>{e(species)}</h1>{stats}</div></section>'
-            f'{block}'
+            f'<section class="char-analyse"><h2>How {e(species)} is performing</h2>'
+            f'<p class="chlead">{lead}</p>{chart}{facts}'
+            f'<h3>Sales volume</h3>{volbody}{foot}</section>'
             f'<h2 class="cghead">Every card of {e(species)}</h2>'
             f'<div class="cgrid2">{"".join(tiles) or "<p class=empty>No cards of this character.</p>"}</div>')
 
@@ -1360,7 +1443,7 @@ border-radius:999px;padding:4px 16px;box-shadow:var(--shadow);font-variant-numer
 .shelf-h h2{font-size:19px;margin:0}.shelf-h a{font-size:13px}
 .tiles-l{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(250px,100%),1fr));gap:12px}
 @media(max-width:800px){.shell{grid-template-columns:minmax(0,1fr)!important}header{flex-wrap:wrap}header .hsearch{order:9;flex-basis:100%;max-width:none}
-header .store{display:none}form.search.big input{font-size:16px;padding:12px 16px}form.search.big button{padding:0 16px}.huntline{display:flex;flex-direction:column}.huntline .hun-wiz{width:76px;height:104px}.wizfloat{left:16px}}
+header .store{display:none}form.search.big input{font-size:16px;padding:12px 16px}form.search.big button{padding:0 16px}.huntline{display:flex;flex-direction:column}.huntline .hun-wiz{width:76px;height:104px}}
 .tile-l{display:flex;gap:12px;padding:12px;background:var(--surface);border:1px solid var(--line);border-radius:12px;color:var(--fg);
 text-decoration:none;transition:box-shadow .15s,transform .15s}.tile-l:hover{box-shadow:var(--shadow-hi);transform:translateY(-2px);border-color:var(--axis)}
 .tile-l .card{width:64px;height:93px;flex:none}.tl-body{display:flex;flex-direction:column;gap:3px;min-width:0}
@@ -1485,7 +1568,7 @@ filter:drop-shadow(0 7px 16px rgba(0,0,0,.28));transition:transform .18s var(--e
 .hun-status b{font-size:11px;letter-spacing:.14em;color:var(--fg);text-transform:uppercase;font-weight:750}
 .hun-status small::before{content:"\00b7";margin-right:9px;color:var(--muted)}
 .hun-status small{font-size:12px;color:var(--muted);font-weight:400;letter-spacing:0;text-transform:none}
-.boardwrap{position:relative;margin-top:14px;padding-top:calc(var(--wizh) - var(--wizdip));
+.boardwrap{position:relative;margin-top:2px;padding-top:calc(var(--wizh) - var(--wizdip));
 --wizh:clamp(120px,16vw,232px);--wizdip:calc(var(--wizh)*.1)}
 .wizfloat{position:absolute;top:0;left:clamp(12px,2.6vw,38px);z-index:6;display:block;padding:0;border:0;
 background:none;cursor:pointer;line-height:0}
@@ -1516,65 +1599,82 @@ box-shadow:0 0 0 2px rgba(47,191,113,.6),0 10px 34px rgba(47,191,113,.3);animati
 @keyframes hunfade{0%{opacity:0}25%{opacity:1}100%{opacity:0}}
 .hun.landed .laser{animation:laserpop 1.2s ease both}
 @keyframes laserpop{0%,55%{filter:brightness(2.4);transform:scaleY(2.2)}100%{filter:none;transform:none}}
-.hungrid>.hun{animation:hunin .5s cubic-bezier(.2,.7,.3,1) backwards}
-.hungrid>.hun:nth-child(2){animation-delay:40ms}
-.hungrid>.hun:nth-child(3){animation-delay:80ms}
-.hungrid>.hun:nth-child(4){animation-delay:120ms}
-.hungrid>.hun:nth-child(5){animation-delay:160ms}
-.hungrid>.hun:nth-child(6){animation-delay:200ms}
-.hungrid>.hun:nth-child(7){animation-delay:240ms}
-.hungrid>.hun:nth-child(8){animation-delay:280ms}
-.hungrid>.hun:nth-child(9){animation-delay:320ms}
-.hungrid>.hun:nth-child(10){animation-delay:360ms}
-.hungrid>.hun:nth-child(11){animation-delay:400ms}
-.hungrid>.hun:nth-child(12){animation-delay:440ms}
+.hungrid>.hun-item{animation:hunin .5s cubic-bezier(.2,.7,.3,1) backwards}
+.hungrid>.hun-item:nth-child(2){animation-delay:40ms}
+.hungrid>.hun-item:nth-child(3){animation-delay:80ms}
+.hungrid>.hun-item:nth-child(4){animation-delay:120ms}
+.hungrid>.hun-item:nth-child(5){animation-delay:160ms}
+.hungrid>.hun-item:nth-child(6){animation-delay:200ms}
+.hungrid>.hun-item:nth-child(7){animation-delay:240ms}
+.hungrid>.hun-item:nth-child(8){animation-delay:280ms}
+.hungrid>.hun-item:nth-child(9){animation-delay:320ms}
+.hungrid>.hun-item:nth-child(10){animation-delay:360ms}
+.hungrid>.hun-item:nth-child(11){animation-delay:400ms}
+.hungrid>.hun-item:nth-child(12){animation-delay:440ms}
 @keyframes hunin{from{opacity:0;transform:translateY(12px)}}
-@media(prefers-reduced-motion:reduce){.hungrid>.hun,.hun-live.ok i{animation:none}.hunzone{transition:none}.hun.landed{animation:none}.hun.landed::after,.hun.landed .laser{animation:none}}
+@media(prefers-reduced-motion:reduce){.hungrid>.hun-item,.hun-live.ok i{animation:none}.hunzone{transition:none}.hun.landed{animation:none}.hun.landed::after,.hun.landed .laser{animation:none}}
 .hun-all{margin-left:auto;font-size:14px;font-weight:600}
 .hun-note{color:var(--muted);margin:24px 2px 0;line-height:1.5;max-width:88ch}
-section.hero.hunt{padding:34px 4px 14px;max-width:none}
-.huntitle{font-family:"Avenir Next Condensed","Avenir Next","Avenir","Helvetica Neue",system-ui,-apple-system,"Segoe UI",sans-serif;
-font-style:normal;font-weight:900;font-size:clamp(48px,9vw,96px);letter-spacing:-.02em;text-transform:uppercase;margin:0 0 14px;cursor:default;
---grunge:url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='140'%20height='140'%3E%3Cfilter%20id='w'%3E%3CfeTurbulence%20type='fractalNoise'%20baseFrequency='0.25'%20numOctaves='3'%20seed='7'/%3E%3CfeColorMatrix%20type='matrix'%20values='0%200%200%200%200%200%200%200%200%200%200%200%200%200%200%200%200%200%201.1%200.3'/%3E%3C/filter%3E%3Crect%20width='140'%20height='140'%20fill='white'%20filter='url(%23w)'/%3E%3C/svg%3E")}
-.huntitle span{position:relative;display:inline-block;white-space:pre;color:var(--c,var(--fg));-webkit-text-stroke:3px #000;paint-order:stroke fill;
+section.hero.hunt{padding:10px 4px 0;max-width:none;text-align:center}
+.hero.hunt h1.huntitle{font-family:"Avenir Next Condensed","Avenir Next","Arial Narrow","Helvetica Neue",system-ui,sans-serif;
+font-style:normal;font-weight:900;font-size:clamp(56px,10.5vw,118px);letter-spacing:-.015em;text-transform:uppercase;margin:0 auto;cursor:default;line-height:.92}
+.huntitle span{position:relative;display:inline-block;white-space:pre;color:var(--fg);
+-webkit-text-stroke:3px var(--surface);paint-order:stroke fill;text-shadow:0 4px 0 rgba(0,0,0,.08);
 transition:transform .35s cubic-bezier(.2,1.8,.4,1);transition-delay:calc(var(--i)*30ms)}
-.huntitle span::after{content:attr(data-c);position:absolute;inset:0;color:#fff;-webkit-text-stroke:3px #000;paint-order:stroke fill;
-transform:translate(1.5px,1.5px);pointer-events:none;
--webkit-mask-image:var(--grunge);mask-image:var(--grunge);
--webkit-mask-size:150px 150px;mask-size:150px 150px;
--webkit-mask-position:calc(var(--i)*-9px) calc(var(--i)*3px);mask-position:calc(var(--i)*-9px) calc(var(--i)*3px)}
-.huntitle:hover span{transform:translateY(-8px) rotate(-5deg)}
-.hungrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:22px}
-a.hun{position:relative;display:flex;flex-direction:column;background:none;border:0;border-radius:0;
-text-decoration:none;color:inherit;transition:transform .15s}
-a.hun:hover{transform:translateY(-3px)}
-a.hun:hover img.hun-img,a.hun:hover span.hun-img{box-shadow:0 12px 28px rgba(0,0,0,.22)}
-.laser{position:absolute;top:0;left:0;right:0;height:3px;z-index:2;border-radius:13px 13px 0 0}
+.huntitle:hover span{transform:translateY(-8px) rotate(-4deg)}
+.hungrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(172px,1fr));gap:24px 18px}
+a.hun.card{position:relative;display:flex;flex-direction:column;align-items:center;gap:9px;text-decoration:none;color:inherit;
+transition:transform .16s var(--ease)}
+a.hun.card:hover{transform:translateY(-4px)}
+.card-face{position:relative;width:100%;aspect-ratio:5/7;border-radius:11px;overflow:hidden;background:var(--surface);
+border:2px solid var(--line);box-shadow:0 6px 18px rgba(0,0,0,.16);transition:border-color .16s,box-shadow .16s var(--ease)}
+a.hun.card.sig-good .card-face{border-color:#2fbf71}
+a.hun.card.sig-avg .card-face{border-color:#e6a23c}
+a.hun.card.sig-bad .card-face{border-color:#e05252}
+a.hun.card:hover .card-face{box-shadow:0 13px 30px rgba(0,0,0,.24)}
+.card-face img.hun-img,.card-face span.hun-img{width:100%;height:100%;object-fit:contain;display:block;border:0;border-radius:0;background:var(--surface)}
+.card-face span.card.hun-img,.card-face img.card.hun-img{object-fit:contain;padding:0;box-sizing:border-box;background:var(--surface)}
+.card-seal{position:absolute;top:6px;right:6px;z-index:5;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+font:900 11px/1 "Helvetica Neue",Arial,sans-serif;color:#fff;box-shadow:0 2px 5px rgba(0,0,0,.3)}
+.card-seal.s-good{background:#2fbf71}.card-seal.s-avg{background:#e6a23c}.card-seal.s-bad{background:#e05252}.card-seal.s-none{background:var(--muted)}
+.laser{position:absolute;top:0;left:0;right:0;height:3px;z-index:4}
 .l-good{background:linear-gradient(90deg,#2fbf71,#5ad79a);box-shadow:0 0 10px #2fbf7180}
 .l-avg{background:linear-gradient(90deg,#e6a23c,#f0c078)}
 .l-bad{background:linear-gradient(90deg,#e05252,#f08080)}
 .l-none{background:var(--line)}
-a.hun img.hun-img,a.hun span.hun-img{width:100%;height:230px;object-fit:cover;border-radius:14px;border:1px solid var(--line);background:var(--bg)}
-a.hun span.card.hun-img,a.hun img.card.hun-img{object-fit:contain;padding:10px;box-sizing:border-box}
-.hun-b{display:flex;flex-direction:column;gap:5px;padding:11px 4px 0}
-.hun-name{font-size:14.5px;font-weight:650;color:var(--fg);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:2.7em}
-.hun-price{font-size:19px;font-weight:700;color:var(--accent)}
-.hun-sub{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.hun-deal{display:inline-block;margin-left:8px;padding:1px 8px;border-radius:999px;font-size:11.5px;font-weight:750;vertical-align:2px}
+.card-info{position:absolute;inset:0;z-index:5;display:flex;flex-direction:column;gap:5px;padding:12px 12px 14px;overflow:hidden;
+background:linear-gradient(180deg,rgba(16,19,23,.94),rgba(16,19,23,.9));color:#f4eedf;border-radius:9px;
+opacity:0;transform:translateY(8px);transition:opacity .18s var(--ease),transform .18s var(--ease);pointer-events:none}
+a.hun.card:hover .card-info,a.hun.card:focus-visible .card-info{opacity:1;transform:none}
+.bi-read{font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:.04em;line-height:1.2}
+.bi-read.r-good{color:#5ad79a}.bi-read.r-avg{color:#f0c078}.bi-read.r-bad{color:#f08080}.bi-read.r-none{color:#c2c8ce}
+.bi-sub{font-size:11.5px;color:#d2c8b1;line-height:1.3}
+.bi-worth{font-size:12.5px;font-weight:750;color:#fff}
+.bi-why{font-size:11px;line-height:1.4;color:#c2c8b1}
+.card-info .hun-pc{color:#d2c8b1;white-space:normal;margin-top:2px}
+.card-info .hun-pc b.pclo{color:#5ad79a}.card-info .hun-pc b.pchi{color:#f0c078}
+.card-info .hun-spark{margin-top:auto}
+.card-info .hun-spark .spark{width:100%;height:26px}
+.card-pi{display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap}
+.card-price{background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:6px 20px;
+font-size:15px;font-weight:800;color:var(--fg);font-variant-numeric:tabular-nums;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.1)}
+.card-meta{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);white-space:nowrap;max-width:100%;overflow:hidden}
+.card-when{overflow:hidden;text-overflow:ellipsis}
+.hun-deal{display:inline-block;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:750}
 .hun-deal.d-good{color:#1c8a4d;background:rgba(47,191,113,.16)}
 .hun-deal.d-avg{color:#a4701d;background:rgba(230,162,60,.18)}
-.hun-row{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
-.hun-meta{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);white-space:nowrap}
+@media(hover:none){.card-face{aspect-ratio:auto;overflow:visible}
+.card-face img.hun-img,.card-face span.hun-img{height:auto;aspect-ratio:5/7}
+.card-info{position:static;opacity:1;transform:none;background:none;color:var(--fg2);padding:8px 2px 0;pointer-events:auto;border-radius:0}
+.card-info .bi-why,.card-info .hun-spark{display:none}.bi-read{font-size:11px}.bi-sub{color:var(--muted)}.bi-worth{color:var(--fg)}
+.card-info .hun-pc{color:var(--muted)}}
+@media(max-width:460px){.hungrid{grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:18px 12px}}
 .mkt{display:inline-flex;align-items:center;justify-content:center;width:19px;height:19px;border-radius:50%;flex:none;
 font:700 11px/1 "Helvetica Neue",Arial,sans-serif;color:#fff}
-.huntag{margin:0 auto 20px;display:flex;align-items:center;justify-content:center;gap:16px;
-font-family:"Avenir Next","Avenir",system-ui,-apple-system,"Segoe UI",sans-serif;font-size:clamp(14px,1.8vw,18px);font-weight:800;
-letter-spacing:.24em;text-transform:uppercase;color:transparent;
-background:linear-gradient(90deg,#e05252,#2f6ce0,#b8862f,#2fbf71,#e6a23c,#8a7ef0);
--webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
-.huntag::before,.huntag::after{content:"";height:2px;width:clamp(30px,7vw,70px);border-radius:2px;flex:none}
-.huntag::before{background:linear-gradient(90deg,transparent,#e05252,#2f6ce0,#b8862f)}
-.huntag::after{background:linear-gradient(90deg,#2fbf71,#e6a23c,#8a7ef0,transparent)}
+.huntag{margin:2px auto 14px;display:flex;align-items:center;justify-content:center;gap:14px;
+font-family:"Avenir Next","Avenir",system-ui,-apple-system,"Segoe UI",sans-serif;font-size:clamp(12px,1.5vw,15px);font-weight:700;
+letter-spacing:.4em;text-indent:.4em;text-transform:uppercase;color:var(--fg2)}
+.huntag::before,.huntag::after{content:"";height:1px;width:clamp(28px,6vw,64px);flex:none;background:var(--axis)}
 .huntline{display:flex;justify-content:center;gap:20px}
 .huntline form.search.big{width:100%;max-width:720px;margin:0 auto}
 .reg{position:absolute;inset:0;pointer-events:none}
@@ -1602,7 +1702,7 @@ border-radius:9px 6px 10px 7px;overflow:hidden;box-shadow:2px 3px 0 rgba(0,0,0,.
 .hun-spark .spark{width:100%;height:30px}
 .hun-pc{display:block;font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hun-pc b.pclo{color:#2fbf71;font-weight:750}.hun-pc b.pchi{color:var(--fg2);font-weight:600}
-.hungrid .hun-item .pilebtn{top:auto;bottom:8px}
+.hungrid .hun-item .pilebtn{top:8px;bottom:auto;left:8px;right:auto}
 .hun-item .pilebtn:has(.pbtn.on){opacity:1}
 @media(hover:none){.hungrid .hun-item .pilebtn{opacity:1}}
 """

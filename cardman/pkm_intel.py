@@ -218,6 +218,36 @@ def analyze(title: str, cat: PkmCatalog, *, description: str = "", verified: dic
         if not hit:                              # not in the named set: the same card name elsewhere (a promo) with that number
             hit = [cid for nm in names[:1] for cid in cat.by_name.get(nm, []) if (cat._cards[cid][4] or "").lstrip("0").lower() == want]
         cards = hit
+    # Confirmation gate: a card number alone never binds a card the title does not name. JP and anniversary
+    # promo numbers (001/025, 014/025) collide with English set numbers (1/25, 14/25); when the title names a
+    # different card, the number's card is a misread, not a match. Abstain rather than assert the wrong card.
+    if cards and names and by_number and not any(name_ok(c) for c in cards):
+        card_names = [n for n in names if n not in cat.set_names]
+        named_cards = [cid for nm in (card_names or names)[:1] for cid in cat.by_name.get(nm, [])]
+        fit = [c for c in named_cards if sid and cat._cards[c][3] == sid] or named_cards
+        owners = ", ".join(sorted({cat.card_name(c) or c for c in cards}))[:120]
+        findings.append(Finding("CODE_NAME_MISMATCH", WARN,
+                                f"The number points to {owners}, but the title names {(card_names or names)[0]}. "
+                                "The name and the number disagree: the photo decides, not the number."))
+        cards = fit
+    elif cards and not names and by_number and sid is None:
+        # number-only, no recognised set: confirmed only if the card's name resembles a word in the title.
+        # A foreign card (Marakatch, a JP promo) shares no word with the English card its number collided with.
+        import difflib
+        toks = [w for w in tn.split() if len(w) >= 3]
+        words = tn.split()
+        def resembles(cid: str) -> bool:
+            for w in norm(cat._cards[cid][1]).split():
+                if w in words:
+                    return True
+                if len(w) >= 3 and any(difflib.SequenceMatcher(None, w, t).ratio() >= 0.8 for t in toks):
+                    return True
+            return False
+        if not any(resembles(c) for c in cards):
+            findings.append(Finding("NUMBER_UNCONFIRMED", WARN,
+                                    "Only a card number, and the card it points to shares no name with the title: "
+                                    "not enough to identify it."))
+            cards = []
     if len(cards) > 40:                        # a bare name like "Pikachu": too many to weigh
         cards = sorted(cards, key=lambda c: cat._cards[c][9] or "", reverse=True)[:40]
 
