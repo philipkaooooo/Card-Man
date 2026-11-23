@@ -85,6 +85,44 @@ def test_market_page_carries_both_games_and_a_column_header_instead_of_a_legend(
     assert "The Pokémon market" in p and 'role="tab"' in p
 
 
+def test_newest_sales_against_the_ones_before_them(tmp_path):
+    st = Store(tmp_path / "e.sqlite")
+    for i in range(2):
+        add(st, i, 100, 45 + i)          # the two older sales
+    for i in range(2):
+        add(st, f"r{i}", 120, 4 + i)     # the two newest sales
+    trends.refresh(st, NOW, "TWD")
+    r = trends.board(st, game="ygo", limit=1)[0]
+    assert abs(r["move_recent"] - 20.0) < 1e-9 and r["move_recent_label"] == "rising"
+    assert (r["move_n"], r["move_past"]) == (2, 2)
+
+
+def test_raw_sales_restate_to_near_mint(tmp_path):
+    st = Store(tmp_path / "e.sqlite")
+    add(st, 0, 78, 2, condition="LP")
+    add(st, 1, 100, 3)
+    add(st, 2, 100, 4)
+    trends.refresh(st, NOW, "TWD")
+    r = trends.board(st, game="ygo", limit=1)[0]
+    assert abs(r["median"] - 100.0) < 1e-6       # 78 in Lightly Played is 100 in Near Mint on the ladder
+
+
+def test_board_trend_cell_names_the_direction_and_its_evidence(tmp_path):
+    from cardman.ui_market import view_market
+    st = Store(tmp_path / "e.sqlite")
+    for i in range(2):
+        add(st, i, 100, 45 + i)
+    for i in range(2):
+        add(st, f"r{i}", 120, 4 + i)
+    trends.refresh(st, NOW, "TWD")
+    h = view_market(st, NOW, "TWD", "TWD", {}, game="ygo")
+    assert 'class="mtrend rising"' in h and "Climbing" in h and "+20%" in h and "30d" not in h
+    assert "newest 2 vs 2 before" in h
+    assert 'class="fbar"' in h and 'class="flab">Move<' in h and 'class="flab">Order<' in h
+    assert "Climbing: up 5% or more" in h
+    assert '<a href="/market?' in h                                  # the pulse key filters the board it describes
+
+
 def test_no_sales_no_row(tmp_path):
     st = Store(tmp_path / "e.sqlite")
     assert trends.refresh(st, NOW, "TWD") == 0

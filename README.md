@@ -46,6 +46,13 @@ Pricing rules: `docs/pricing-method.md` — a price comes from real sales of one
   profit in currency and the most the raw may cost when no ask is low enough. Each card page carries a
   PriceCharting section of its own (`ui_pc.py`): all six grades selectable, one line each, hover for the
   week's sold price, plus the table and PSA/CGC population.
+- The board's **Trend** column (`trends.py`) uses one rule on every row: the median of the newest k sales
+  against the median of the k before them, k = min(5, sales/2). Up 5%+ is Climbing, down 5%+ Slipping,
+  inside that Holding; fewer than four sales is Thin and says so instead of guessing. The pulse key above the
+  board is clickable and filters to the same categories it counts.
+- Raw sales are restated to Near Mint on the condition ladder (`conditions.py`) before any median, and a raw
+  ask in a played condition is restated up to NM the same way, so a cheaper lower-grade copy never poses as a
+  cheap NM copy. Unknown condition stays NM - it is never guessed.
 
 ### Evidence and decisions (`store.py`)
 - Observations are written once; rewriting one with different content is refused. Cancellations, refunds,
@@ -124,7 +131,7 @@ Paste a title and description as the seller wrote them (English or Japanese) wit
 
 ### Run
 ```
-pip install pytest && python -m pytest -q                      # 456 pass, 3 skip
+pip install pytest && python -m pytest -q                      # 506 pass
 python -m cardman.sources                                       # re-probe every source
 python -m cardman.identity_cache sync                           # clone/update YAML Yugi, sync cache
 python -m cardman.slice examples/identity_only_LB-01.json examples/manual_import_TEMPLATE.csv

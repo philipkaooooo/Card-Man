@@ -182,7 +182,8 @@ def _filters(qs: dict, sort: str, min_sales: str, counts: dict) -> str:
         q = {k: v for k, v in qs.items() if k not in ("msg", "err", key)}
         if val not in (None, "all", ""):
             q[key] = val
-        return "/market?" + e(urlencode(q))
+        q = {k: v for k, v in q.items() if (k, v) not in (("label", "all"), ("min", "0"), ("sort", "move"))}
+        return "/market" + ("?" + e(urlencode(q)) if q else "")
 
     def chip(key, val, text, current, n=None):
         on = current == val
@@ -194,7 +195,7 @@ def _filters(qs: dict, sort: str, min_sales: str, counts: dict) -> str:
              chip("label", "rising", "Climbing", label, counts["rising"]),
              chip("label", "falling", "Slipping", label, counts["falling"]),
              chip("label", "steady", "Holding", label, counts["steady"]),
-             chip("label", "none", "Too new", label, counts["no_trend"])]
+             chip("label", "none", "Thin", label, counts["no_trend"])]
     evidence = [chip("min", None, "Any history", min_sales),
                 chip("min", "3", "3+ sales", min_sales), chip("min", "6", "6+ sales", min_sales)]
     order = [chip("sort", "move", "Newest-vs-prior move", sort), chip("sort", "edge", "Under typical", sort),
@@ -205,7 +206,7 @@ def _filters(qs: dict, sort: str, min_sales: str, counts: dict) -> str:
         f'<div class="fsec"><span class="flab">{e(name)}</span>{"".join(ch)}</div>' for name, ch in groups)
         + '</div><p class="fnote">Every row uses the same rule: the middle of its newest sales against the middle '
         'of the sales just before them, same number on each side. Climbing: up 5% or more. Slipping: down 5% or '
-        'more. Holding: inside 5%. Too new: fewer than 4 sales, so there is no second half to compare.</p>')
+        'more. Holding: inside 5%. Thin: fewer than 4 sales, so there is no second half to compare.</p>')
 
 
 def vals_default(key: str) -> str:
@@ -327,16 +328,16 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
             q = {k: v for k, v in qs.items() if k not in ("msg", "err", "label")}
             if lab != "all":
                 q["label"] = lab
-            return "/market?" + e(urlencode(q))
+            return "/market" + ("?" + e(urlencode(q)) if q else "")
         segs = (("p-up", s["rising"]), ("p-down", s["falling"]), ("p-hold", s["steady"]), ("p-none", s["no_trend"]))
         pulse = ('<div class="mk-pulse" role="img" aria-label="'
-                 f'{s["rising"]} climbing, {s["falling"]} slipping, {s["steady"]} holding, {s["no_trend"]} too new to call">'
+                 f'{s["rising"]} climbing, {s["falling"]} slipping, {s["steady"]} holding, {s["no_trend"]} too thin to call">'
                  + "".join(f'<span class="{c}" style="width:{pct(n):.1f}%"></span>' for c, n in segs if n) + '</div>'
                  '<div class="mk-pulse-k">'
                  f'<a href="{jump("rising")}"><i class="p-up"></i>{s["rising"]:,} climbing</a>'
                  f'<a href="{jump("falling")}"><i class="p-down"></i>{s["falling"]:,} slipping</a>'
                  f'<a href="{jump("steady")}"><i class="p-hold"></i>{s["steady"]:,} holding</a>'
-                 f'<a href="{jump("none")}"><i class="p-none"></i>{s["no_trend"]:,} too new to call</a>'
+                 f'<a href="{jump("none")}"><i class="p-none"></i>{s["no_trend"]:,} too thin to call</a>'
                  f'<a class="mkstat all" href="{jump("all")}"><b>{s["with_asks"]:,}</b> listed now · '
                  f'<b>{s["n_30"]:,}</b> sales in the last 30 days</a></div>')
     tabs = ('<div class="mk-games" role="tablist" aria-label="Game">'
@@ -365,7 +366,7 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
             'months. The line under it is the year change. A verdict from a second market, not a copy of ours.">'
             '1 yr · PC</span>'
             '<span title="The middle of this row\'s newest sales against the middle of the sales just before them - '
-            'same count on each side, up to 5. Climbing 5%+, Slipping 5%-, else Holding. Fewer than 4 sales: no call.">'
+            'same count on each side, up to 5. Climbing 5%+, Slipping 5%-, else Holding. Fewer than 4 sales: too thin to call.">'
             'Trend</span>'
             '</div>')
     name_of = _name_of(cards, pkm)
@@ -629,7 +630,7 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
         cls = lab if lab in ("rising", "falling", "steady") else "none"
         row_cls = {"rising": "up", "falling": "down", "steady": "hold"}.get(lab, "none")
         if word is None:
-            word, pct_txt = "Too new", "no call"
+            word, pct_txt = "Thin", "add sales"
         else:
             pct_txt = "flat" if abs(pct) < 1 else f"{pct:+.0f}%"
         meaning = {"rising": "Prices are climbing: a copy near typical is the buy.",
@@ -670,13 +671,20 @@ def view_market(st, now: datetime, cur: str, home: str, qs: dict, game: str = "y
         gs = pc.grade_series(pcr, gkey)
         if gs:
             gname, gpts = gs
-            gchg = (gpts[-1][1] / gpts[0][1] - 1) * 100 if gpts[0][1] else None
             cur_pc = pc.current(pcr, gname) or {}
-            vol = (cur_pc.get("vol") or "").replace(" per ", "/")
-            tip = (f"PriceCharting {gname}: {pc_money(gpts[-1][1])} now"
-                   + (f", {gchg:+.0f}% over the year" if gchg is not None else "")
-                   + (f"; {vol} recently" if vol else "") + ". Weekly points, 12 months.")
-            pc_html = _spark(gpts, f"{gname} · {gchg:+.0f}%" if gchg is not None else gname, tip, pcr.get("url"))
+            gchg = (gpts[-1][1] / gpts[0][1] - 1) * 100 if gpts[0][1] else None
+            pc_v = usd_home(cur_pc.get("p")) if cur_pc.get("p") is not None else None
+            if pc_v and fair and not (fair / 3 <= pc_v <= fair * 3):
+                # The two markets are more than 3x apart: name the gap, do not draw it as this card's price history.
+                pc_html = (f'<span class="mpc"><span class="pcnone">≠</span><small title="PriceCharting\'s '
+                           f'{e(gname)} price is {M(pc_v)} against our {M(fair)} typical - more than 3x apart, so the '
+                           f'line is not drawn">far from ours</small></span>')
+            else:
+                vol = (cur_pc.get("vol") or "").replace(" per ", "/")
+                tip = (f"PriceCharting {gname}: {pc_money(gpts[-1][1])} now"
+                       + (f", {gchg:+.0f}% over the year" if gchg is not None else "")
+                       + (f"; {vol} recently" if vol else "") + ". Weekly points, 12 months.")
+                pc_html = _spark(gpts, f"{gname} · {gchg:+.0f}%" if gchg is not None else gname, tip, pcr.get("url"))
         else:
             pc_html = '<span class="mpc"><span class="pcnone">—</span><small>not swept</small></span>'
         body.append(
