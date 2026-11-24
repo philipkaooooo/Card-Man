@@ -276,6 +276,45 @@ def _engine_line(st, now: datetime, base: str, token: str = "") -> str:
                   '<b id="hun-status1">{}</b><small id="hun-status2">{}</small></span></span>').format(cls, e(l1), e(l2))
 
 
+def _hunt_feed(st, now: datetime, game: str, M=None) -> str:
+    """The live hunt feed: the calls the engine is making right now, taking the deals and passing the rest."""
+    rows = []
+    try:
+        q = st.db.execute(
+            "SELECT l.title, l.price, l.currency, o.status, o.kinds, o.updated_at "
+            "FROM opportunity o JOIN listing l ON l.key=o.key WHERE l.ended_at IS NULL "
+            "AND COALESCE(json_extract(o.payload_json,'$.game'),'ygo')=? "
+            "ORDER BY o.updated_at DESC LIMIT 8", (game,)).fetchall()
+    except Exception:
+        q = []
+    for title, price, cur, status, kinds, upd in q:
+        kj = json.loads(kinds or "[]")
+        passed = status == "REJECTED"
+        if passed:
+            read = ("identity unclear" if "MISIDENTIFIED" in kj else
+                    "a lot, not one card" if ("LOT" in kj or "COLLECTION" in kj) else
+                    "print not settled" if "RIGHT_PRINT_ONLY" in kj else "above what to pay")
+        else:
+            read = ("under what to pay" if "UNDERPRICED" in kj else
+                    "under the PC comp" if "REFERENCE_GAP" in kj else "worth a look")
+        try:
+            ptxt = charts.fmt(Decimal(str(price)), cur) if price not in (None, "") else "—"
+        except Exception:
+            ptxt = "—"
+        rows.append('<li class="hf-row a-{}"><span class="hf-act">{}</span><span class="hf-name">{}</span>'
+                    '<span class="hf-read">{}</span><span class="hf-price">{}</span></li>'.format(
+                        "pass" if passed else "take", "Passing" if passed else "Taking",
+                        e((title or "").strip()[:80] or "Untitled ask"), e(read), e(ptxt)))
+    if not rows:
+        rows.append('<li class="hf-row a-idle"><span class="hf-act">Ready</span>'
+                    '<span class="hf-name">Run the Hunt to watch it judge the freshest asks, live.</span></li>')
+    return ('<div class="hunfeed" id="hunfeed"><div class="hf-top">'
+            '<span class="hf-live" id="hf-live"><i></i><b id="hf-state">The Hunt</b></span>'
+            '<span class="hf-sub" id="hf-sub">taking the deals, passing the rest</span>'
+            '<span class="hf-count" id="hf-count"></span></div>'
+            '<ul class="hf-list" id="hf-list">' + "".join(rows) + "</ul></div>")
+
+
 def _hun_head(base: str, v: str, t: str, counts: dict, stats: str = "", chips: str = "", x: str = "", live: str = "") -> str:
     sig = (("all", "All", "hsn"), ("good", "Good", "hsg"), ("avg", "Average", "hsa"), ("bad", "Bad", "hsb"),
            ("none", "Unrated", "hsn"))
@@ -534,7 +573,8 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
         ("drop", "Price drops", "asking less than before, last 24 hours"),
         ("end", "Ending soon", "auctions and offers that close within six hours"))) + "</span>"
     head = _hun_head(base, v, t, counts, pulse, chips, x, live)
-    return ('<section class="hunzone home"><span class="reg" aria-hidden="true"><i></i><i></i><i></i><i></i></span>' + head + grid +
+    return ('<section class="hunzone home"><span class="reg" aria-hidden="true"><i></i><i></i><i></i><i></i></span>'
+            + _hunt_feed(st, now, game, M) + head + grid +
             '<p class="hun-note small">Signal is the read on the price: green under what to pay, amber worth a '
             'second look, red above it; unrated has no sales history yet. Most asks sit above what a card really '
             'sells for, so red is the common read and green is rare on purpose.</p></section>')
@@ -1671,28 +1711,58 @@ border:5px solid transparent;border-top-color:var(--fg)}
 @keyframes hunpulse{0%,100%{box-shadow:0 0 0 0 rgba(47,191,113,.35)}50%{box-shadow:0 0 0 6px rgba(47,191,113,0)}}
 .hunzone{transition:opacity .25s}
 .hunzone.home{margin-top:0}
-@media(max-width:640px){.boardwrap{--wizh:112px;--wizdip:calc(var(--wizh)*.16)}.wizfloat{left:16px;top:0}}
+@media(max-width:640px){.boardwrap{--wizh:112px;--wizdip:calc(var(--wizh)*.16)}.wizfloat{left:16px}}
 .hunzone.home::before{content:"";position:absolute;top:0;left:0;right:0;height:4px;border-radius:26px 26px 0 0;
 background:linear-gradient(90deg,#e05252 0 16.66%,#2f6ce0 16.66% 33.33%,#d4af6a 33.33% 50%,#2fbf71 50% 66.66%,#e6a23c 66.66% 83.33%,var(--fg) 83.33%)}
 .hunzone.home .hun-h{position:relative;padding-bottom:9px}
 .hunzone.home .hun-h::after{content:"";position:absolute;left:0;bottom:0;width:100%;height:3.5px;border-radius:2px;
 background:linear-gradient(90deg,#e05252 0 16.66%,#2f6ce0 16.66% 33.33%,#d4af6a 33.33% 50%,#2fbf71 50% 66.66%,#e6a23c 66.66% 83.33%,var(--fg) 83.33%)}
-.hun-beam{position:absolute;left:0;right:0;top:0;height:16px;z-index:7;pointer-events:none;opacity:0;
-background:linear-gradient(90deg,transparent 4%,rgba(47,191,113,.9) 30%,rgba(212,175,106,.95) 50%,rgba(47,108,224,.9) 70%,transparent 96%);
-filter:blur(2px);box-shadow:0 0 26px rgba(47,191,113,.55),0 0 60px rgba(212,175,106,.3);
-animation:beamDown .95s cubic-bezier(.3,.7,.3,1) forwards}
-@keyframes beamDown{0%{opacity:0;transform:translateY(-4px) scaleX(.6)}16%{opacity:1;transform:translateY(0) scaleX(1)}
-78%{opacity:.9;transform:translateY(var(--gap)) scaleX(1)}100%{opacity:0;transform:translateY(var(--gap)) scaleX(1.05)}}
+.hun-bolt{position:absolute;left:0;right:0;top:0;height:14px;z-index:8;pointer-events:none;opacity:0;
+background:linear-gradient(90deg,transparent 2%,#fff 18%,#d4af6a 50%,#2fbf71 82%,transparent 98%);
+clip-path:polygon(0 45%,8% 20%,16% 60%,26% 15%,36% 65%,48% 25%,58% 70%,70% 20%,82% 60%,92% 30%,100% 55%,100% 100%,0 100%);
+filter:blur(.4px);box-shadow:0 0 18px rgba(255,255,255,.9),0 0 44px rgba(47,191,113,.6);
+animation:boltFall 1.3s cubic-bezier(.4,0,.2,1) forwards}
+@keyframes boltFall{0%{opacity:0;transform:translateY(-6px) scaleX(.4)}10%{opacity:1;transform:translateY(0) scaleX(1)}
+45%{opacity:1}70%{opacity:.95;transform:translateY(var(--gap)) scaleX(1)}100%{opacity:0;transform:translateY(var(--gap)) scaleX(1.08)}}
+.hun-flash{position:absolute;inset:0;z-index:8;pointer-events:none;opacity:0;
+background:radial-gradient(120% 80% at 50% 0%,rgba(255,255,255,.5),rgba(47,191,113,.12) 45%,transparent 75%);
+animation:flashPop 1.1s ease-out forwards}
+@keyframes flashPop{0%{opacity:0}12%{opacity:.85}100%{opacity:0}}
 .hunzone.hunting{animation:panelBloom 1.7s ease-in-out infinite}
 @keyframes panelBloom{0%,100%{box-shadow:var(--shadow-hi)}50%{box-shadow:var(--shadow-hi),0 0 0 1px rgba(47,191,113,.3),0 0 44px rgba(47,191,113,.16)}}
 .hunzone.hunting::before{animation:stripeSweep 1.5s ease-in-out infinite}
 @keyframes stripeSweep{0%,100%{filter:brightness(1) saturate(1)}50%{filter:brightness(1.7) saturate(1.35)}}
-@media(prefers-reduced-motion:reduce){.hun-beam,.hunzone.hunting,.hunzone.hunting::before{animation:none}}
+@media(prefers-reduced-motion:reduce){.hun-bolt,.hun-flash,.hunzone.hunting,.hunzone.hunting::before{animation:none}}
+.hunfeed{position:relative;margin:0 0 22px;padding:16px clamp(14px,2vw,22px) 14px;border:1px solid var(--line);border-radius:16px;
+background:linear-gradient(180deg,color-mix(in srgb,var(--fg) 3%,var(--surface)),var(--surface));box-shadow:var(--shadow)}
+.hf-top{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:0 0 11px}
+.hf-live{display:inline-flex;align-items:center;gap:9px}
+.hf-live i{width:9px;height:9px;border-radius:50%;background:var(--muted);flex:none}
+.hf-live.ok i{background:#2fbf71;animation:hunpulse 2.2s ease-in-out infinite}
+.hf-live b{font:800 13px/1 "Avenir Next","Helvetica Neue",Arial,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:var(--fg)}
+.hf-sub{font-size:12.5px;color:var(--muted)}
+.hf-count{margin-left:auto;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--fg2);font-variant-numeric:tabular-nums}
+.hf-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px;min-height:190px;max-height:190px;overflow:hidden}
+.hf-row{display:grid;grid-template-columns:86px 1fr auto auto;align-items:center;gap:12px;padding:7px 11px;border-radius:10px;
+background:var(--surface);border:1px solid transparent;animation:hfin .45s ease both}
+.hf-row.a-take{border-color:color-mix(in srgb,#2fbf71 38%,transparent);background:color-mix(in srgb,#2fbf71 8%,var(--surface))}
+.hf-row.a-pass{opacity:.74}
+.hf-act{font:800 10.5px/1 "Helvetica Neue",Arial,sans-serif;letter-spacing:.08em;text-transform:uppercase;padding:5px 0;text-align:center;border-radius:999px}
+.a-take .hf-act{color:#1c8a4d;background:rgba(47,191,113,.16)}
+.a-pass .hf-act{color:var(--fg2);background:color-mix(in srgb,var(--fg2) 13%,transparent)}
+.a-idle .hf-act{color:#a4701d;background:rgba(230,162,60,.18)}
+.hf-name{font-size:13.5px;font-weight:650;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hf-read{font-size:11.5px;color:var(--muted);white-space:nowrap}
+.hf-price{font-size:14px;font-weight:800;color:var(--fg);font-variant-numeric:tabular-nums;white-space:nowrap}
+.a-idle{grid-template-columns:86px 1fr}
+.a-idle .hf-name{font-weight:500;color:var(--fg2);white-space:normal}
+@keyframes hfin{from{opacity:0}to{opacity:1}}
+@media(max-width:640px){.hf-row{grid-template-columns:72px 1fr auto}.hf-read{display:none}.hf-list{min-height:168px;max-height:168px}}
+@media(prefers-reduced-motion:reduce){.hf-row{animation:none}}
 .hun.landed{animation:hunland .9s cubic-bezier(.22,.9,.3,1.08) both;z-index:2}
 .hun.landed::after{content:"";position:absolute;inset:0;border-radius:16px;pointer-events:none;
 box-shadow:0 0 0 2px rgba(47,191,113,.6),0 10px 34px rgba(47,191,113,.3);animation:hunfade 1.7s ease both}
-@keyframes hunland{0%{opacity:0;transform:translate(30px,-34px) rotate(8deg) scale(.78)}
-60%{opacity:1;transform:translate(0,4px) rotate(-1.5deg) scale(1.04)}100%{opacity:1;transform:none}}
+@keyframes hunland{0%{opacity:0;transform:scale(.96)}60%{opacity:1;transform:scale(1.01)}100%{opacity:1;transform:none}}
 @keyframes hunfade{0%{opacity:0}25%{opacity:1}100%{opacity:0}}
 .hun.landed .laser{animation:laserpop 1.2s ease both}
 @keyframes laserpop{0%,55%{filter:brightness(2.4);transform:scaleY(2.2)}100%{filter:none;transform:none}}
@@ -1708,7 +1778,7 @@ box-shadow:0 0 0 2px rgba(47,191,113,.6),0 10px 34px rgba(47,191,113,.3);animati
 .hungrid>.hun-item:nth-child(10){animation-delay:360ms}
 .hungrid>.hun-item:nth-child(11){animation-delay:400ms}
 .hungrid>.hun-item:nth-child(12){animation-delay:440ms}
-@keyframes hunin{from{opacity:0;transform:translateY(12px)}}
+@keyframes hunin{from{opacity:0}}
 @media(prefers-reduced-motion:reduce){.hungrid>.hun-item,.hun-live.ok i{animation:none}.hunzone{transition:none}.hun.landed{animation:none}.hun.landed::after,.hun.landed .laser{animation:none}}
 .hun-all{margin-left:auto;font-size:14px;font-weight:600}
 .hun-note{color:var(--muted);margin:24px 2px 0;line-height:1.5;max-width:88ch}
@@ -1723,14 +1793,14 @@ transition:transform .35s cubic-bezier(.2,1.8,.4,1);transition-delay:calc(var(--
 .hungrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(172px,1fr));gap:30px 20px}
 a.hun.card{position:relative;display:flex;flex-direction:column;align-items:center;gap:10px;text-decoration:none;color:inherit;border:0;border-radius:0;box-shadow:none;background:none}
 a.hun.card:hover,a.hun.card:focus-visible{transform:none;box-shadow:none}
-.card-face{position:relative;width:100%;aspect-ratio:421/614;border-radius:4.5%/3.2%;overflow:hidden;background:var(--soft);
-border:2px solid var(--line);box-shadow:0 12px 26px rgba(30,40,30,.18);transition:transform .18s var(--ease),box-shadow .18s var(--ease),border-color .16s}
-a.hun.card.sig-good .card-face{border-color:#2fbf71}
-a.hun.card.sig-avg .card-face{border-color:#e6a23c}
-a.hun.card.sig-bad .card-face{border-color:#e05252}
-a.hun.card:hover .card-face{transform:translateY(-6px) scale(1.02);box-shadow:0 24px 46px rgba(30,40,30,.28)}
-.card-face img.hun-img,.card-face span.hun-img{width:100%;height:100%;object-fit:contain;display:block;border:0;border-radius:0;background:var(--soft)}
-.card-face span.card.hun-img,.card-face img.card.hun-img{object-fit:contain;padding:0;box-sizing:border-box;background:var(--soft)}
+.card-face{position:relative;width:100%;aspect-ratio:421/614;border-radius:4.5%/3.2%;overflow:hidden;background:var(--surface);
+border:1px solid var(--line);box-shadow:0 6px 16px rgba(30,40,30,.10);transition:transform .18s var(--ease),box-shadow .18s var(--ease),border-color .16s}
+a.hun.card.sig-good .card-face{border-color:color-mix(in srgb,#2fbf71 70%,var(--line))}
+a.hun.card.sig-avg .card-face{border-color:color-mix(in srgb,#e6a23c 70%,var(--line))}
+a.hun.card.sig-bad .card-face{border-color:color-mix(in srgb,#e05252 65%,var(--line))}
+a.hun.card:hover .card-face{transform:translateY(-4px) scale(1.01);box-shadow:0 16px 32px rgba(30,40,30,.16)}
+.card-face img.hun-img,.card-face span.hun-img{width:100%;height:100%;object-fit:contain;display:block;border:0;border-radius:0;background:var(--surface)}
+.card-face span.card.hun-img,.card-face img.card.hun-img{object-fit:contain;padding:0;box-sizing:border-box;background:var(--surface)}
 .card-seal{position:absolute;top:6px;right:6px;z-index:5;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;
 font:900 11px/1 "Helvetica Neue",Arial,sans-serif;color:#fff;box-shadow:0 2px 5px rgba(0,0,0,.3)}
 .card-seal.s-good{background:#2fbf71}.card-seal.s-avg{background:#e6a23c}.card-seal.s-bad{background:#e05252}.card-seal.s-none{background:var(--muted)}
@@ -1767,7 +1837,7 @@ display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hi
 font-size:10.5px;line-height:1.45;color:#c2c8b1;background:rgba(0,0,0,.18)}
 .card-pi{display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap}
 .card-price{background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:4px 16px;
-font-size:18px;font-weight:800;color:var(--fg);font-variant-numeric:tabular-nums;white-space:nowrap;box-shadow:var(--shadow)}
+font-family:"Avenir Next","Helvetica Neue",Arial,sans-serif;font-size:18px;font-weight:800;letter-spacing:-.01em;color:var(--fg);font-variant-numeric:tabular-nums;white-space:nowrap;box-shadow:0 2px 6px rgba(30,40,30,.08)}
 .card-grade{font:800 10.5px/1 "Helvetica Neue",Arial,sans-serif;letter-spacing:.03em;padding:4px 9px;border-radius:999px;white-space:nowrap}
 .card-grade.g-graded{color:#5b48c8;background:rgba(138,126,240,.16);border:1px solid rgba(138,126,240,.55)}
 .card-grade.g-raw{color:var(--fg2);background:var(--surface);border:1px solid var(--line)}
@@ -1857,32 +1927,57 @@ if(running)seg.push('+'+landed+' landed this pass','new asks appear the moment t
 else{if(landed)seg.push('+'+landed+' landed since load');if(age!=null)seg.push('passed '+ago(age));if(last&&last.new)seg.push('+'+last.new+' new')}
 m.textContent=seg.length?seg.join(' \u00b7 '):(running?'working':'run a scan anytime')}
 if(lv)lv.className='hun-live '+(running?'ok':(age==null?'off':(ok?'ok':(age<86400?'slow':'off'))))}
-function pulse(){var w=document.querySelector('.boardwrap');if(!w)return;var b=document.createElement('span');b.className='hun-beam';
-w.appendChild(b);setTimeout(function(){if(b.parentNode)b.parentNode.removeChild(b)},1000)}
+function fmtPrice(p,c){if(p==null||p==='')return'\u2014';var n=parseFloat(p);if(isNaN(n))return'\u2014';
+var sym={USD:'$',TWD:'NT$',JPY:'\u00a5',EUR:'\u20ac',GBP:'\u00a3'}[c]||(c?c+' ':'');return sym+(Math.round(n*100)/100).toLocaleString()}
+function renderFeed(s){var list=document.getElementById('hf-list');if(!list)return;var act=(s&&s.activity)||[];
+var state=document.getElementById('hf-state'),sub=document.getElementById('hf-sub'),cnt=document.getElementById('hf-count'),live=document.getElementById('hf-live');
+var scan=!!(s&&s.scanning);
+if(state)state.textContent=scan?'Hunting live':'The Hunt';
+if(sub)sub.textContent=scan?(s.progress?'judging batch '+s.progress:'taking the deals, passing the rest'):'taking the deals, passing the rest';
+if(live)live.className='hf-live'+(scan?' ok':'');
+if(cnt)cnt.textContent=act.length?act.length+' recent calls':'';
+if(!act.length)return;
+list.textContent='';
+act.slice(0,6).forEach(function(a){var li=document.createElement('li');li.className='hf-row a-'+(a.action==='pass'?'pass':'take');
+var ac=document.createElement('span');ac.className='hf-act';ac.textContent=a.action==='pass'?'Passing':'Taking';
+var nm=document.createElement('span');nm.className='hf-name';nm.textContent=a.title||'Untitled ask';
+var rd=document.createElement('span');rd.className='hf-read';rd.textContent=a.read||'';
+var pr=document.createElement('span');pr.className='hf-price';pr.textContent=fmtPrice(a.price,a.currency);
+li.appendChild(ac);li.appendChild(nm);li.appendChild(rd);li.appendChild(pr);list.appendChild(li)})}
+function pulse(){var w=document.querySelector('.boardwrap');if(!w)return;
+var bolt=document.createElement('span');bolt.className='hun-bolt';w.appendChild(bolt);
+var z=document.querySelector('.hunzone'),flash=null;if(z){flash=document.createElement('span');flash.className='hun-flash';z.appendChild(flash)}
+setTimeout(function(){if(bolt.parentNode)bolt.parentNode.removeChild(bolt);if(flash&&flash.parentNode)flash.parentNode.removeChild(flash)},1500)}
+function scrollToBoard(){var w=document.querySelector('.boardwrap');if(!w)return;var hdr=document.querySelector('header.top');
+var off=(hdr?hdr.offsetHeight:0)+10;var y=w.getBoundingClientRect().top+window.pageYOffset-off;
+var rm=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)').matches;
+window.scrollTo({top:Math.max(0,y),behavior:rm?'auto':'smooth'})}
 function panel(){var z=document.querySelector('.hunzone');if(z)z.classList.toggle('hunting',running)}
 function sync(){var btn=document.querySelector('.hun-scan');
 if(btn){btn.classList.toggle('busy',running);var lab=running?'Hunting\u2026':'Run the Hunt';btn.querySelectorAll('.wizlab,.wiztip').forEach(function(s){s.textContent=lab})}
-if(running&&!wasRunning){panel();pulse()}else if(!running&&wasRunning){panel()}wasRunning=running;paint()}
+if(running&&!wasRunning){panel()}else if(!running&&wasRunning){panel()}wasRunning=running;paint();renderFeed(last)}
 function swap(){var had={};document.querySelectorAll('.hun[data-key]').forEach(function(n){had[n.getAttribute('data-key')]=1});
+var sy=window.pageYOffset;
 return fetch(location.pathname+location.search).then(function(r){return r.text()}).then(function(html){
 var d=new DOMParser().parseFromString(html,'text/html');
-['.boardwrap'].forEach(function(sl){var n=d.querySelector(sl),o=document.querySelector(sl);if(n&&o)o.replaceWith(n)});
+var n=d.querySelector('.hunzone'),o=document.querySelector('.hunzone');if(n&&o)o.replaceWith(n);
+window.scrollTo(0,sy);
 var land=0;document.querySelectorAll('.hun[data-key]').forEach(function(t){if(!had[t.getAttribute('data-key')]){land++;t.classList.add('landed');
 setTimeout(function(){t.classList.remove('landed')},1700)}});
-if(land)landed+=land;panel();sync()})}
-function livePoll(){var seen=null,t0=Date.now();var iv=setInterval(function(){st().then(function(s){if(!s)return;last=s;
+if(land)landed+=land;panel();renderFeed(last);sync()})}
+function livePoll(){var seen=null,t0=Date.now();var iv=setInterval(function(){st().then(function(s){if(!s)return;last=s;renderFeed(s);
 if(s.fresh_at&&s.fresh_at!==seen){seen=s.fresh_at;swap()}else paint();
-if((!s.scanning&&(seen||Date.now()-t0>45000))||Date.now()-t0>240000){clearInterval(iv);running=false;swap()}})},6000)}
-async function run(auto){if(running)return;running=true;sync();try{var before=await st();last=before;paint();
+if((!s.scanning&&(seen||Date.now()-t0>45000))||Date.now()-t0>240000){clearInterval(iv);running=false;swap()}})},2500)}
+async function run(auto){if(running)return;running=true;if(auto)pulse();sync();try{var before=await st();last=before;paint();
 if(auto&&before&&before.age_s!==null&&before.age_s<480){await swap();running=false;sync();return}
 if(!auto&&before&&before.scanning){livePoll();return}
 var b=document.querySelector('.hun-scan')||{dataset:{}};var fd=new FormData();fd.append('back',b.dataset.back||'/');fd.append('t',b.dataset.t||'');
 if(!auto)fd.append('quick','1');
 try{await fetch('/engine/tick',{method:'POST',body:fd})}catch(e){}
 livePoll()}catch(e){running=false;sync()}}
-document.addEventListener('click',function(ev){var b=ev.target.closest&&ev.target.closest('.hun-scan');if(b)run(false)});
-st().then(function(s){last=s;if(s&&s.scanning){running=true}sync();if(running)livePoll()});
-setInterval(function(){if(running)return;st().then(function(s){if(!s)return;var fresh=last&&s.fresh_at&&s.fresh_at!==last.fresh_at;last=s;
+document.addEventListener('click',function(ev){var b=ev.target.closest&&ev.target.closest('.hun-scan');if(b){scrollToBoard();pulse();run(false)}});
+st().then(function(s){last=s;if(s&&s.scanning){running=true}renderFeed(s);sync();if(running)livePoll()});
+setInterval(function(){if(running)return;st().then(function(s){if(!s)return;var fresh=last&&s.fresh_at&&s.fresh_at!==last.fresh_at;last=s;renderFeed(s);
 if(s.scanning){running=true;sync();livePoll()}else if(fresh)swap();else paint()})},15000);
 (function t10(){setTimeout(function(){if(document.visibilityState==='visible')run(true);t10()},600000)})();
 })();

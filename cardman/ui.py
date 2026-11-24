@@ -2111,6 +2111,29 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                         if im:
                             out["interval_min"] = float(im[0])
                         qp = db.execute("SELECT v FROM engine_meta WHERE k='quick_pass'").fetchone()
+                        act = []
+                        for title, price, cur, status, kinds, upd in db.execute(
+                                "SELECT l.title, l.price, l.currency, o.status, o.kinds, o.updated_at "
+                                "FROM opportunity o JOIN listing l ON l.key=o.key WHERE l.ended_at IS NULL "
+                                "AND COALESCE(json_extract(o.payload_json,'$.game'),'ygo')=? "
+                                "ORDER BY o.updated_at DESC LIMIT 10", (self.game,)):
+                            kj = json.loads(kinds or "[]")
+                            passed = status == "REJECTED"
+                            if passed:
+                                read = ("identity unclear" if "MISIDENTIFIED" in kj else
+                                        "a lot, not one card" if ("LOT" in kj or "COLLECTION" in kj) else
+                                        "print not settled" if "RIGHT_PRINT_ONLY" in kj else "above what to pay")
+                            else:
+                                read = ("under what to pay" if "UNDERPRICED" in kj else
+                                        "under the PC comp" if "REFERENCE_GAP" in kj else "worth a look")
+                            age = None
+                            try:
+                                age = max(0, int((datetime.now(timezone.utc) - datetime.fromisoformat(upd)).total_seconds()))
+                            except (ValueError, TypeError):
+                                pass
+                            act.append({"title": (title or "").strip()[:80], "price": price, "currency": cur,
+                                        "action": "pass" if passed else "take", "read": read, "age_s": age})
+                        out["activity"] = act
                     except Exception:
                         pass
                     db.close()
