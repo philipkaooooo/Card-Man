@@ -264,8 +264,9 @@ def _engine_line(st, now: datetime, base: str, token: str = "") -> str:
             sec = None
     cls = "ok" if sec is not None and sec < 1200 else ("slow" if sec is not None and sec < 86400 else "off")
     scan = ('<button class="hun-scan wizfloat" id="hun-scan" type="button" data-back="' + e(base) + '" data-t="' + e(token) + '" '
-            'title="run a collector pass now"><img class="hun-wiz" src="/static/hunt.gif?v=2" alt="the hunt wizard, investigating" draggable="false">'
-            '<span class="wizlab">Run the hunt</span></button>')
+            'title="Run the Hunt" aria-label="Run the Hunt"><img class="hun-wiz" src="/static/hunt.gif?v=2" alt="the hunt wizard, investigating" draggable="false">'
+            '<span class="wiztip" aria-hidden="true">Run the Hunt</span>'
+            '<span class="wizlab">Run the Hunt</span></button>')
     if row is None:
         l1, l2 = "FEED IDLE", "no pass on record yet; the loop posts new asks here as it finds them"
     else:
@@ -370,6 +371,8 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
                 pass
         code, sub, chip, ai, mb = "none", "", "", None, None
         why, worth = "", None
+        glabel, gkind = _grade_label(d, title or "")
+        name = ""
         if M is not None and payload:
             try:
                 vv = verdict(d, status or "OPEN", M)
@@ -377,9 +380,8 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
                 if code == "bad" and not (vv.top or {}).get("basis"):
                     code = "none"      # a red laser has to be a measured red, not an absence of evidence
                 tp = vv.top or {}
-                bits = [" \u00b7 ".join((tp.get("label") or "").split(" \u00b7 ")[:2])]
-                bits.append("Lot" if "LOT" in (d.get("kinds") or []) else (d.get("grade") or "").upper())
-                sub = " \u00b7 ".join(b for b in bits if b)
+                name = " \u00b7 ".join((tp.get("label") or "").split(" \u00b7 ")[:2])
+                sub = " \u00b7 ".join(b for b in (name, glabel) if b)
                 ai, mb = d.get("all_in_home"), tp.get("max_buy")
                 why = vv.reason
                 worth = M(mb) if mb else None
@@ -388,16 +390,18 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
                     chip = '<span class="hun-deal d-{}" title="worth up to {:.0f}% over the ask">+{:.0f}%</span>'.format(code, pct, pct)
             except Exception:
                 code, sub, chip = "none", "", ""
+        if not name:
+            name = (title or "").strip()
         pid = d.get("printing_id") or ""
         spk = spark_map.get(pid) or spark_map.get(pid.split("@")[0]) or ""
-        pcrow = ""
+        pcval = ""
         rate, vol = None, ""
         gkey = _pc_grade(d.get("grade"))
         pcvals = pcm.get(pid) or {}
         if gkey in pcvals and M is not None:
             try:
                 p_usd, c_usd, vol = pcvals[gkey]
-                bits = ["PC " + ("" if gkey == "Ungraded" else gkey + " ") + charts.fmt(p_usd, "USD")]
+                bits = [("" if gkey == "Ungraded" else gkey + " ") + charts.fmt(p_usd, "USD")]
                 if c_usd:
                     bits.append("{:+,.2f}".format(c_usd))
                 ask = d.get("all_in_home")
@@ -406,10 +410,9 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
                     dv = (float(ask) - float(rate)) / float(rate) * 100
                     if abs(dv) >= 3:
                         bits.append('<b class="{}">ask {:+.0f}% vs PC</b>'.format("pclo" if dv < 0 else "pchi", dv))
-                pcrow = ('<span class="hun-pc" title="PriceCharting sold-market comp, same grade">' + " \u00b7 ".join(bits) +
-                         (" \u00b7 " + e(vol.replace(" per ", "/")) if vol else "") + "</span>")
+                pcval = " \u00b7 ".join(bits) + (" \u00b7 " + e(vol.replace(" per ", "/")) if vol else "")
             except Exception:
-                pcrow = ""
+                pcval = ""
         # The hunt passes on a measured discount, not a flag: an ask at or under the sold ceiling,
         # or under the PriceCharting comp, is a deal even when the engine never tagged it UNDERPRICED;
         # an ask within a hair of either is fair market and worth a look. Identity must be settled first.
@@ -467,31 +470,58 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
                 "In the pile - remove" if piled else "Set aside in the card pile",
                 "Remove from the card pile" if piled else "Set aside in the card pile", "✓" if piled else "＋")
         read = _READ.get(code, _READ["none"])
-        info = ('<span class="bi-read r-{}">{}</span>'.format(e(code), e(read))
-                + ('<span class="bi-sub">' + e(sub) + "</span>" if sub else "")
-                + ('<span class="bi-worth">Worth up to ' + e(worth) + "</span>" if worth else "")
-                + pcrow
-                + ('<span class="hun-spark">' + spk + "</span>" if spk else "")
-                + ('<span class="bi-why">' + e(why) + "</span>" if why else ""))
-        entries.append((rank, seen or "",
+        rows = ""
+        if worth:
+            rows += '<span class="bi-row"><small>Worth up to</small><b>{}</b></span>'.format(e(worth))
+        if pcval:
+            rows += ('<span class="bi-row" title="PriceCharting sold-market comp, same grade">'
+                     '<small>PC market</small><span class="bi-pcval">{}</span></span>').format(pcval)
+        if spk:
+            rows += '<span class="bi-row bi-sparkrow"><small>7-day sales</small><span class="hun-spark">{}</span></span>'.format(spk)
+        info = ('<span class="bi-head r-{}"><b class="bi-read">{}</b><span class="bi-gtag g-{}">{}</span></span>'.format(
+                    e(code), e(read), e(gkind), e(glabel))
+                + ('<span class="bi-name">{}</span>'.format(e(name)) if name else "")
+                + ('<span class="bi-rows">{}</span>'.format(rows) if rows else "")
+                + ('<span class="bi-why">{}</span>'.format(e(why)) if why else ""))
+        try:
+            aip = d.get("all_in_home")
+            base_p = aip if aip not in (None, "") else price
+            pr = round(float(base_p), 2) if base_p not in (None, "") else 0.0
+        except (TypeError, ValueError):
+            pr = 0.0
+        dkey = (pid or re.sub(r"[^a-z0-9]+", "", (title or "").lower()), glabel, pr)
+        entries.append((rank, seen or "", dkey,
                         '<div class="hun-item">'
                         '<a class="hun card sig-{}" href="{}" data-key="{}" data-signal="{}">'
                         '<span class="card-face">{}'
                         '<span class="card-seal s-{}" title="{}" aria-label="{}" data-tip="{}">{}</span>'
                         '<span class="card-info">{}</span>'
                         '<span class="laser l-{}"></span></span>'
-                        '<span class="card-pi"><span class="card-price">{}</span>{}</span>'
+                        '<span class="card-pi"><span class="card-price">{}</span><span class="card-grade g-{}">{}</span>{}</span>'
                         '<span class="card-meta">{}<span class="card-when">{}</span></span>'
                         '</a>{}</div>'.format(
                             e(code), e(url), e(key), e(code), art,
                             e(code), e(read), e(read), e(read), e(_SEAL.get(code, "?")),
                             info, e(code),
-                            e(price_txt), chip, _mkt_icon(source),
+                            e(price_txt), e(gkind), e(glabel), chip + "@@REP@@", _mkt_icon(source),
                             ((e(when)) if when else "") + (" \u00b7 {} pics".format(own) if own > 1 else ""),
                             pilef)))
-    entries.sort(key=lambda x: x[1], reverse=True)
-    entries.sort(key=lambda x: x[0])
-    tiles = [h for _r, _s, h in entries[:30]]
+    groups = {}
+    for rank, seen, dkey, html in entries:
+        g = groups.get(dkey)
+        if g is None:
+            groups[dkey] = [rank, seen, html, 1]
+        else:
+            g[3] += 1
+            if rank < g[0] or (rank == g[0] and seen > g[1]):
+                g[0], g[1], g[2] = rank, seen, html
+    reps = []
+    for rank, seen, html, n in groups.values():
+        rep = ('<span class="card-rep" title="{} identical asks at this price">\u00d7{}</span>'.format(n, n)) if n > 1 else ""
+        reps.append((rank, seen, html.replace("@@REP@@", rep)))
+    reps.sort(key=lambda x: x[1], reverse=True)
+    reps.sort(key=lambda x: x[0])
+    tiles = [h for _r, _s, h in reps[:30]]
     grid = (f'<div class="hungrid">{"".join(tiles)}</div>' if tiles else
             '<p class="empty">' + ("Nothing matches this filter yet — widen it above, or the collector has not reached this signal today."
                                    if v != "all" or t != "all" else
@@ -517,6 +547,35 @@ def _pc_grade(grade) -> str:
     """Which PriceCharting column a listing's grade maps onto; ungraded is the default shelf."""
     m = re.search(r"(\d+(?:\.\d+)?)", str(grade or "").lower())
     return _PC_GRADE.get(m.group(1), "Ungraded") if m else "Ungraded"
+
+
+_GRADER_RE = re.compile(
+    r"\b(PSA|BGS|BECKETT|CGC|SGC|ARS|HGA|GMA|ISA|KSA|MNT|MNTP|PCA|PGS|TAG|CCG|CSG|IGS|PCG|QGS|TSG|UGS)\b"
+    r"\s*(?:GEM\s*MT\s*|MINT\s*|NM\s*|MT\s*|GRADE\s*)?(\d+(?:\.\d+)?)\b", re.I)
+_COND_ABBR = {"near mint": "NM", "near mint-mint": "NM-MT", "nm-mt": "NM-MT", "mint": "MT",
+              "lightly played": "LP", "moderately played": "MP", "heavily played": "HP", "damaged": "DMG"}
+
+
+def _grade_label(d: dict, title: str) -> tuple[str, str]:
+    """The grade a collector reads at a glance: 'PSA 10', 'PSA 1', 'BGS 9.5', 'NM' or 'Raw'.
+
+    A slab is never shown as raw: the payload's grader wins, and a grader written in the
+    title is the fallback when the engine did not record one."""
+    kinds = d.get("kinds") or []
+    if "LOT" in kinds or "COLLECTION" in kinds:
+        return "Lot", "lot"
+    gc, gr = d.get("grade_company"), d.get("grade")
+    if not gc:
+        m = _GRADER_RE.search(title or "")
+        if m:
+            gc, gr = m.group(1), m.group(2)
+    if gc:
+        gc = str(gc).upper().replace("BECKETT", "BGS")
+        return (f"{gc} {gr}" if gr not in (None, "") else gc), "graded"
+    cond = str(d.get("condition") or "").strip().lower()
+    if cond in _COND_ABBR:
+        return _COND_ABBR[cond], "raw"
+    return "Raw", "raw"
 
 
 def _pulse(st, now: datetime, game: str, M=None) -> str:
@@ -1597,6 +1656,13 @@ filter:drop-shadow(0 10px 18px rgba(0,0,0,.30));transition:transform .18s var(--
 .wizfloat:hover .hun-wiz{transform:translateY(-4px) rotate(-1.5deg)}
 .wizfloat:focus-visible{outline:2px solid var(--accent);outline-offset:5px;border-radius:14px}
 .wizfloat .wizlab{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.wizfloat .wiztip{position:absolute;left:50%;bottom:calc(100% - 6px);transform:translate(-50%,6px);z-index:9;
+white-space:nowrap;padding:6px 13px;border-radius:999px;font:800 12px/1 "Avenir Next","Helvetica Neue",Arial,sans-serif;
+letter-spacing:.06em;text-transform:uppercase;color:#f4eedf;background:var(--fg);border:1px solid color-mix(in srgb,var(--accent) 70%,transparent);
+box-shadow:0 8px 20px rgba(0,0,0,.28);opacity:0;pointer-events:none;transition:opacity .16s var(--ease),transform .16s var(--ease)}
+.wizfloat .wiztip::after{content:"";position:absolute;left:50%;top:100%;transform:translateX(-50%);
+border:5px solid transparent;border-top-color:var(--fg)}
+.wizfloat:hover .wiztip,.wizfloat:focus-visible .wiztip{opacity:1;transform:translate(-50%,0)}
 .hun-head .hun-live{align-self:flex-end;margin-bottom:7px}
 .hun-live{display:inline-flex;align-items:center;gap:9px;font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums;padding:4px 0}
 .hun-live i{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
@@ -1635,7 +1701,8 @@ box-shadow:0 0 0 2px rgba(47,191,113,.6),0 10px 34px rgba(47,191,113,.3);animati
 @media(prefers-reduced-motion:reduce){.hungrid>.hun-item,.hun-live.ok i{animation:none}.hunzone{transition:none}.hun.landed{animation:none}.hun.landed::after,.hun.landed .laser{animation:none}}
 .hun-all{margin-left:auto;font-size:14px;font-weight:600}
 .hun-note{color:var(--muted);margin:24px 2px 0;line-height:1.5;max-width:88ch}
-section.hero.hunt{padding:10px 4px 0;max-width:none;text-align:center}
+section.hero.hunt{padding:clamp(30px,7vh,84px) 4px clamp(20px,4vh,40px);max-width:none;text-align:center;
+display:flex;flex-direction:column;justify-content:center;min-height:clamp(240px,38vh,400px)}
 .hero.hunt h1.huntitle{font-family:"Avenir Next Condensed","Avenir Next","Arial Narrow","Helvetica Neue",system-ui,sans-serif;
 font-style:normal;font-weight:900;font-size:clamp(56px,10.5vw,118px);letter-spacing:-.015em;text-transform:uppercase;margin:0 auto;cursor:default;line-height:.92}
 .huntitle span{position:relative;display:inline-block;white-space:pre;color:var(--fg);
@@ -1661,22 +1728,40 @@ font:900 11px/1 "Helvetica Neue",Arial,sans-serif;color:#fff;box-shadow:0 2px 5p
 .l-avg{background:linear-gradient(90deg,#e6a23c,#f0c078)}
 .l-bad{background:linear-gradient(90deg,#e05252,#f08080)}
 .l-none{background:var(--line)}
-.card-info{position:absolute;inset:0;z-index:5;display:flex;flex-direction:column;gap:5px;padding:12px 12px 14px;overflow:hidden;
-background:linear-gradient(180deg,rgba(16,19,23,.94),rgba(16,19,23,.9));color:#f4eedf;border-radius:9px;
+.card-info{position:absolute;inset:0;z-index:5;display:flex;flex-direction:column;gap:0;padding:0;overflow:hidden;
+background:linear-gradient(180deg,rgba(15,18,22,.97),rgba(15,18,22,.94));color:#f4eedf;border-radius:9px;
 opacity:0;transform:translateY(8px);transition:opacity .18s var(--ease),transform .18s var(--ease);pointer-events:none}
 a.hun.card:hover .card-info,a.hun.card:focus-visible .card-info{opacity:1;transform:none}
-.bi-read{font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:.04em;line-height:1.2}
-.bi-read.r-good{color:#5ad79a}.bi-read.r-avg{color:#f0c078}.bi-read.r-bad{color:#f08080}.bi-read.r-none{color:#c2c8ce}
-.bi-sub{font-size:11.5px;color:#d2c8b1;line-height:1.3}
-.bi-worth{font-size:12.5px;font-weight:750;color:#fff}
-.bi-why{font-size:11px;line-height:1.4;color:#c2c8b1}
-.card-info .hun-pc{color:#d2c8b1;white-space:normal;margin-top:2px}
-.card-info .hun-pc b.pclo{color:#5ad79a}.card-info .hun-pc b.pchi{color:#f0c078}
-.card-info .hun-spark{margin-top:auto}
-.card-info .hun-spark .spark{width:100%;height:26px}
+.bi-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;
+border-bottom:1px solid rgba(244,238,223,.14);background:rgba(255,255,255,.03)}
+.bi-read{font-weight:800;font-size:12px;text-transform:uppercase;letter-spacing:.05em;line-height:1.2}
+.bi-head.r-good .bi-read{color:#5ad79a}.bi-head.r-avg .bi-read{color:#f0c078}.bi-head.r-bad .bi-read{color:#f08080}.bi-head.r-none .bi-read{color:#c2c8ce}
+.bi-gtag{flex:none;font:800 10px/1 "Helvetica Neue",Arial,sans-serif;letter-spacing:.03em;padding:3px 8px;border-radius:999px;white-space:nowrap}
+.bi-gtag.g-graded{color:#cdbcff;background:rgba(138,126,240,.22);border:1px solid rgba(138,126,240,.5)}
+.bi-gtag.g-raw{color:#d2c8b1;background:rgba(244,238,223,.1);border:1px solid rgba(244,238,223,.22)}
+.bi-gtag.g-lot{color:#f0c078;background:rgba(230,162,60,.2);border:1px solid rgba(230,162,60,.5)}
+.bi-name{padding:8px 12px 0;font-size:12px;font-weight:650;line-height:1.3;color:#f4eedf;
+display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.bi-rows{display:flex;flex-direction:column;padding:6px 12px 2px}
+.bi-row{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:5px 0;border-top:1px solid rgba(244,238,223,.1)}
+.bi-row:first-child{border-top:0}
+.bi-row small{flex:none;font-size:9.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#9aa0a6}
+.bi-row b{font-size:13px;font-weight:800;color:#fff;font-variant-numeric:tabular-nums;text-align:right}
+.bi-pcval{font-size:11.5px;font-weight:650;color:#d2c8b1;font-variant-numeric:tabular-nums;text-align:right;line-height:1.35}
+.bi-pcval b.pclo{color:#5ad79a}.bi-pcval b.pchi{color:#f0c078}
+.bi-sparkrow{flex-direction:column;align-items:stretch;gap:4px}
+.bi-sparkrow .hun-spark{display:block;line-height:0}
+.bi-sparkrow .hun-spark .spark{width:100%;height:26px}
+.bi-why{margin-top:auto;padding:8px 12px 10px;border-top:1px solid rgba(244,238,223,.14);
+font-size:10.5px;line-height:1.45;color:#c2c8b1;background:rgba(0,0,0,.18)}
 .card-pi{display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap}
 .card-price{background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:4px 16px;
 font-size:18px;font-weight:800;color:var(--fg);font-variant-numeric:tabular-nums;white-space:nowrap;box-shadow:var(--shadow)}
+.card-grade{font:800 10.5px/1 "Helvetica Neue",Arial,sans-serif;letter-spacing:.03em;padding:4px 9px;border-radius:999px;white-space:nowrap}
+.card-grade.g-graded{color:#5b48c8;background:rgba(138,126,240,.16);border:1px solid rgba(138,126,240,.55)}
+.card-grade.g-raw{color:var(--fg2);background:var(--surface);border:1px solid var(--line)}
+.card-grade.g-lot{color:#a4701d;background:rgba(230,162,60,.18);border:1px solid rgba(230,162,60,.55)}
+.card-rep{font:800 10.5px/1 "Helvetica Neue",Arial,sans-serif;color:#fff;background:var(--fg);padding:4px 8px;border-radius:999px;white-space:nowrap}
 .card-meta{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);white-space:nowrap;max-width:100%;overflow:hidden}
 .card-when{overflow:hidden;text-overflow:ellipsis}
 .hun-deal{display:inline-block;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:750}
@@ -1684,9 +1769,13 @@ font-size:18px;font-weight:800;color:var(--fg);font-variant-numeric:tabular-nums
 .hun-deal.d-avg{color:#a4701d;background:rgba(230,162,60,.18)}
 @media(hover:none){.card-face{aspect-ratio:auto;overflow:visible}
 .card-face img.hun-img,.card-face span.hun-img{height:auto;aspect-ratio:421/614}
-.card-info{position:static;opacity:1;transform:none;background:none;color:var(--fg2);padding:8px 2px 0;pointer-events:auto;border-radius:0}
-.card-info .bi-why,.card-info .hun-spark{display:none}.bi-read{font-size:11px}.bi-sub{color:var(--muted)}.bi-worth{color:var(--fg)}
-.card-info .hun-pc{color:var(--muted)}}
+.card-info{position:static;opacity:1;transform:none;background:none;color:var(--fg2);padding:6px 2px 0;pointer-events:auto;border-radius:0}
+.bi-head{padding:0;border-bottom:0;background:none}.bi-read{font-size:11px}
+.bi-head.r-good .bi-read{color:#1c8a4d}.bi-head.r-avg .bi-read{color:#a4701d}.bi-head.r-bad .bi-read{color:#c0392b}.bi-head.r-none .bi-read{color:var(--muted)}
+.bi-gtag.g-graded{color:#5b48c8}.bi-gtag.g-raw{color:var(--fg2)}.bi-gtag.g-lot{color:#a4701d}
+.bi-name{padding:2px 0 0;color:var(--fg);font-size:11px}
+.bi-rows{padding:2px 0}.bi-row{padding:2px 0;border-top:0}.bi-row small{color:var(--muted)}.bi-row b{color:var(--fg);font-size:12px}
+.bi-pcval{color:var(--muted)}.bi-sparkrow,.bi-why{display:none}}
 @media(max-width:460px){.hungrid{grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:18px 12px}}
 .mkt{display:inline-flex;align-items:center;justify-content:center;width:19px;height:19px;border-radius:50%;flex:none;
 font:700 11px/1 "Helvetica Neue",Arial,sans-serif;color:#fff}
@@ -1758,7 +1847,7 @@ else{if(landed)seg.push('+'+landed+' landed since load');if(age!=null)seg.push('
 m.textContent=seg.length?seg.join(' \u00b7 '):(running?'working':'run a scan anytime')}
 if(lv)lv.className='hun-live '+(running?'ok':(age==null?'off':(ok?'ok':(age<86400?'slow':'off'))))}
 function sync(){var btn=document.querySelector('.hun-scan');
-if(btn){btn.classList.toggle('busy',running);var s=btn.querySelector('span');if(s)s.textContent=running?'Hunting\u2026':'Run the hunt'}paint()}
+if(btn){btn.classList.toggle('busy',running);var lab=running?'Hunting\u2026':'Run the Hunt';btn.querySelectorAll('.wizlab,.wiztip').forEach(function(s){s.textContent=lab})}paint()}
 function swap(){var had={};document.querySelectorAll('.hun[data-key]').forEach(function(n){had[n.getAttribute('data-key')]=1});
 return fetch(location.pathname+location.search).then(function(r){return r.text()}).then(function(html){
 var d=new DOMParser().parseFromString(html,'text/html');

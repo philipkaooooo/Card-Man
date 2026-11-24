@@ -248,7 +248,7 @@ def test_home_hunt_counts_an_under_pc_ask_with_no_sales_as_a_deal(board):
     from tests.test_listing_verdict import D, sc
     pid = "p:EN_TCG:LOB-EN001:legend-of-blue-eyes-white-dragon:ultra-rare@89631139"
     _add_listing(db, "pcdeal", payload=D(kinds=["REFERENCE_GAP"], scenarios=[sc(basis="reference", pid=pid)],
-                                         printing_id=pid, all_in_home=300.0, priced_share=1.0))
+                                         printing_id=pid, all_in_home=280.0, priced_share=1.0))
     st = Store(db)
     with st.db:
         st.db.execute("CREATE TABLE pc_card (printing_id TEXT, grades TEXT, status TEXT)")
@@ -259,6 +259,33 @@ def test_home_hunt_counts_an_under_pc_ask_with_no_sales_as_a_deal(board):
     page = get("/")
     assert re.search(r'class="hun card sig-good" href="[^"]*" data-key="ebay_browse:EBAY_US:pcdeal"', page)
     assert "PriceCharting comp" in page
+
+
+def test_home_labels_the_grade_and_collapses_identical_asks(board):
+    get, post, ajax, db = board
+    from tests.test_listing_verdict import D, sc
+    pid = "p:EN_TCG:LOB-EN001:legend-of-blue-eyes-white-dragon:ultra-rare@89631139"
+    # two asks of the same graded card at the same total: one tile, counted twice
+    for n in ("dup1", "dup2"):
+        _add_listing(db, n, payload=D(kinds=[], scenarios=[sc(pid=pid)], printing_id=pid, all_in_home=400.0, priced_share=1.0,
+                                      grade_company="PSA", grade="10"))
+    # a low slab grade is still graded, never raw
+    _add_listing(db, "psa1", payload=D(kinds=[], scenarios=[sc(pid=pid)], printing_id=pid, all_in_home=410.0, priced_share=1.0,
+                                       grade_company="PSA", grade="1"))
+    page = get("/")
+    assert 'class="card-grade g-graded">PSA 10<' in page
+    assert 'class="card-grade g-graded">PSA 1<' in page
+    assert 'class="card-grade g-raw">Raw<' in page
+    assert re.search(r'class="card-rep"[^>]*>\u00d72<', page)
+    keys = re.findall(r'class="hun card sig-\w+" href="[^"]*" data-key="ebay_browse:EBAY_US:(dup\d)"', page)
+    assert len(keys) == 1, keys
+
+
+def test_wizard_offers_a_run_the_hunt_hover(board):
+    get, *_ = board
+    page = get("/")
+    assert 'class="wiztip" aria-hidden="true">Run the Hunt<' in page
+    assert 'title="Run the Hunt"' in page
 
 
 def test_board_tiles_are_image_led_cards_with_a_hover_peek(board):
