@@ -1647,9 +1647,9 @@ filter:drop-shadow(0 7px 16px rgba(0,0,0,.28));transition:transform .18s var(--e
 .hun-status b{font-size:11px;letter-spacing:.14em;color:var(--fg);text-transform:uppercase;font-weight:750}
 .hun-status small::before{content:"\00b7";margin-right:9px;color:var(--muted)}
 .hun-status small{font-size:12px;color:var(--muted);font-weight:400;letter-spacing:0;text-transform:none}
-.boardwrap{position:relative;margin-top:2px;padding-top:calc(var(--wizh) - var(--wizdip));
---wizh:clamp(120px,16vw,232px);--wizdip:calc(var(--wizh)*.16)}
-.wizfloat{position:absolute;top:0;left:clamp(12px,2.6vw,38px);z-index:6;display:block;padding:0;border:0;
+.boardwrap{position:relative;margin-top:0;padding-top:var(--gap);
+--wizh:clamp(120px,16vw,232px);--wizdip:calc(var(--wizh)*.5);--gap:calc(var(--wizh) - var(--wizdip))}
+.wizfloat{position:absolute;top:calc(-1*var(--wizdip));left:clamp(12px,2.6vw,38px);z-index:6;display:block;padding:0;border:0;
 background:none;cursor:pointer;line-height:0}
 .wizfloat .hun-wiz{width:calc(var(--wizh)*.668);height:var(--wizh);object-fit:contain;
 filter:drop-shadow(0 10px 18px rgba(0,0,0,.30));transition:transform .18s var(--ease)}
@@ -1671,12 +1671,23 @@ border:5px solid transparent;border-top-color:var(--fg)}
 @keyframes hunpulse{0%,100%{box-shadow:0 0 0 0 rgba(47,191,113,.35)}50%{box-shadow:0 0 0 6px rgba(47,191,113,0)}}
 .hunzone{transition:opacity .25s}
 .hunzone.home{margin-top:0}
-@media(max-width:640px){.boardwrap{--wizh:112px}.wizfloat{left:16px}}
+@media(max-width:640px){.boardwrap{--wizh:112px;--wizdip:calc(var(--wizh)*.16)}.wizfloat{left:16px;top:0}}
 .hunzone.home::before{content:"";position:absolute;top:0;left:0;right:0;height:4px;border-radius:26px 26px 0 0;
 background:linear-gradient(90deg,#e05252 0 16.66%,#2f6ce0 16.66% 33.33%,#d4af6a 33.33% 50%,#2fbf71 50% 66.66%,#e6a23c 66.66% 83.33%,var(--fg) 83.33%)}
 .hunzone.home .hun-h{position:relative;padding-bottom:9px}
 .hunzone.home .hun-h::after{content:"";position:absolute;left:0;bottom:0;width:100%;height:3.5px;border-radius:2px;
 background:linear-gradient(90deg,#e05252 0 16.66%,#2f6ce0 16.66% 33.33%,#d4af6a 33.33% 50%,#2fbf71 50% 66.66%,#e6a23c 66.66% 83.33%,var(--fg) 83.33%)}
+.hun-beam{position:absolute;left:0;right:0;top:0;height:16px;z-index:7;pointer-events:none;opacity:0;
+background:linear-gradient(90deg,transparent 4%,rgba(47,191,113,.9) 30%,rgba(212,175,106,.95) 50%,rgba(47,108,224,.9) 70%,transparent 96%);
+filter:blur(2px);box-shadow:0 0 26px rgba(47,191,113,.55),0 0 60px rgba(212,175,106,.3);
+animation:beamDown .95s cubic-bezier(.3,.7,.3,1) forwards}
+@keyframes beamDown{0%{opacity:0;transform:translateY(-4px) scaleX(.6)}16%{opacity:1;transform:translateY(0) scaleX(1)}
+78%{opacity:.9;transform:translateY(var(--gap)) scaleX(1)}100%{opacity:0;transform:translateY(var(--gap)) scaleX(1.05)}}
+.hunzone.hunting{animation:panelBloom 1.7s ease-in-out infinite}
+@keyframes panelBloom{0%,100%{box-shadow:var(--shadow-hi)}50%{box-shadow:var(--shadow-hi),0 0 0 1px rgba(47,191,113,.3),0 0 44px rgba(47,191,113,.16)}}
+.hunzone.hunting::before{animation:stripeSweep 1.5s ease-in-out infinite}
+@keyframes stripeSweep{0%,100%{filter:brightness(1) saturate(1)}50%{filter:brightness(1.7) saturate(1.35)}}
+@media(prefers-reduced-motion:reduce){.hun-beam,.hunzone.hunting,.hunzone.hunting::before{animation:none}}
 .hun.landed{animation:hunland .9s cubic-bezier(.22,.9,.3,1.08) both;z-index:2}
 .hun.landed::after{content:"";position:absolute;inset:0;border-radius:16px;pointer-events:none;
 box-shadow:0 0 0 2px rgba(47,191,113,.6),0 10px 34px rgba(47,191,113,.3);animation:hunfade 1.7s ease both}
@@ -1701,8 +1712,8 @@ box-shadow:0 0 0 2px rgba(47,191,113,.6),0 10px 34px rgba(47,191,113,.3);animati
 @media(prefers-reduced-motion:reduce){.hungrid>.hun-item,.hun-live.ok i{animation:none}.hunzone{transition:none}.hun.landed{animation:none}.hun.landed::after,.hun.landed .laser{animation:none}}
 .hun-all{margin-left:auto;font-size:14px;font-weight:600}
 .hun-note{color:var(--muted);margin:24px 2px 0;line-height:1.5;max-width:88ch}
-section.hero.hunt{padding:clamp(30px,7vh,84px) 4px clamp(20px,4vh,40px);max-width:none;text-align:center;
-display:flex;flex-direction:column;justify-content:center;min-height:clamp(240px,38vh,400px)}
+section.hero.hunt{padding:clamp(14px,3vh,30px) 4px 0;max-width:none;text-align:center;
+display:flex;flex-direction:column;justify-content:flex-start}
 .hero.hunt h1.huntitle{font-family:"Avenir Next Condensed","Avenir Next","Arial Narrow","Helvetica Neue",system-ui,sans-serif;
 font-style:normal;font-weight:900;font-size:clamp(56px,10.5vw,118px);letter-spacing:-.015em;text-transform:uppercase;margin:0 auto;cursor:default;line-height:.92}
 .huntitle span{position:relative;display:inline-block;white-space:pre;color:var(--fg);
@@ -1835,7 +1846,7 @@ else if(ev.key==='ArrowUp'){ev.preventDefault();mark(Math.max(sel-1,-1))}else if
 else if(ev.key==='Escape'){box.hidden=true}});
 document.addEventListener('click',function(ev){if(!f.contains(ev.target))box.hidden=true})})})();
 (function(){if(!document.querySelector('.hunzone'))return;
-var running=false,landed=0,last=null;
+var running=false,wasRunning=false,landed=0,last=null;
 function st(){return fetch('/engine/status').then(function(r){return r.json()}).catch(function(){return null})}
 function ago(s){if(s==null)return'';if(s<60)return'just now';if(s<3600)return Math.round(s/60)+'m ago';if(s<86400)return Math.round(s/3600)+'h ago';return Math.round(s/86400)+'d ago'}
 function paint(){var b=document.getElementById('hun-status1'),m=document.getElementById('hun-status2'),lv=document.getElementById('hun-live');
@@ -1846,15 +1857,19 @@ if(running)seg.push('+'+landed+' landed this pass','new asks appear the moment t
 else{if(landed)seg.push('+'+landed+' landed since load');if(age!=null)seg.push('passed '+ago(age));if(last&&last.new)seg.push('+'+last.new+' new')}
 m.textContent=seg.length?seg.join(' \u00b7 '):(running?'working':'run a scan anytime')}
 if(lv)lv.className='hun-live '+(running?'ok':(age==null?'off':(ok?'ok':(age<86400?'slow':'off'))))}
+function pulse(){var w=document.querySelector('.boardwrap');if(!w)return;var b=document.createElement('span');b.className='hun-beam';
+w.appendChild(b);setTimeout(function(){if(b.parentNode)b.parentNode.removeChild(b)},1000)}
+function panel(){var z=document.querySelector('.hunzone');if(z)z.classList.toggle('hunting',running)}
 function sync(){var btn=document.querySelector('.hun-scan');
-if(btn){btn.classList.toggle('busy',running);var lab=running?'Hunting\u2026':'Run the Hunt';btn.querySelectorAll('.wizlab,.wiztip').forEach(function(s){s.textContent=lab})}paint()}
+if(btn){btn.classList.toggle('busy',running);var lab=running?'Hunting\u2026':'Run the Hunt';btn.querySelectorAll('.wizlab,.wiztip').forEach(function(s){s.textContent=lab})}
+if(running&&!wasRunning){panel();pulse()}else if(!running&&wasRunning){panel()}wasRunning=running;paint()}
 function swap(){var had={};document.querySelectorAll('.hun[data-key]').forEach(function(n){had[n.getAttribute('data-key')]=1});
 return fetch(location.pathname+location.search).then(function(r){return r.text()}).then(function(html){
 var d=new DOMParser().parseFromString(html,'text/html');
 ['.boardwrap'].forEach(function(sl){var n=d.querySelector(sl),o=document.querySelector(sl);if(n&&o)o.replaceWith(n)});
 var land=0;document.querySelectorAll('.hun[data-key]').forEach(function(t){if(!had[t.getAttribute('data-key')]){land++;t.classList.add('landed');
 setTimeout(function(){t.classList.remove('landed')},1700)}});
-if(land)landed+=land;sync()})}
+if(land)landed+=land;panel();sync()})}
 function livePoll(){var seen=null,t0=Date.now();var iv=setInterval(function(){st().then(function(s){if(!s)return;last=s;
 if(s.fresh_at&&s.fresh_at!==seen){seen=s.fresh_at;swap()}else paint();
 if((!s.scanning&&(seen||Date.now()-t0>45000))||Date.now()-t0>240000){clearInterval(iv);running=false;swap()}})},6000)}
