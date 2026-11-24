@@ -39,6 +39,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS listing (key TEXT PRIMARY KEY, source TEXT, listing_id TEXT, market TEXT, title TEXT, url TEXT, seller TEXT,
   kind TEXT, price TEXT, currency TEXT, ends_at TEXT, first_seen TEXT, last_seen TEXT, ended_at TEXT, fingerprint TEXT, data_json TEXT);
 CREATE INDEX IF NOT EXISTS listing_seller ON listing(seller, first_seen);
+CREATE INDEX IF NOT EXISTS listing_fresh ON listing(first_seen) WHERE ended_at IS NULL AND kind IN ('ask','bid','auction');
 CREATE TABLE IF NOT EXISTS listing_event (key TEXT, at TEXT, kind TEXT, old TEXT, new TEXT);
 CREATE INDEX IF NOT EXISTS listing_event_key ON listing_event(key, at);
 CREATE TABLE IF NOT EXISTS listing_review (key TEXT, at TEXT, actor TEXT, verified_json TEXT);

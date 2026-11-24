@@ -351,7 +351,7 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
                    "AND julianday(ends_at)>julianday('now') AND julianday(ends_at)<=julianday('now','+6 hours'))"}.get(x, "")
     rows = st.db.execute(
         f"SELECT {sel} FROM listing l {joins} "
-        "WHERE l.ended_at IS NULL AND l.kind IN ('ask','bid','auction') " + only + " " + order + " LIMIT 400").fetchall()
+        "WHERE l.ended_at IS NULL AND l.kind IN ('ask','bid','auction') " + only + " " + order + " LIMIT 3000").fetchall()
     spark_map = {}
     if M is not None:
         try:
@@ -407,7 +407,7 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
             except (ValueError, TypeError):
                 pass
         code, sub, chip, ai, mb = "none", "", "", None, None
-        why, worth = "", None
+        why, worth, refmid = "", None, None
         glabel, gkind = _grade_label(d, title or "")
         name = ""
         if M is not None and payload:
@@ -422,6 +422,7 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
                 ai, mb = d.get("all_in_home"), tp.get("max_buy")
                 why = vv.reason
                 worth = M(mb) if mb else None
+                refmid = tp.get("resale_mid") if tp.get("basis") == "reference" else None
                 if code in ("good", "avg") and ai and mb and mb > ai:
                     pct = (mb - ai) / ai * 100
                     chip = '<span class="hun-deal d-{}" title="worth up to {:.0f}% over the ask">+{:.0f}%</span>'.format(code, pct, pct)
@@ -430,11 +431,19 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
         if not name:
             name = (title or "").strip()
         pid = d.get("printing_id") or ""
+        oa = _listing_art(d)   # one artwork across every candidate print: the card is identified even when the exact rarity/edition is not
+        cand_pids = [s.get("printing_id") for s in (d.get("scenarios") or []) if s.get("printing_id")]
         spk = spark_map.get(pid) or spark_map.get(pid.split("@")[0]) or ""
         pcval = ""
         rate, vol = None, ""
         gkey = _pc_grade(d.get("grade"))
         pcvals = pcm.get(pid) or {}
+        if not pcvals and oa and gkind == "raw":
+            # A raw card identified to one artwork but not one print: the cheapest ungraded comp across the
+            # candidate prints is a safe lower bound - an ask under it is under every version, never an overclaim.
+            comps = [pcm[cp][gkey][0] for cp in cand_pids if gkey in pcm.get(cp, {})]
+            if comps:
+                pcvals = {gkey: (min(comps), None, "")}
         if gkey in pcvals and M is not None:
             try:
                 p_usd, c_usd, vol = pcvals[gkey]
@@ -452,8 +461,10 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
                 pcval = ""
         # The hunt passes on a measured discount, not a flag: an ask at or under the sold ceiling,
         # or under the PriceCharting comp, is a deal even when the engine never tagged it UNDERPRICED;
-        # an ask within a hair of either is fair market and worth a look. Identity must be settled first.
-        if code != "good" and pid and not suspect(d) and d.get("photo") != "clash" \
+        # an ask within a hair of either is fair market and worth a look. Identity must be settled first -
+        # a confirmed print, or a raw card pinned to one artwork whose ungraded comp bounds every version.
+        ident = pid or (oa if gkind == "raw" else "")
+        if code != "good" and ident and not suspect(d) and d.get("photo") != "clash" \
                 and "LOT" not in (d.get("kinds") or []) and "MISIDENTIFIED" not in (d.get("kinds") or []):
             try:
                 aif = float(d.get("all_in_home") or 0)
@@ -462,12 +473,14 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
             ceil = float(mb) if mb else 0.0
             comp = float(rate) if rate is not None else 0.0
             under_ceil = bool(aif and ceil and aif <= ceil)
-            under_pc = bool(aif and comp and aif <= comp * 0.97)
+            # A guide is not a sale: an ask under a fifth of the PC comp is a reprint, a fake or the wrong
+            # card, not a bargain - the same floor suspect() applies to a reference value.
+            under_pc = bool(aif and comp and aif <= comp * 0.97 and aif >= comp * 0.20)
             if under_ceil or under_pc:
                 code = "good"
                 if under_pc and not under_ceil:
-                    why = "Asking {} against a {} PriceCharting comp - {:.0f}% under the market's own sales.".format(
-                        M(aif), M(comp), (comp - aif) / comp * 100)
+                    why = "Asking {} against a {} PriceCharting comp - {:.0f}% under the market's own sales.{}".format(
+                        M(aif), M(comp), (comp - aif) / comp * 100, "" if pid else " Exact print unconfirmed.")
             elif aif and ((ceil and aif <= ceil * 1.10) or (comp and aif <= comp * 1.05)):
                 code = "avg"
         counts["all"] += 1
@@ -477,7 +490,7 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
         if v != "all" and code != v:
             continue
         own = len(json.loads(imgs or "[]")) if imgs else 0
-        oa = _listing_art(d)   # the official print leads the tile; the seller's photo is the fallback, not the face
+        # oa (computed above): the official print leads the tile; the seller's photo is the fallback, not the face
         art = (img(oa, "large", title or "", cls="card hun-img") if oa
                else (lphoto(iid, 0, "m", title or "", cls="hun-img") if own else img(None, "large", title or "", cls="card hun-img")))
         rank = {"good": 0, "avg": 1, "bad": 2}.get(code, 3)
@@ -485,6 +498,21 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
             rank = min(rank, 0.8) if code == "none" else rank - 0.4
         if vol:
             rank -= 0.2         # sold movement per week: the market watches this print, so the board should too
+        if gkind == "raw" and (pid or oa) and (gkey in pcvals or mb or refmid):
+            rank -= 0.6         # the hunt leads with raw cards it can price, not slabs and not bare guesses
+        if refmid and code in ("bad", "none"):
+            try:
+                ratio = float(d.get("all_in_home") or 0) / float(refmid)
+                rank += min(2.5, max(0.0, ratio - 1.0) * 0.35)   # nearest the guide first; an ask 30x the guide sinks
+            except (TypeError, ValueError, ZeroDivisionError):
+                pass
+        if not (mb or refmid or gkey in pcvals):
+            rank += 6.0         # identity-only, no price read: filler that sits below every card the hunt can price
+        kj = d.get("kinds") or []
+        if "LOT" in kj or "COLLECTION" in kj or "MISIDENTIFIED" in kj:
+            rank += 3.0         # a lot or a bad match is not a single-card deal: sink it below the board
+        elif status == "REJECTED" and not (pid or oa):
+            rank += 3.0         # foreign or unmatched rejects are noise here, not the hunt
         if v == "all":
             # the home criterion: the ask lives in the market, not on the moon - beyond 3x the measured
             # worth (PriceCharting comp when graded evidence exists, else the verdict's max buy) a listing
@@ -513,6 +541,9 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
         if pcval:
             rows += ('<span class="bi-row" title="PriceCharting sold-market comp, same grade">'
                      '<small>PC market</small><span class="bi-pcval">{}</span></span>').format(pcval)
+        elif refmid:
+            rows += ('<span class="bi-row" title="A price guide reference, not a recorded sale">'
+                     '<small>Price guide</small><span class="bi-pcval">{}</span></span>').format(M(refmid))
         if spk:
             rows += '<span class="bi-row bi-sparkrow"><small>7-day sales</small><span class="hun-spark">{}</span></span>'.format(spk)
         try:
@@ -521,12 +552,19 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
             aif2 = 0.0
         ceil2 = float(mb) if mb else 0.0
         comp2 = float(rate) if rate is not None else 0.0
+        ref2 = float(refmid) if refmid else 0.0
         if aif2 and ceil2 and ceil2 > aif2:
             edge = "{:.0f}% under what to pay · asking {}".format((ceil2 - aif2) / ceil2 * 100, M(aif2))
-        elif aif2 and comp2 and comp2 > aif2:
+        elif aif2 and comp2 and comp2 > aif2 and aif2 >= comp2 * 0.20:
             edge = "{:.0f}% under the PC comp · asking {}".format((comp2 - aif2) / comp2 * 100, M(aif2))
         elif aif2 and ceil2 and aif2 > ceil2:
             edge = "{:.0f}% above what to pay · asking {}".format((aif2 - ceil2) / ceil2 * 100, M(aif2))
+        elif aif2 and comp2 and aif2 > comp2:
+            edge = "{:.0f}% above the PC comp · asking {}".format((aif2 - comp2) / comp2 * 100, M(aif2))
+        elif aif2 and ref2 and aif2 > ref2:
+            edge = "{:.0f}% above the price guide · asking {}".format((aif2 - ref2) / ref2 * 100, M(aif2))
+        elif aif2 and ref2 and ref2 > aif2 and aif2 >= ref2 * 0.20:
+            edge = "{:.0f}% under the price guide · asking {}".format((ref2 - aif2) / ref2 * 100, M(aif2))
         elif code == "none":
             edge = "No sales history yet — read on identity alone"
         else:
