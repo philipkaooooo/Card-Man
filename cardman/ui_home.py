@@ -277,17 +277,17 @@ def _engine_line(st, now: datetime, base: str, token: str = "") -> str:
 
 
 def _hunt_feed(st, now: datetime, game: str, M=None) -> str:
-    """The live hunt feed: the calls the engine is making right now, taking the deals and passing the rest."""
-    rows = []
+    """One horizontal hunt status that keeps updating: the call the engine is making right now."""
+    latest = ""
     try:
         q = st.db.execute(
-            "SELECT l.title, l.price, l.currency, o.status, o.kinds, o.updated_at "
+            "SELECT l.title, l.price, l.currency, o.status, o.kinds "
             "FROM opportunity o JOIN listing l ON l.key=o.key WHERE l.ended_at IS NULL "
             "AND COALESCE(json_extract(o.payload_json,'$.game'),'ygo')=? "
-            "ORDER BY o.updated_at DESC LIMIT 8", (game,)).fetchall()
+            "ORDER BY o.updated_at DESC LIMIT 1", (game,)).fetchall()
     except Exception:
         q = []
-    for title, price, cur, status, kinds, upd in q:
+    for title, price, cur, status, kinds in q:
         kj = json.loads(kinds or "[]")
         passed = status == "REJECTED"
         if passed:
@@ -301,18 +301,16 @@ def _hunt_feed(st, now: datetime, game: str, M=None) -> str:
             ptxt = charts.fmt(Decimal(str(price)), cur) if price not in (None, "") else "—"
         except Exception:
             ptxt = "—"
-        rows.append('<li class="hf-row a-{}"><span class="hf-act">{}</span><span class="hf-name">{}</span>'
-                    '<span class="hf-read">{}</span><span class="hf-price">{}</span></li>'.format(
-                        "pass" if passed else "take", "Passing" if passed else "Taking",
-                        e((title or "").strip()[:80] or "Untitled ask"), e(read), e(ptxt)))
-    if not rows:
-        rows.append('<li class="hf-row a-idle"><span class="hf-act">Ready</span>'
-                    '<span class="hf-name">Run the Hunt to watch it judge the freshest asks, live.</span></li>')
-    return ('<div class="hunfeed" id="hunfeed"><div class="hf-top">'
+        latest = ('<span class="hf-act a-{}">{}</span><span class="hf-name">{}</span>'
+                  '<span class="hf-read">{}</span><span class="hf-price">{}</span>'.format(
+                      "pass" if passed else "take", "Passing" if passed else "Taking",
+                      e((title or "").strip()[:70] or "Untitled ask"), e(read), e(ptxt)))
+    if not latest:
+        latest = '<span class="hf-act a-idle">Ready</span><span class="hf-name">Run the Hunt to watch it judge the freshest asks, live.</span>'
+    return ('<div class="hunfeed" id="hunfeed">'
             '<span class="hf-live" id="hf-live"><i></i><b id="hf-state">The Hunt</b></span>'
-            '<span class="hf-sub" id="hf-sub">taking the deals, passing the rest</span>'
-            '<span class="hf-count" id="hf-count"></span></div>'
-            '<ul class="hf-list" id="hf-list">' + "".join(rows) + "</ul></div>")
+            '<span class="hf-now" id="hf-now">' + latest + "</span>"
+            '<span class="hf-count" id="hf-count"></span></div>')
 
 
 def _hun_head(base: str, v: str, t: str, counts: dict, stats: str = "", chips: str = "", x: str = "", live: str = "") -> str:
@@ -517,9 +515,28 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
                      '<small>PC market</small><span class="bi-pcval">{}</span></span>').format(pcval)
         if spk:
             rows += '<span class="bi-row bi-sparkrow"><small>7-day sales</small><span class="hun-spark">{}</span></span>'.format(spk)
-        info = ('<span class="bi-head r-{}"><b class="bi-read">{}</b><span class="bi-gtag g-{}">{}</span></span>'.format(
-                    e(code), e(read), e(gkind), e(glabel))
-                + ('<span class="bi-name">{}</span>'.format(e(name)) if name else "")
+        try:
+            aif2 = float(d.get("all_in_home")) if d.get("all_in_home") not in (None, "") else 0.0
+        except (TypeError, ValueError):
+            aif2 = 0.0
+        ceil2 = float(mb) if mb else 0.0
+        comp2 = float(rate) if rate is not None else 0.0
+        if aif2 and ceil2 and ceil2 > aif2:
+            edge = "{:.0f}% under what to pay · asking {}".format((ceil2 - aif2) / ceil2 * 100, M(aif2))
+        elif aif2 and comp2 and comp2 > aif2:
+            edge = "{:.0f}% under the PC comp · asking {}".format((comp2 - aif2) / comp2 * 100, M(aif2))
+        elif aif2 and ceil2 and aif2 > ceil2:
+            edge = "{:.0f}% above what to pay · asking {}".format((aif2 - ceil2) / ceil2 * 100, M(aif2))
+        elif code == "none":
+            edge = "No sales history yet — read on identity alone"
+        else:
+            edge = "Asking {}".format(M(aif2)) if aif2 else "Price not settled"
+        gtag_text = "RAW" if gkind == "raw" else ("LOT" if gkind == "lot" else "GRADED · " + glabel)
+        thumb = img(oa, "small", name or title or "", cls="bi-thumb") if oa else img(None, "small", name or title or "", cls="bi-thumb")
+        info = ('<span class="bi-top">' + thumb
+                + '<span class="bi-id"><span class="bi-gtag g-{}">{}</span>'.format(e(gkind), e(gtag_text))
+                + '<span class="bi-name">{}</span></span></span>'.format(e(name or (title or "").strip()))
+                + '<span class="bi-edge r-{}"><small>The edge</small><b>{}</b></span>'.format(e(code), e(edge))
                 + ('<span class="bi-rows">{}</span>'.format(rows) if rows else "")
                 + ('<span class="bi-why">{}</span>'.format(e(why)) if why else ""))
         try:
@@ -1689,7 +1706,7 @@ filter:drop-shadow(0 7px 16px rgba(0,0,0,.28));transition:transform .18s var(--e
 .hun-status small{font-size:12px;color:var(--muted);font-weight:400;letter-spacing:0;text-transform:none}
 .boardwrap{position:relative;margin-top:0;padding-top:var(--gap);
 --wizh:clamp(120px,16vw,232px);--wizdip:calc(var(--wizh)*.5);--gap:calc(var(--wizh) - var(--wizdip))}
-.wizfloat{position:absolute;top:calc(-1*var(--wizdip));left:clamp(12px,2.6vw,38px);z-index:6;display:block;padding:0;border:0;
+.wizfloat{position:absolute;top:calc(var(--gap) - var(--wizh)*0.888);left:clamp(12px,2.6vw,38px);z-index:6;display:block;padding:0;border:0;
 background:none;cursor:pointer;line-height:0}
 .wizfloat .hun-wiz{width:calc(var(--wizh)*.668);height:var(--wizh);object-fit:contain;
 filter:drop-shadow(0 10px 18px rgba(0,0,0,.30));transition:transform .18s var(--ease)}
@@ -1733,32 +1750,24 @@ animation:flashPop 1.1s ease-out forwards}
 .hunzone.hunting::before{animation:stripeSweep 1.5s ease-in-out infinite}
 @keyframes stripeSweep{0%,100%{filter:brightness(1) saturate(1)}50%{filter:brightness(1.7) saturate(1.35)}}
 @media(prefers-reduced-motion:reduce){.hun-bolt,.hun-flash,.hunzone.hunting,.hunzone.hunting::before{animation:none}}
-.hunfeed{position:relative;margin:0 0 22px;padding:16px clamp(14px,2vw,22px) 14px;border:1px solid var(--line);border-radius:16px;
-background:linear-gradient(180deg,color-mix(in srgb,var(--fg) 3%,var(--surface)),var(--surface));box-shadow:var(--shadow)}
-.hf-top{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:0 0 11px}
-.hf-live{display:inline-flex;align-items:center;gap:9px}
-.hf-live i{width:9px;height:9px;border-radius:50%;background:var(--muted);flex:none}
+.hunfeed{display:flex;align-items:center;gap:14px;margin:0 0 18px;padding:9px clamp(12px,2vw,18px);
+border:1px solid var(--line);border-radius:999px;background:var(--surface);box-shadow:var(--shadow);min-height:42px}
+.hf-live{display:inline-flex;align-items:center;gap:8px;flex:none}
+.hf-live i{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
 .hf-live.ok i{background:#2fbf71;animation:hunpulse 2.2s ease-in-out infinite}
-.hf-live b{font:800 13px/1 "Avenir Next","Helvetica Neue",Arial,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:var(--fg)}
-.hf-sub{font-size:12.5px;color:var(--muted)}
-.hf-count{margin-left:auto;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--fg2);font-variant-numeric:tabular-nums}
-.hf-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px;min-height:190px;max-height:190px;overflow:hidden}
-.hf-row{display:grid;grid-template-columns:86px 1fr auto auto;align-items:center;gap:12px;padding:7px 11px;border-radius:10px;
-background:var(--surface);border:1px solid transparent;animation:hfin .45s ease both}
-.hf-row.a-take{border-color:color-mix(in srgb,#2fbf71 38%,transparent);background:color-mix(in srgb,#2fbf71 8%,var(--surface))}
-.hf-row.a-pass{opacity:.74}
-.hf-act{font:800 10.5px/1 "Helvetica Neue",Arial,sans-serif;letter-spacing:.08em;text-transform:uppercase;padding:5px 0;text-align:center;border-radius:999px}
-.a-take .hf-act{color:#1c8a4d;background:rgba(47,191,113,.16)}
-.a-pass .hf-act{color:var(--fg2);background:color-mix(in srgb,var(--fg2) 13%,transparent)}
-.a-idle .hf-act{color:#a4701d;background:rgba(230,162,60,.18)}
-.hf-name{font-size:13.5px;font-weight:650;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.hf-read{font-size:11.5px;color:var(--muted);white-space:nowrap}
-.hf-price{font-size:14px;font-weight:800;color:var(--fg);font-variant-numeric:tabular-nums;white-space:nowrap}
-.a-idle{grid-template-columns:86px 1fr}
-.a-idle .hf-name{font-weight:500;color:var(--fg2);white-space:normal}
+.hf-live b{font:800 11px/1 "Avenir Next","Helvetica Neue",Arial,sans-serif;letter-spacing:.13em;text-transform:uppercase;color:var(--fg);white-space:nowrap}
+.hf-now{display:flex;align-items:center;gap:10px;min-width:0;flex:1;overflow:hidden;animation:hfin .4s ease both}
+.hf-act{flex:none;font:800 10px/1 "Helvetica Neue",Arial,sans-serif;letter-spacing:.07em;text-transform:uppercase;padding:4px 10px;border-radius:999px}
+.hf-act.a-take{color:#1c8a4d;background:rgba(47,191,113,.16)}
+.hf-act.a-pass{color:var(--fg2);background:color-mix(in srgb,var(--fg2) 13%,transparent)}
+.hf-act.a-idle{color:#a4701d;background:rgba(230,162,60,.18)}
+.hf-name{font-size:13px;font-weight:650;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.hf-read{flex:none;font-size:11.5px;color:var(--muted);white-space:nowrap}
+.hf-price{flex:none;font-size:13.5px;font-weight:800;color:var(--fg);font-variant-numeric:tabular-nums;white-space:nowrap}
+.hf-count{flex:none;font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--fg2);font-variant-numeric:tabular-nums}
 @keyframes hfin{from{opacity:0}to{opacity:1}}
-@media(max-width:640px){.hf-row{grid-template-columns:72px 1fr auto}.hf-read{display:none}.hf-list{min-height:168px;max-height:168px}}
-@media(prefers-reduced-motion:reduce){.hf-row{animation:none}}
+@media(max-width:640px){.hf-read,.hf-count{display:none}.hunfeed{gap:10px}}
+@media(prefers-reduced-motion:reduce){.hf-now{animation:none}}
 .hun.landed{animation:hunland .9s cubic-bezier(.22,.9,.3,1.08) both;z-index:2}
 .hun.landed::after{content:"";position:absolute;inset:0;border-radius:16px;pointer-events:none;
 box-shadow:0 0 0 2px rgba(47,191,113,.6),0 10px 34px rgba(47,191,113,.3);animation:hunfade 1.7s ease both}
@@ -1793,12 +1802,18 @@ transition:transform .35s cubic-bezier(.2,1.8,.4,1);transition-delay:calc(var(--
 .hungrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(172px,1fr));gap:30px 20px}
 a.hun.card{position:relative;display:flex;flex-direction:column;align-items:center;gap:10px;text-decoration:none;color:inherit;border:0;border-radius:0;box-shadow:none;background:none}
 a.hun.card:hover,a.hun.card:focus-visible{transform:none;box-shadow:none}
-.card-face{position:relative;width:100%;aspect-ratio:421/614;border-radius:4.5%/3.2%;overflow:hidden;background:var(--surface);
-border:1px solid var(--line);box-shadow:0 6px 16px rgba(30,40,30,.10);transition:transform .18s var(--ease),box-shadow .18s var(--ease),border-color .16s}
-a.hun.card.sig-good .card-face{border-color:color-mix(in srgb,#2fbf71 70%,var(--line))}
-a.hun.card.sig-avg .card-face{border-color:color-mix(in srgb,#e6a23c 70%,var(--line))}
-a.hun.card.sig-bad .card-face{border-color:color-mix(in srgb,#e05252 65%,var(--line))}
-a.hun.card:hover .card-face{transform:translateY(-4px) scale(1.01);box-shadow:0 16px 32px rgba(30,40,30,.16)}
+.card-face{position:relative;width:100%;aspect-ratio:421/614;border-radius:5%/3.6%;overflow:hidden;background:var(--surface);
+border:1px solid color-mix(in srgb,var(--fg) 20%,var(--line));box-shadow:0 2px 4px rgba(20,30,20,.07),0 14px 30px rgba(20,30,20,.14);
+transition:transform .18s var(--ease),box-shadow .18s var(--ease),border-color .16s}
+.card-face::before{content:"";position:absolute;inset:0;z-index:3;pointer-events:none;border-radius:inherit;
+box-shadow:inset 0 0 0 3px var(--surface),inset 0 0 0 4px color-mix(in srgb,var(--fg) 18%,transparent)}
+a.hun.card.sig-good .card-face{border-color:#2fbf71}
+a.hun.card.sig-good .card-face::before{box-shadow:inset 0 0 0 3px var(--surface),inset 0 0 0 4px color-mix(in srgb,#2fbf71 55%,transparent)}
+a.hun.card.sig-avg .card-face{border-color:#e6a23c}
+a.hun.card.sig-avg .card-face::before{box-shadow:inset 0 0 0 3px var(--surface),inset 0 0 0 4px color-mix(in srgb,#e6a23c 55%,transparent)}
+a.hun.card.sig-bad .card-face{border-color:#e05252}
+a.hun.card.sig-bad .card-face::before{box-shadow:inset 0 0 0 3px var(--surface),inset 0 0 0 4px color-mix(in srgb,#e05252 50%,transparent)}
+a.hun.card:hover .card-face{transform:translateY(-5px) scale(1.015);box-shadow:0 4px 8px rgba(20,30,20,.08),0 24px 44px rgba(20,30,20,.2)}
 .card-face img.hun-img,.card-face span.hun-img{width:100%;height:100%;object-fit:contain;display:block;border:0;border-radius:0;background:var(--surface)}
 .card-face span.card.hun-img,.card-face img.card.hun-img{object-fit:contain;padding:0;box-sizing:border-box;background:var(--surface)}
 .card-seal{position:absolute;top:6px;right:6px;z-index:5;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;
@@ -1810,19 +1825,22 @@ font:900 11px/1 "Helvetica Neue",Arial,sans-serif;color:#fff;box-shadow:0 2px 5p
 .l-bad{background:linear-gradient(90deg,#e05252,#f08080)}
 .l-none{background:var(--line)}
 .card-info{position:absolute;inset:0;z-index:5;display:flex;flex-direction:column;gap:0;padding:0;overflow:hidden;
-background:linear-gradient(180deg,rgba(15,18,22,.97),rgba(15,18,22,.94));color:#f4eedf;border-radius:9px;
+background:linear-gradient(180deg,rgba(15,18,22,.97),rgba(15,18,22,.95));color:#f4eedf;border-radius:9px;
 opacity:0;transform:translateY(8px);transition:opacity .18s var(--ease),transform .18s var(--ease);pointer-events:none}
 a.hun.card:hover .card-info,a.hun.card:focus-visible .card-info{opacity:1;transform:none}
-.bi-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;
-border-bottom:1px solid rgba(244,238,223,.14);background:rgba(255,255,255,.03)}
-.bi-read{font-weight:800;font-size:12px;text-transform:uppercase;letter-spacing:.05em;line-height:1.2}
-.bi-head.r-good .bi-read{color:#5ad79a}.bi-head.r-avg .bi-read{color:#f0c078}.bi-head.r-bad .bi-read{color:#f08080}.bi-head.r-none .bi-read{color:#c2c8ce}
-.bi-gtag{flex:none;font:800 10px/1 "Helvetica Neue",Arial,sans-serif;letter-spacing:.03em;padding:3px 8px;border-radius:999px;white-space:nowrap}
-.bi-gtag.g-graded{color:#cdbcff;background:rgba(138,126,240,.22);border:1px solid rgba(138,126,240,.5)}
-.bi-gtag.g-raw{color:#d2c8b1;background:rgba(244,238,223,.1);border:1px solid rgba(244,238,223,.22)}
-.bi-gtag.g-lot{color:#f0c078;background:rgba(230,162,60,.2);border:1px solid rgba(230,162,60,.5)}
-.bi-name{padding:8px 12px 0;font-size:12px;font-weight:650;line-height:1.3;color:#f4eedf;
+.bi-top{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(244,238,223,.14);background:rgba(255,255,255,.04)}
+.bi-thumb{width:34px;height:48px;object-fit:contain;flex:none;border-radius:3px;background:rgba(255,255,255,.07);border:1px solid rgba(244,238,223,.2)}
+.bi-id{display:flex;flex-direction:column;gap:5px;min-width:0}
+.bi-gtag{align-self:flex-start;font:800 10.5px/1 "Helvetica Neue",Arial,sans-serif;letter-spacing:.06em;padding:4px 9px;border-radius:999px;white-space:nowrap}
+.bi-gtag.g-graded{color:#cdbcff;background:rgba(138,126,240,.24);border:1px solid rgba(138,126,240,.6)}
+.bi-gtag.g-raw{color:#e7dcc4;background:rgba(244,238,223,.12);border:1px solid rgba(244,238,223,.32)}
+.bi-gtag.g-lot{color:#f0c078;background:rgba(230,162,60,.22);border:1px solid rgba(230,162,60,.6)}
+.bi-name{font-size:12px;font-weight:650;line-height:1.3;color:#f4eedf;
 display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.bi-edge{display:flex;flex-direction:column;gap:3px;padding:9px 12px;border-bottom:1px solid rgba(244,238,223,.1)}
+.bi-edge small{font-size:9px;font-weight:750;letter-spacing:.12em;text-transform:uppercase;color:#9aa0a6}
+.bi-edge b{font-size:13px;font-weight:800;line-height:1.3}
+.bi-edge.r-good b{color:#5ad79a}.bi-edge.r-avg b{color:#f0c078}.bi-edge.r-bad b{color:#f08080}.bi-edge.r-none b{color:#c2c8ce}
 .bi-rows{display:flex;flex-direction:column;padding:6px 12px 2px}
 .bi-row{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:5px 0;border-top:1px solid rgba(244,238,223,.1)}
 .bi-row:first-child{border-top:0}
@@ -1849,12 +1867,14 @@ font-family:"Avenir Next","Helvetica Neue",Arial,sans-serif;font-size:18px;font-
 .hun-deal.d-good{color:#1c8a4d;background:rgba(47,191,113,.16)}
 .hun-deal.d-avg{color:#a4701d;background:rgba(230,162,60,.18)}
 @media(hover:none){.card-face{aspect-ratio:auto;overflow:visible}
+.card-face::before{display:none}
 .card-face img.hun-img,.card-face span.hun-img{height:auto;aspect-ratio:421/614}
 .card-info{position:static;opacity:1;transform:none;background:none;color:var(--fg2);padding:6px 2px 0;pointer-events:auto;border-radius:0}
-.bi-head{padding:0;border-bottom:0;background:none}.bi-read{font-size:11px}
-.bi-head.r-good .bi-read{color:#1c8a4d}.bi-head.r-avg .bi-read{color:#a4701d}.bi-head.r-bad .bi-read{color:#c0392b}.bi-head.r-none .bi-read{color:var(--muted)}
+.bi-top{padding:0;border-bottom:0;background:none;gap:8px}.bi-thumb{width:28px;height:40px}
 .bi-gtag.g-graded{color:#5b48c8}.bi-gtag.g-raw{color:var(--fg2)}.bi-gtag.g-lot{color:#a4701d}
-.bi-name{padding:2px 0 0;color:var(--fg);font-size:11px}
+.bi-name{color:var(--fg);font-size:11px}
+.bi-edge{padding:4px 0;border-bottom:0}.bi-edge small{color:var(--muted)}
+.bi-edge.r-good b{color:#1c8a4d}.bi-edge.r-avg b{color:#a4701d}.bi-edge.r-bad b{color:#c0392b}.bi-edge.r-none b{color:var(--muted)}
 .bi-rows{padding:2px 0}.bi-row{padding:2px 0;border-top:0}.bi-row small{color:var(--muted)}.bi-row b{color:var(--fg);font-size:12px}
 .bi-pcval{color:var(--muted)}.bi-sparkrow,.bi-why{display:none}}
 @media(max-width:460px){.hungrid{grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:18px 12px}}
@@ -1916,7 +1936,7 @@ else if(ev.key==='ArrowUp'){ev.preventDefault();mark(Math.max(sel-1,-1))}else if
 else if(ev.key==='Escape'){box.hidden=true}});
 document.addEventListener('click',function(ev){if(!f.contains(ev.target))box.hidden=true})})})();
 (function(){if(!document.querySelector('.hunzone'))return;
-var running=false,wasRunning=false,landed=0,last=null;
+var running=false,wasRunning=false,landed=0,last=null,feedIdx=0;
 function st(){return fetch('/engine/status').then(function(r){return r.json()}).catch(function(){return null})}
 function ago(s){if(s==null)return'';if(s<60)return'just now';if(s<3600)return Math.round(s/60)+'m ago';if(s<86400)return Math.round(s/3600)+'h ago';return Math.round(s/86400)+'d ago'}
 function paint(){var b=document.getElementById('hun-status1'),m=document.getElementById('hun-status2'),lv=document.getElementById('hun-live');
@@ -1929,21 +1949,22 @@ m.textContent=seg.length?seg.join(' \u00b7 '):(running?'working':'run a scan any
 if(lv)lv.className='hun-live '+(running?'ok':(age==null?'off':(ok?'ok':(age<86400?'slow':'off'))))}
 function fmtPrice(p,c){if(p==null||p==='')return'\u2014';var n=parseFloat(p);if(isNaN(n))return'\u2014';
 var sym={USD:'$',TWD:'NT$',JPY:'\u00a5',EUR:'\u20ac',GBP:'\u00a3'}[c]||(c?c+' ':'');return sym+(Math.round(n*100)/100).toLocaleString()}
-function renderFeed(s){var list=document.getElementById('hf-list');if(!list)return;var act=(s&&s.activity)||[];
-var state=document.getElementById('hf-state'),sub=document.getElementById('hf-sub'),cnt=document.getElementById('hf-count'),live=document.getElementById('hf-live');
+function renderFeed(s){var now=document.getElementById('hf-now');if(!now)return;var act=(s&&s.activity)||[];
+var state=document.getElementById('hf-state'),cnt=document.getElementById('hf-count'),live=document.getElementById('hf-live');
 var scan=!!(s&&s.scanning);
 if(state)state.textContent=scan?'Hunting live':'The Hunt';
-if(sub)sub.textContent=scan?(s.progress?'judging batch '+s.progress:'taking the deals, passing the rest'):'taking the deals, passing the rest';
 if(live)live.className='hf-live'+(scan?' ok':'');
 if(cnt)cnt.textContent=act.length?act.length+' recent calls':'';
 if(!act.length)return;
-list.textContent='';
-act.slice(0,6).forEach(function(a){var li=document.createElement('li');li.className='hf-row a-'+(a.action==='pass'?'pass':'take');
-var ac=document.createElement('span');ac.className='hf-act';ac.textContent=a.action==='pass'?'Passing':'Taking';
+feedIdx=scan?(feedIdx+1)%act.length:0;
+var a=act[feedIdx]||act[0];
+now.textContent='';
+var ac=document.createElement('span');ac.className='hf-act a-'+(a.action==='pass'?'pass':'take');ac.textContent=a.action==='pass'?'Passing':'Taking';
 var nm=document.createElement('span');nm.className='hf-name';nm.textContent=a.title||'Untitled ask';
 var rd=document.createElement('span');rd.className='hf-read';rd.textContent=a.read||'';
 var pr=document.createElement('span');pr.className='hf-price';pr.textContent=fmtPrice(a.price,a.currency);
-li.appendChild(ac);li.appendChild(nm);li.appendChild(rd);li.appendChild(pr);list.appendChild(li)})}
+now.appendChild(ac);now.appendChild(nm);now.appendChild(rd);now.appendChild(pr);
+now.style.animation='none';void now.offsetWidth;now.style.animation=''}
 function pulse(){var w=document.querySelector('.boardwrap');if(!w)return;
 var bolt=document.createElement('span');bolt.className='hun-bolt';w.appendChild(bolt);
 var z=document.querySelector('.hunzone'),flash=null;if(z){flash=document.createElement('span');flash.className='hun-flash';z.appendChild(flash)}
