@@ -619,7 +619,7 @@ def sweep(st, *, limit: int = 40, game: str | None = None, refetch: bool = False
         return {"done": 0, "note": "nothing due"}
 
     names, numbers, codes, rarities, sets = _identify(st, queue)
-    out = {"done": 0, "ok": 0, "nomatch": 0, "empty": 0, "failed": 0}
+    out = {"done": 0, "ok": 0, "nomatch": 0, "empty": 0, "failed": 0, "noidentity": 0}
     seen: dict[str, dict] = {}     # one navigation per product page; printings of it reuse the parse
     with Browser(profile=profile, chrome=chrome, headless=headless) as b:
         for pid, g in queue:
@@ -631,6 +631,10 @@ def sweep(st, *, limit: int = 40, game: str | None = None, refetch: bool = False
             if hit is not None:
                 row = dict(hit)
                 row["url"] = url
+            elif not query.strip() and not url:
+                # No card identity in the local catalog and no stored product page: nothing to search.
+                # Never fire an empty query at PriceCharting - it answers "No Results For \"\"".
+                row = {"status": "noidentity", "match_note": "no card identity in local catalog"}
             else:
                 try:
                     row = fetch_card(b, query=query, name=name, number=number, code=code,
@@ -659,7 +663,8 @@ def sweep(st, *, limit: int = 40, game: str | None = None, refetch: bool = False
             if status == "ok":
                 _keep_points(st, pid, row.get("series") or {})
             log(f"{status:7} {pid}")
-            time.sleep(random.uniform(*pacing))
+            if status != "noidentity":
+                time.sleep(random.uniform(*pacing))
     return out
 
 

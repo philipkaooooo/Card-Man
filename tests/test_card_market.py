@@ -89,3 +89,14 @@ def test_other_versions_are_folded_away_not_mixed_in(tmp_path):
     html = _market_section("1", market, "p:B@1", {}, M, NOW, {})
     this, other = html.split("Other versions of this card")[:2]
     assert "T-h-T" in this and "T-b-T" in this and "T-a-T" not in this and "T-a-T" in other
+
+
+def test_home_art_uses_a_size_the_yugioh_route_accepts():
+    """'large' is the full card picture for Yu-Gi-Oh! - the artwork route rejects size=large and would
+    return the 'No image yet' placeholder. Pokemon keeps its own large thumbnail."""
+    from cardman.ui_home import img
+    ygo = img("89631139", "large", "Blue-Eyes", cls="card hun-img")
+    assert 'src="/img/card/89631139.jpg"' in ygo and "size=large" not in ygo
+    assert 'src="/img/card/89631139.jpg?size=small"' in img("89631139", "small")
+    assert "/pkm/img/pkm/base1-4.png?size=large" in img("pkm-base1-4", "large")
+    assert img(None, "large").startswith("<span")

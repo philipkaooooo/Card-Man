@@ -378,3 +378,27 @@ def test_scope_is_every_card_of_the_first_151_and_nothing_past_it():
     sc = pc.pkm_scope(Cat(), Who(), 151)
     assert sorted(sc) == ["a"]                                  # one card is one product, whatever the printings
     assert set(sc.values()) == {6}
+
+
+def test_sweep_never_searches_an_empty_query(tmp_path, monkeypatch):
+    """A printing with no card identity in the local catalog is labelled, not searched: PriceCharting
+    answers an empty q with 'No Results For ""', which is the defect this guards."""
+    st = Store(tmp_path / "e.sqlite")
+    pid = "pk:EN:tcg-125127:normal@pkm-tcg-125127"   # a TCGplayer id absent from the pkm catalog
+
+    class FakeBrowser:
+        def __init__(self, **kw): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def boom(*a, **k):
+        raise AssertionError("sweep fired a search for a printing with no identity")
+
+    monkeypatch.setattr(pc, "Browser", FakeBrowser)
+    monkeypatch.setattr(pc, "fetch_card", boom)
+    monkeypatch.setattr(pc, "_identify", lambda st, q: ({}, {}, {}, {}, {}))
+    out = pc.sweep(st, pids=[pid], log=lambda *a: None)
+    assert out["noidentity"] == 1 and out["done"] == 1
+    row = st.db.execute("SELECT status, query FROM pc_card WHERE printing_id=?", (pid,)).fetchone()
+    assert row == ("noidentity", "")
+    st.db.close()
