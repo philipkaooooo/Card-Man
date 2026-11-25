@@ -1905,8 +1905,8 @@ transition:transform .35s cubic-bezier(.2,1.8,.4,1);transition-delay:calc(var(--
 .hungrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:34px 22px}
 a.hun.card{position:relative;display:flex;flex-direction:column;align-items:stretch;gap:15px;text-decoration:none;color:inherit;border:0;border-radius:0;box-shadow:none;background:none}
 a.hun.card:hover,a.hun.card:focus-visible{transform:none;box-shadow:none}
-.card-art{position:relative;width:100%;overflow:visible}
-.card-face{position:relative;width:100%;aspect-ratio:421/614;border-radius:5%/3.6%;overflow:hidden;background:var(--surface);
+.card-art{position:relative;display:block;width:100%;overflow:visible}
+.card-face{position:relative;display:block;width:100%;aspect-ratio:421/614;border-radius:5%/3.6%;overflow:hidden;background:var(--surface);
 border:1px solid color-mix(in srgb,var(--fg) 20%,var(--line));box-shadow:0 2px 4px rgba(20,30,20,.07),0 14px 30px rgba(20,30,20,.14);
 transition:transform .18s var(--ease),box-shadow .18s var(--ease),border-color .16s}
 .card-face::before{content:"";position:absolute;inset:0;z-index:3;pointer-events:none;border-radius:inherit;
@@ -1924,7 +1924,7 @@ a.hun.card:hover .card-face{transform:translateY(-5px) scale(1.015);box-shadow:0
 font:900 11px/1 "Helvetica Neue",Arial,sans-serif;color:#fff;box-shadow:0 2px 5px rgba(0,0,0,.3)}
 .card-seal.s-good{background:#2fbf71}.card-seal.s-avg{background:#e6a23c}.card-seal.s-bad{background:#e05252}.card-seal.s-none{background:var(--muted)}
 .card-cond{position:absolute;bottom:-9px;right:-9px;z-index:6;display:inline-flex;align-items:center;justify-content:center;
- font:850 11px/1 var(--f-head);letter-spacing:.04em;padding:5px 8px;border-radius:8px;color:#fff;white-space:nowrap;
+ font:850 11px/1 "Avenir Next","Helvetica Neue",Arial,sans-serif;letter-spacing:.04em;padding:5px 8px;border-radius:8px;color:#fff;white-space:nowrap;
  box-shadow:0 4px 12px rgba(0,0,0,.45),0 0 0 1.5px rgba(255,255,255,.14);pointer-events:none}
 .card-cond.g-raw.c-mt{background:linear-gradient(135deg,#27c08a,#1f9d6b)}
 .card-cond.g-raw.c-nm{background:linear-gradient(135deg,#2fbf71,#239a58)}
@@ -1933,13 +1933,13 @@ font:900 11px/1 "Helvetica Neue",Arial,sans-serif;color:#fff;box-shadow:0 2px 5p
 .card-cond.g-raw.c-mp{background:linear-gradient(135deg,#e6923c,#e0863c)}
 .card-cond.g-raw.c-hp{background:linear-gradient(135deg,#e66052,#e05252)}
 .card-cond.g-raw.c-dmg{background:linear-gradient(135deg,#c03a30,#b03030)}
-.card-cond.g-raw.c-unk{background:var(--surface-2);color:var(--mut);box-shadow:0 3px 9px rgba(0,0,0,.35),0 0 0 1.5px var(--line)}
-.card-cond.g-lot{background:var(--surface-2);color:var(--mut);box-shadow:0 3px 9px rgba(0,0,0,.35),0 0 0 1.5px var(--line)}
+.card-cond.g-raw.c-unk{background:var(--soft);color:var(--muted);box-shadow:0 3px 9px rgba(0,0,0,.35),0 0 0 1.5px var(--line)}
+.card-cond.g-lot{background:var(--soft);color:var(--muted);box-shadow:0 3px 9px rgba(0,0,0,.35),0 0 0 1.5px var(--line)}
 .card-cond.g-graded{flex-direction:column;gap:0;width:40px;padding:0;border-radius:7px;overflow:hidden;
  border:2px solid #d4af6a;background:#15130e;box-shadow:0 5px 14px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.1)}
-.card-cond.g-graded .cc-grader{width:100%;text-align:center;font:850 8px/1.5 var(--f-head);letter-spacing:.1em;
+.card-cond.g-graded .cc-grader{width:100%;text-align:center;font:850 8px/1.5 "Avenir Next","Helvetica Neue",Arial,sans-serif;letter-spacing:.1em;
  color:#1a1408;background:linear-gradient(135deg,#f3d98b,#d4af6a)}
-.card-cond.g-graded .cc-num{width:100%;text-align:center;font:900 17px/1.25 var(--f-head);color:#f6e7b8;
+.card-cond.g-graded .cc-num{width:100%;text-align:center;font:900 17px/1.25 "Avenir Next","Helvetica Neue",Arial,sans-serif;color:#f6e7b8;
  background:linear-gradient(180deg,#2a2416,#15130e)}
 .card-cond.g-graded.tier-gem{border-color:#e8c877;box-shadow:0 5px 16px rgba(0,0,0,.55),0 0 14px rgba(232,200,119,.45)}
 .card-cond.g-graded.tier-gem .cc-num{color:#ffe9a8;background:linear-gradient(180deg,#3a2f12,#241c08)}
@@ -1977,9 +1977,9 @@ display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hi
 .bi-tri{font-size:15px;line-height:1}
 .bi-tri.up{color:#5ad79a}.bi-tri.down{color:#f08080}
 .bi-src{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;
- font:850 9.5px/1 var(--f-head);font-style:normal;color:#fff;flex:none}
+ font:850 9.5px/1 "Avenir Next","Helvetica Neue",Arial,sans-serif;font-style:normal;color:#fff;flex:none}
 .bi-src.pc{background:#3f7fe0}.bi-src.guide{background:#8a7ef0}.bi-src.sold{background:#2fbf71}
-.bi-src.none{background:var(--surface-2);color:var(--mut);font-size:12px}
+.bi-src.none{background:var(--soft);color:var(--muted);font-size:12px}
 .bi-edge.r-good b{color:#5ad79a}.bi-edge.r-avg b{color:#f0c078}.bi-edge.r-bad b{color:#f08080}.bi-edge.r-none b{color:#c2c8ce}
 .bi-ask{display:flex;align-items:center;gap:8px;padding:8px 12px 10px;font-size:10px;font-weight:750;letter-spacing:.08em;text-transform:uppercase;color:#9aa0a6}
 .bi-ask b{font-size:18px;font-weight:850;letter-spacing:-.01em;color:#fff;font-variant-numeric:tabular-nums;text-transform:none}
@@ -1999,7 +1999,7 @@ font-size:10.5px;line-height:1.45;color:#c2c8b1;background:rgba(0,0,0,.18)}
 .card-foot{display:flex;align-items:center;gap:8px;width:100%;flex-wrap:wrap;padding:0 2px}
 .card-price{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:5px 13px;
 font-family:"Avenir Next","Helvetica Neue",Arial,sans-serif;font-size:21px;font-weight:850;letter-spacing:-.015em;color:var(--fg);font-variant-numeric:tabular-nums;white-space:nowrap;box-shadow:0 2px 6px rgba(30,40,30,.1)}
-.card-id{font:800 11px/1 "SF Mono",ui-monospace,Menlo,Consolas,monospace;letter-spacing:.03em;color:var(--mut);
+.card-id{font:800 11px/1 "SF Mono",ui-monospace,Menlo,Consolas,monospace;letter-spacing:.03em;color:var(--muted);
 font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46%}
 .card-rep{font:800 10.5px/1 "Helvetica Neue",Arial,sans-serif;color:#fff;background:var(--fg);padding:4px 8px;border-radius:999px;white-space:nowrap}
 .card-meta{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);white-space:nowrap;margin-left:auto;max-width:100%;overflow:hidden}
