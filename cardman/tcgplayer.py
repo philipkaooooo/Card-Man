@@ -1212,6 +1212,154 @@ def feed(store_path: str = "data/store/evidence.sqlite", *, dex_max: int = 151, 
     return stats
 
 
+# -- accurate market guide ----------------------------------------------------------------------------------
+# The buy judge above is conservative: it exits at the weighted-median bucket LOW. A market GUIDE is the other
+# side - what the card actually sells for, used as the resale reference. These are the attached scraper's settle
+# rules ported onto the same fetch/parse stack: a Near-Mint ask floor replaces a damaged low, echo sales never
+# count, and the effective price is real sold-today, else the 7-day Near-Mint sold median when it drifts >12%
+# from the printed market, else the printed market. The result is written into pkm_guide so catalog.guide(pid)
+# serves the live accurate price instead of the weeks-old pokemontcg.io snapshot baked into the catalog.
+
+GUIDE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS tcgplayer_market (
+  printing_id TEXT PRIMARY KEY, product_id INTEGER, card_id TEXT, version TEXT, day TEXT,
+  market TEXT, nm_low TEXT, sold_today TEXT, sold_today_txn INTEGER, sold_median_7d TEXT,
+  effective TEXT, effective_source TEXT, listed INTEGER, confidence TEXT, as_of TEXT);
+"""
+NM_GUIDE_CONDS = {"near mint", "lightly played"}
+
+
+def _median_dec(values: list[Decimal | None]) -> Decimal | None:
+    xs = sorted(v for v in values if v is not None)
+    n = len(xs)
+    if not n:
+        return None
+    mid = n // 2
+    return xs[mid] if n % 2 else (xs[mid - 1] + xs[mid]) / 2
+
+
+def xref_product(pid: str) -> tuple[int | None, str | None]:
+    """(TCGplayer product id, variant) for a printing from the registry xref, or (None, None). Exact, not a guess."""
+    import sqlite3
+
+    from .catalog.registry import DB as REG
+    try:
+        con = sqlite3.connect(f"file:{REG}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return None, None
+    try:
+        row = con.execute("SELECT ext_id, ext_variant FROM xref WHERE source='tcgplayer' AND pid=? LIMIT 1",
+                          (pid,)).fetchone()
+    except sqlite3.Error:
+        return None, None
+    finally:
+        con.close()
+    if not row:
+        return None, None
+    try:
+        return int(row[0]), str(row[1] or "")
+    except (TypeError, ValueError):
+        return None, None
+
+
+def settle_market(product: TcgProduct, history: dict, *, now: datetime, variant: str | None = None) -> dict:
+    """The accurate effective market price from live NM asks and real sold buckets. A guide, never a buy ceiling."""
+    asks = product.listings
+    if variant:
+        asks = tuple(a for a in asks if a.printing.lower() == variant.lower()) or asks
+    nm_prices = [a.price for a in asks if (a.condition or "").strip().lower() in NM_GUIDE_CONDS and a.price > 0]
+    nm_low = min(nm_prices) if nm_prices else None
+    market = product.market_price
+    buckets = [b for b in _buckets(history) if not variant or b.variant.lower() == variant.lower()]
+    today = now.strftime("%Y-%m-%d")
+    start = (now.date() - timedelta(days=6)).isoformat()
+    real = [b for b in buckets if b.transactions > 0]
+    today_rows = sorted([b for b in real if b.date[:10] == today],
+                        key=lambda b: (-b.transactions, b.condition != "Near Mint"))
+    window = [b for b in real if b.date[:10] >= start]
+    nm_window = [b for b in window if b.condition == "Near Mint"] or window
+    sold_today = today_rows[0] if today_rows else None
+    med = _median_dec([b.market for b in nm_window])
+    if market is None and sold_today is not None:
+        market = sold_today.market
+    effective, source = market, ("market" if market is not None else "none")
+    if sold_today is not None and sold_today.market is not None:
+        effective, source = sold_today.market, "sold_today"
+    elif med is not None and market is not None and market > 0 and abs(med - market) / market * 100 > 12:
+        effective, source = med, "sold_7d"
+    elif med is not None and market is None:
+        effective, source = med, "sold_7d"
+    confidence = "high" if (sold_today is not None or med is not None) else ("mid" if market is not None else "low")
+    return {"market": market, "nm_low": nm_low, "sold_today": sold_today, "sold_median_7d": med,
+            "effective": effective, "effective_source": source, "confidence": confidence, "listed": product.listed}
+
+
+def sync_guide(store, catalog, pid: str, now: datetime, *, span: str = "month",
+               details: dict | None = None, listings: tuple | None = None, history: dict | None = None) -> dict:
+    """Settle the accurate live market price for one printing and write it into pkm_guide + a comp row.
+
+    Resolution is the registry xref (exact product id and variant). details/listings/history can be injected
+    for tests; otherwise they are fetched live. Nothing is invented: no xref, no price, no write."""
+    product_id, variant = xref_product(pid)
+    if not product_id:
+        return {"pid": pid, "status": "noxref"}
+    parts = pid.split(":")
+    card_id = parts[2] if len(parts) > 2 else ""
+    printing = catalog.by_id.get(pid)
+    version = printing.edition if printing else (variant or "Normal")
+    try:
+        det = details if details is not None else fetch_details(product_id)
+        if listings is not None:
+            rows, total = listings
+        else:
+            rows, total = fetch_listings(product_id, max_pages=1,
+                                         term={"condition": ["Near Mint", "Lightly Played"], "language": ["English"]})
+        product = assemble(det, rows, total)
+        hist = history if history is not None else fetch_history(product_id, span)
+    except Exception as x:
+        return {"pid": pid, "status": "fetchfail", "product_id": product_id, "error": f"{type(x).__name__}: {x}"}
+    if product is None:
+        return {"pid": pid, "status": "noparse", "product_id": product_id}
+    s = settle_market(product, hist, now=now, variant=variant)
+    if s["effective"] is None:
+        return {"pid": pid, "status": "noprice", "product_id": product_id}
+    day = now.strftime("%Y-%m-%d")
+    st = s["sold_today"]
+    with catalog.con:
+        catalog.con.execute("INSERT OR REPLACE INTO pkm_guide VALUES (?,?,?,?)",
+                            (card_id, version, day, float(s["effective"])))
+    store.db.executescript(GUIDE_SCHEMA)
+    with store.db:
+        store.db.execute("INSERT OR REPLACE INTO tcgplayer_market VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                         (pid, product_id, card_id, version, day,
+                          str(s["market"]) if s["market"] is not None else None,
+                          str(s["nm_low"]) if s["nm_low"] is not None else None,
+                          str(st.market) if st and st.market is not None else None,
+                          st.transactions if st else 0,
+                          str(s["sold_median_7d"]) if s["sold_median_7d"] is not None else None,
+                          str(s["effective"]), s["effective_source"], s["listed"], s["confidence"], now.isoformat()))
+    return {"pid": pid, "status": "ok", "product_id": product_id, "card_id": card_id, "version": version,
+            "name": product.name, "market": str(s["market"]) if s["market"] is not None else None,
+            "nm_low": str(s["nm_low"]) if s["nm_low"] is not None else None,
+            "sold_today": str(st.market) if st and st.market is not None else None,
+            "sold_today_txn": st.transactions if st else 0,
+            "sold_median_7d": str(s["sold_median_7d"]) if s["sold_median_7d"] is not None else None,
+            "effective": str(s["effective"]), "effective_source": s["effective_source"],
+            "confidence": s["confidence"], "listed": s["listed"]}
+
+
+def guide_comp(store, pid: str) -> dict | None:
+    """The stored accurate market comp for a printing, or None. A reference guide, never a sale on its own."""
+    try:
+        cur = store.db.execute("SELECT * FROM tcgplayer_market WHERE printing_id=?", (pid,))
+        row = cur.fetchone()
+    except Exception:
+        return None
+    if not row:
+        return None
+    return dict(zip([c[0] for c in cur.description], row))
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m cardman.tcgplayer")
     ap.add_argument("game", nargs="?", choices=sorted(LINE))
@@ -1225,7 +1373,30 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--html", help="write one chart per SKU, with the same numbers in a table")
     ap.add_argument("--feed", nargs="?", const="all", choices=("all", "canonical"),
                     help="store one cheapest page of live TCGplayer asks for every Gen I version")
+    ap.add_argument("--guide", nargs="?", const="all", default=None,
+                    help="settle the accurate live market price into pkm_guide: a printing id, a card id, or 'all'")
+    ap.add_argument("--guide-limit", type=int, default=0, help="cap --guide all to the first N printings")
+    ap.add_argument("--guide-span", default="month", choices=("quarter", "month", "annual"))
     args = ap.parse_args(argv)
+    if args.guide is not None or args.guide_limit:
+        from .pkm_catalog import DB as PKM_DB, PkmCatalog
+        from .store import Store
+        store = Store(args.store)
+        catalog = PkmCatalog(PKM_DB)
+        now = datetime.now(timezone.utc)
+        g = args.guide
+        if g and g != "all":
+            pids = [g] if ":" in g else ([p.id for p in catalog.versions(g)] or [g])
+        else:
+            pids = [r[0] for r in catalog.con.execute(
+                "SELECT pid FROM pkm_version ORDER BY pid LIMIT ?", (args.guide_limit or 20,))]
+        ok = 0
+        for pid in pids:
+            res = sync_guide(store, catalog, pid, now, span=args.guide_span)
+            print(json.dumps(res, ensure_ascii=False))
+            ok += res.get("status") == "ok"
+        print(json.dumps({"synced": ok, "of": len(pids)}))
+        return 0 if ok else 1
     if args.feed:
         stats = feed(args.store, canonical_only=args.feed == "canonical")
         return 0 if stats["products"] else 1
