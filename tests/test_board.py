@@ -258,7 +258,7 @@ def test_home_hunt_counts_an_under_pc_ask_with_no_sales_as_a_deal(board):
     st.db.close()
     page = get("/")
     assert re.search(r'class="hun card sig-good" href="[^"]*"[^>]*data-key="ebay_browse:EBAY_US:pcdeal"', page)
-    assert "under PC market" in page
+    assert 'bi-src pc' in page
 
 
 def test_home_labels_the_grade_and_collapses_identical_asks(board):
@@ -273,9 +273,10 @@ def test_home_labels_the_grade_and_collapses_identical_asks(board):
     _add_listing(db, "psa1", payload=D(kinds=[], scenarios=[sc(pid=pid)], printing_id=pid, all_in_home=410.0, priced_share=1.0,
                                        grade_company="PSA", grade="1"))
     page = get("/")
-    assert 'class="card-grade g-graded">PSA 10<' in page
-    assert 'class="card-grade g-graded">PSA 1<' in page
-    assert 'class="card-grade g-raw">Raw<' in page
+    assert 'class="card-cond g-graded tier-gem" title="PSA 10"' in page
+    assert 'class="card-cond g-graded tier-low" title="PSA 1"' in page
+    assert '<span class="cc-num">10</span>' in page
+    assert 'class="card-cond g-raw' in page
     assert re.search(r'class="card-rep"[^>]*>\u00d72<', page)
     keys = re.findall(r'class="hun card sig-\w+" href="[^"]*"[^>]*data-key="ebay_browse:EBAY_US:(dup\d)"', page)
     assert len(keys) == 1, keys

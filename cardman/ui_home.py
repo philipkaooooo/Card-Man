@@ -593,16 +593,22 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
         elif aif2 and ref2 and ref2 > aif2 and aif2 >= ref2 * 0.20:
             edge_pct, edge_dir, edge_basis = (ref2 - aif2) / ref2 * 100, "up", "under price guide"
         cid = card_id_of(d, title)
-        gtag_text = "RAW" if gkind == "raw" else ("LOT" if gkind == "lot" else "GRADED · " + glabel)
         thumb = img(oa, "small", name or title or "", cls="bi-thumb") if oa else img(None, "small", name or title or "", cls="bi-thumb")
         tri = '<span class="bi-tri {}">{}</span>'.format(edge_dir, "▲" if edge_dir == "up" else "▼") if edge_dir else ""
-        edge_html = (tri + '<b>{:.0f}%</b><small>{}</small>'.format(edge_pct, e(edge_basis))) if edge_pct is not None else '<small>No sales history yet</small>'
+        if "PC" in edge_basis:
+            src = '<i class="bi-src pc" title="PriceCharting market">P</i>'
+        elif "guide" in edge_basis:
+            src = '<i class="bi-src guide" title="Price guide">G</i>'
+        elif edge_basis:
+            src = '<i class="bi-src sold" title="Sold ceiling">S</i>'
+        else:
+            src = ""
+        edge_html = (tri + '<b>{:.0f}%</b>'.format(edge_pct) + src) if edge_pct is not None else '<i class="bi-src none" title="No sales history yet">∅</i>'
+        cbadge = _cond_badge(d, title, glabel, gkind)
         info = ('<span class="bi-top">' + thumb
-                + '<span class="bi-id"><span class="bi-code">{}</span>'.format(e(cid or "—"))
-                + '<span class="bi-name">{}</span></span></span>'.format(e(name if (cid and not cid.isdigit()) else (title or name or "").strip()))
+                + '<span class="bi-code">{}</span></span>'.format(e(cid or "—"))
                 + '<span class="bi-edge r-{}">{}</span>'.format(e(code), edge_html)
-                + '<span class="bi-ask">Asking <b>{}</b><span class="bi-gtag g-{}">{}</span></span>'.format(
-                    e(M(aif2)) if aif2 else "—", e(gkind), e(gtag_text)))
+                + '<span class="bi-ask"><b>{}</b></span>'.format(e(M(aif2)) if aif2 else "—"))
         try:
             aip = d.get("all_in_home")
             base_p = aip if aip not in (None, "") else price
@@ -612,21 +618,22 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
         dkey = (pid or re.sub(r"[^a-z0-9]+", "", (title or "").lower()), glabel, pr)
         entries.append((rank, seen or "", dkey,
                         '<div class="hun-item">'
-                        '<a class="hun card sig-{}" href="{}" target="_blank" rel="noopener" data-key="{}" data-signal="{}">'
+                        '<a class="hun card sig-{}" href="/opp/{}" data-key="{}" data-signal="{}">'
+                        '<span class="card-art">'
                         '<span class="card-face">{}'
                         '<span class="card-seal s-{}" title="{}" aria-label="{}" data-tip="{}">{}</span>'
                         '<span class="card-info">{}</span>'
                         '<span class="laser l-{}"></span></span>'
-                        '<span class="card-id">{}</span>'
-                        '<span class="card-pi"><span class="card-price">{}</span><span class="card-grade g-{}">{}</span>{}</span>'
-                        '<span class="card-meta">{}<span class="card-when">{}</span></span>'
+                        '{}</span>'
+                        '<span class="card-foot"><span class="card-price">{}</span>'
+                        '<span class="card-id">{}</span>{}'
+                        '<span class="card-meta">{}<span class="card-when">{}</span></span></span>'
                         '</a>{}</div>'.format(
-                            e(code), e(url), e(key), e(code), art,
+                            e(code), quote(key, safe=""), e(key), e(code), art,
                             e(code), e(read), e(read), e(read), e(_SEAL.get(code, "?")),
-                            info, e(code),
-                            e(cid or "—"),
-                            e(price_txt), e(gkind), e(glabel), chip + "@@REP@@", _mkt_icon(source),
-                            ((e(when)) if when else "") + (" \u00b7 {} pics".format(own) if own > 1 else ""),
+                            info, e(code), cbadge,
+                            e(price_txt), e(cid or "—"), chip + "@@REP@@", _mkt_icon(source),
+                            ((e(when).replace(" ago", "")) if when else "") + (" ▣{}".format(own) if own > 1 else ""),
                             pilef)))
     groups = {}
     for rank, seen, dkey, html in entries:
@@ -643,7 +650,7 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
         reps.append((rank, seen, html.replace("@@REP@@", rep)))
     reps.sort(key=lambda x: x[1], reverse=True)
     reps.sort(key=lambda x: x[0])
-    tiles = [h for _r, _s, h in reps[:30]]
+    tiles = [h for _r, _s, h in reps[:48]]
     grid = (f'<div class="hungrid">{"".join(tiles)}</div>' if tiles else
             '<p class="empty">' + ("Nothing matches this filter yet — widen it above, or the collector has not reached this signal today."
                                    if v != "all" or t != "all" else
@@ -699,6 +706,36 @@ def _grade_label(d: dict, title: str) -> tuple[str, str]:
     if cond in _COND_ABBR:
         return _COND_ABBR[cond], "raw"
     return "Raw", "raw"
+
+
+_COND_NAME = {"MT": "Mint", "NM": "Near Mint", "EX": "Excellent", "LP": "Lightly Played",
+              "MP": "Moderately Played", "HP": "Heavily Played", "DMG": "Damaged"}
+
+
+def _cond_badge(d: dict, title: str, glabel: str, gkind: str) -> str:
+    """The corner badge: a premium slab for a graded card, a condition chip for raw, LOT for a lot.
+
+    Sits at the bottom-right corner straddling the card border. A slab reads grader over grade; gem
+    mint gets the gold holo frame. Raw shows the normalized condition code, or RAW when none is named."""
+    if gkind == "lot":
+        return '<span class="card-cond g-lot" title="Lot, not one card">LOT</span>'
+    if gkind == "graded":
+        parts = glabel.split(" ", 1)
+        grader, num = parts[0], (parts[1] if len(parts) > 1 else "")
+        try:
+            n = float(num)
+        except (TypeError, ValueError):
+            n = 0.0
+        tier = "gem" if n >= 10 else ("mint" if n >= 9 else ("nm" if n >= 7 else "low"))
+        return ('<span class="card-cond g-graded tier-{}" title="{}">'
+                '<span class="cc-grader">{}</span><span class="cc-num">{}</span></span>').format(
+                    tier, e(glabel), e(grader), e(num or "—"))
+    from . import conditions as cond
+    code = cond.normalize(d.get("condition")) or cond.title_condition(title)
+    if not code:
+        return '<span class="card-cond g-raw c-unk" title="Condition not stated">RAW</span>'
+    return '<span class="card-cond g-raw c-{}" title="{}">{}</span>'.format(
+        code.lower(), e(_COND_NAME.get(code, code)), e(code))
 
 
 def _pulse(st, now: datetime, game: str, M=None) -> str:
@@ -1865,9 +1902,10 @@ font-style:normal;font-weight:900;font-size:clamp(56px,10.5vw,118px);letter-spac
 -webkit-text-stroke:3px var(--surface);paint-order:stroke fill;text-shadow:0 4px 0 rgba(0,0,0,.08);
 transition:transform .35s cubic-bezier(.2,1.8,.4,1);transition-delay:calc(var(--i)*30ms)}
 .huntitle:hover span{transform:translateY(-8px) rotate(-4deg)}
-.hungrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(172px,1fr));gap:30px 20px}
-a.hun.card{position:relative;display:flex;flex-direction:column;align-items:center;gap:10px;text-decoration:none;color:inherit;border:0;border-radius:0;box-shadow:none;background:none}
+.hungrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:34px 22px}
+a.hun.card{position:relative;display:flex;flex-direction:column;align-items:stretch;gap:15px;text-decoration:none;color:inherit;border:0;border-radius:0;box-shadow:none;background:none}
 a.hun.card:hover,a.hun.card:focus-visible{transform:none;box-shadow:none}
+.card-art{position:relative;width:100%;overflow:visible}
 .card-face{position:relative;width:100%;aspect-ratio:421/614;border-radius:5%/3.6%;overflow:hidden;background:var(--surface);
 border:1px solid color-mix(in srgb,var(--fg) 20%,var(--line));box-shadow:0 2px 4px rgba(20,30,20,.07),0 14px 30px rgba(20,30,20,.14);
 transition:transform .18s var(--ease),box-shadow .18s var(--ease),border-color .16s}
@@ -1885,6 +1923,34 @@ a.hun.card:hover .card-face{transform:translateY(-5px) scale(1.015);box-shadow:0
 .card-seal{position:absolute;top:6px;right:6px;z-index:5;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;
 font:900 11px/1 "Helvetica Neue",Arial,sans-serif;color:#fff;box-shadow:0 2px 5px rgba(0,0,0,.3)}
 .card-seal.s-good{background:#2fbf71}.card-seal.s-avg{background:#e6a23c}.card-seal.s-bad{background:#e05252}.card-seal.s-none{background:var(--muted)}
+.card-cond{position:absolute;bottom:-9px;right:-9px;z-index:6;display:inline-flex;align-items:center;justify-content:center;
+ font:850 11px/1 var(--f-head);letter-spacing:.04em;padding:5px 8px;border-radius:8px;color:#fff;white-space:nowrap;
+ box-shadow:0 4px 12px rgba(0,0,0,.45),0 0 0 1.5px rgba(255,255,255,.14);pointer-events:none}
+.card-cond.g-raw.c-mt{background:linear-gradient(135deg,#27c08a,#1f9d6b)}
+.card-cond.g-raw.c-nm{background:linear-gradient(135deg,#2fbf71,#239a58)}
+.card-cond.g-raw.c-ex{background:linear-gradient(135deg,#3f7fe0,#2f6ce0)}
+.card-cond.g-raw.c-lp{background:linear-gradient(135deg,#eab04a,#e6a23c)}
+.card-cond.g-raw.c-mp{background:linear-gradient(135deg,#e6923c,#e0863c)}
+.card-cond.g-raw.c-hp{background:linear-gradient(135deg,#e66052,#e05252)}
+.card-cond.g-raw.c-dmg{background:linear-gradient(135deg,#c03a30,#b03030)}
+.card-cond.g-raw.c-unk{background:var(--surface-2);color:var(--mut);box-shadow:0 3px 9px rgba(0,0,0,.35),0 0 0 1.5px var(--line)}
+.card-cond.g-lot{background:var(--surface-2);color:var(--mut);box-shadow:0 3px 9px rgba(0,0,0,.35),0 0 0 1.5px var(--line)}
+.card-cond.g-graded{flex-direction:column;gap:0;width:40px;padding:0;border-radius:7px;overflow:hidden;
+ border:2px solid #d4af6a;background:#15130e;box-shadow:0 5px 14px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.1)}
+.card-cond.g-graded .cc-grader{width:100%;text-align:center;font:850 8px/1.5 var(--f-head);letter-spacing:.1em;
+ color:#1a1408;background:linear-gradient(135deg,#f3d98b,#d4af6a)}
+.card-cond.g-graded .cc-num{width:100%;text-align:center;font:900 17px/1.25 var(--f-head);color:#f6e7b8;
+ background:linear-gradient(180deg,#2a2416,#15130e)}
+.card-cond.g-graded.tier-gem{border-color:#e8c877;box-shadow:0 5px 16px rgba(0,0,0,.55),0 0 14px rgba(232,200,119,.45)}
+.card-cond.g-graded.tier-gem .cc-num{color:#ffe9a8;background:linear-gradient(180deg,#3a2f12,#241c08)}
+.card-cond.g-graded.tier-mint{border-color:#c9ccd4}
+.card-cond.g-graded.tier-mint .cc-grader{background:linear-gradient(135deg,#eef1f6,#b9c0cc);color:#14181f}
+.card-cond.g-graded.tier-mint .cc-num{color:#eef1f6;background:linear-gradient(180deg,#232833,#141821)}
+.card-cond.g-graded.tier-nm{border-color:#c99a6a}
+.card-cond.g-graded.tier-nm .cc-grader{background:linear-gradient(135deg,#e6b98a,#c99a6a);color:#1f1408}
+.card-cond.g-graded.tier-low{border-color:#8b909c}
+.card-cond.g-graded.tier-low .cc-grader{background:linear-gradient(135deg,#aeb4c0,#8b909c);color:#14181f}
+.card-cond.g-graded.tier-low .cc-num{color:#cdd2dc;background:linear-gradient(180deg,#20242c,#141821)}
 .laser{position:absolute;top:0;left:0;right:0;height:3px;z-index:4}
 .l-good{background:linear-gradient(90deg,#2fbf71,#5ad79a);box-shadow:0 0 10px #2fbf7180}
 .l-avg{background:linear-gradient(90deg,#e6a23c,#f0c078)}
@@ -1910,9 +1976,13 @@ display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hi
 .bi-edge b{font-size:17px;font-weight:850;line-height:1;font-variant-numeric:tabular-nums}
 .bi-tri{font-size:15px;line-height:1}
 .bi-tri.up{color:#5ad79a}.bi-tri.down{color:#f08080}
+.bi-src{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;
+ font:850 9.5px/1 var(--f-head);font-style:normal;color:#fff;flex:none}
+.bi-src.pc{background:#3f7fe0}.bi-src.guide{background:#8a7ef0}.bi-src.sold{background:#2fbf71}
+.bi-src.none{background:var(--surface-2);color:var(--mut);font-size:12px}
 .bi-edge.r-good b{color:#5ad79a}.bi-edge.r-avg b{color:#f0c078}.bi-edge.r-bad b{color:#f08080}.bi-edge.r-none b{color:#c2c8ce}
 .bi-ask{display:flex;align-items:center;gap:8px;padding:8px 12px 10px;font-size:10px;font-weight:750;letter-spacing:.08em;text-transform:uppercase;color:#9aa0a6}
-.bi-ask b{font-size:15px;font-weight:850;letter-spacing:-.01em;color:#fff;font-variant-numeric:tabular-nums;text-transform:none}
+.bi-ask b{font-size:18px;font-weight:850;letter-spacing:-.01em;color:#fff;font-variant-numeric:tabular-nums;text-transform:none}
 .bi-ask .bi-gtag{margin-left:auto}
 .bi-rows{display:flex;flex-direction:column;padding:6px 12px 2px}
 .bi-row{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:5px 0;border-top:1px solid rgba(244,238,223,.1)}
@@ -1926,17 +1996,13 @@ display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hi
 .bi-sparkrow .hun-spark .spark{width:100%;height:26px}
 .bi-why{margin-top:auto;padding:8px 12px 10px;border-top:1px solid rgba(244,238,223,.14);
 font-size:10.5px;line-height:1.45;color:#c2c8b1;background:rgba(0,0,0,.18)}
-.card-id{font:800 12px/1 "SF Mono",ui-monospace,Menlo,Consolas,monospace;letter-spacing:.04em;color:var(--fg);
-text-align:center;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
-.card-pi{display:flex;align-items:center;justify-content:center;gap:7px;flex-wrap:wrap}
-.card-price{background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:5px 18px;
+.card-foot{display:flex;align-items:center;gap:8px;width:100%;flex-wrap:wrap;padding:0 2px}
+.card-price{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:5px 13px;
 font-family:"Avenir Next","Helvetica Neue",Arial,sans-serif;font-size:21px;font-weight:850;letter-spacing:-.015em;color:var(--fg);font-variant-numeric:tabular-nums;white-space:nowrap;box-shadow:0 2px 6px rgba(30,40,30,.1)}
-.card-grade{font:850 11.5px/1 "Helvetica Neue",Arial,sans-serif;letter-spacing:.03em;padding:5px 11px;border-radius:999px;white-space:nowrap}
-.card-grade.g-graded{color:#5b48c8;background:rgba(138,126,240,.16);border:1px solid rgba(138,126,240,.55)}
-.card-grade.g-raw{color:var(--fg2);background:var(--surface);border:1px solid var(--line)}
-.card-grade.g-lot{color:#a4701d;background:rgba(230,162,60,.18);border:1px solid rgba(230,162,60,.55)}
+.card-id{font:800 11px/1 "SF Mono",ui-monospace,Menlo,Consolas,monospace;letter-spacing:.03em;color:var(--mut);
+font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46%}
 .card-rep{font:800 10.5px/1 "Helvetica Neue",Arial,sans-serif;color:#fff;background:var(--fg);padding:4px 8px;border-radius:999px;white-space:nowrap}
-.card-meta{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);white-space:nowrap;max-width:100%;overflow:hidden}
+.card-meta{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);white-space:nowrap;margin-left:auto;max-width:100%;overflow:hidden}
 .card-when{overflow:hidden;text-overflow:ellipsis}
 .hun-deal{display:inline-block;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:750}
 .hun-deal.d-good{color:#1c8a4d;background:rgba(47,191,113,.16)}
@@ -1955,7 +2021,7 @@ font-family:"Avenir Next","Helvetica Neue",Arial,sans-serif;font-size:21px;font-
 .bi-edge.r-good b{color:#1c8a4d}.bi-edge.r-avg b{color:#a4701d}.bi-edge.r-bad b{color:#c0392b}.bi-edge.r-none b{color:var(--muted)}
 .bi-rows{padding:2px 0}.bi-row{padding:2px 0;border-top:0}.bi-row small{color:var(--muted)}.bi-row b{color:var(--fg);font-size:12px}
 .bi-pcval{color:var(--muted)}.bi-sparkrow,.bi-why{display:none}}
-@media(max-width:460px){.hungrid{grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:18px 12px}}
+@media(max-width:460px){.hungrid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:24px 14px}.card-cond{bottom:-7px;right:-7px}}
 .mkt{display:inline-flex;align-items:center;justify-content:center;width:19px;height:19px;border-radius:50%;flex:none;
 font:700 11px/1 "Helvetica Neue",Arial,sans-serif;color:#fff}
 .huntag{margin:2px auto 14px;display:flex;align-items:center;justify-content:center;gap:14px;
