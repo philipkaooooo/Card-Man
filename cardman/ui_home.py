@@ -31,6 +31,28 @@ def passcode_of(printing_id: str | None) -> str | None:
     return m.group(1) if m else None
 
 
+_SETCODE = re.compile(r"\b([A-Z0-9]{2,6}-[A-Z]{2}\d{2,4})\b")
+
+
+def card_id_of(d: dict, title: str | None) -> str:
+    """The listing's own full set code (LC01-EN004), never a passcode-default printing.
+
+    A Yu-Gi-Oh number alone is not unique; the full set code plus rarity and edition is. The scenarios carry the
+    exact printings the listing could be: when they agree on one set code, that is the card's ID. Otherwise the
+    set code written in the title wins. A bare passcode is the last resort - never a guessed set, because the
+    artwork is passcode-keyed and shows whichever printing YGOPRODeck chose, not the one being sold."""
+    pids = [d.get("printing_id")] + [s.get("printing_id") for s in (d.get("scenarios") or [])]
+    codes = {p.split(":")[2] for p in pids if p and len(p.split(":")) > 2 and p.split(":")[2]}
+    if len(codes) == 1:
+        return codes.pop()
+    m = _SETCODE.search(title or "")
+    if m:
+        return m.group(1)
+    if len(codes) > 1:
+        return ""
+    return passcode_of(d.get("printing_id")) or ""
+
+
 def img(passcode: str | None, size: str = "small", alt: str = "", cls: str = "card") -> str:
     if not passcode:
         return f'<span class="{cls} ph" role="img" aria-label="No exact card yet"><span>?</span></span>'
@@ -555,30 +577,30 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
         ceil2 = float(mb) if mb else 0.0
         comp2 = float(rate) if rate is not None else 0.0
         ref2 = float(refmid) if refmid else 0.0
+        edge_pct, edge_dir, edge_basis = None, "", ""
         if aif2 and ceil2 and ceil2 > aif2:
-            edge = "{:.0f}% under what to pay · asking {}".format((ceil2 - aif2) / ceil2 * 100, M(aif2))
+            edge_pct, edge_dir, edge_basis = (ceil2 - aif2) / ceil2 * 100, "up", "under what to pay"
         elif aif2 and comp2 and comp2 > aif2 and aif2 >= comp2 * 0.20:
-            edge = "{:.0f}% under the PC comp · asking {}".format((comp2 - aif2) / comp2 * 100, M(aif2))
+            edge_pct, edge_dir, edge_basis = (comp2 - aif2) / comp2 * 100, "up", "under PC market"
         elif aif2 and ceil2 and aif2 > ceil2:
-            edge = "{:.0f}% above what to pay · asking {}".format((aif2 - ceil2) / ceil2 * 100, M(aif2))
+            edge_pct, edge_dir, edge_basis = (aif2 - ceil2) / ceil2 * 100, "down", "over what to pay"
         elif aif2 and comp2 and aif2 > comp2:
-            edge = "{:.0f}% above the PC comp · asking {}".format((aif2 - comp2) / comp2 * 100, M(aif2))
+            edge_pct, edge_dir, edge_basis = (aif2 - comp2) / comp2 * 100, "down", "over PC market"
         elif aif2 and ref2 and aif2 > ref2:
-            edge = "{:.0f}% above the price guide · asking {}".format((aif2 - ref2) / ref2 * 100, M(aif2))
+            edge_pct, edge_dir, edge_basis = (aif2 - ref2) / ref2 * 100, "down", "over price guide"
         elif aif2 and ref2 and ref2 > aif2 and aif2 >= ref2 * 0.20:
-            edge = "{:.0f}% under the price guide · asking {}".format((ref2 - aif2) / ref2 * 100, M(aif2))
-        elif code == "none":
-            edge = "No sales history yet — read on identity alone"
-        else:
-            edge = "Asking {}".format(M(aif2)) if aif2 else "Price not settled"
+            edge_pct, edge_dir, edge_basis = (ref2 - aif2) / ref2 * 100, "up", "under price guide"
+        cid = card_id_of(d, title)
         gtag_text = "RAW" if gkind == "raw" else ("LOT" if gkind == "lot" else "GRADED · " + glabel)
         thumb = img(oa, "small", name or title or "", cls="bi-thumb") if oa else img(None, "small", name or title or "", cls="bi-thumb")
+        tri = '<span class="bi-tri {}">{}</span>'.format(edge_dir, "▲" if edge_dir == "up" else "▼") if edge_dir else ""
+        edge_html = (tri + '<b>{:.0f}%</b><small>{}</small>'.format(edge_pct, e(edge_basis))) if edge_pct is not None else '<small>No sales history yet</small>'
         info = ('<span class="bi-top">' + thumb
-                + '<span class="bi-id"><span class="bi-gtag g-{}">{}</span>'.format(e(gkind), e(gtag_text))
+                + '<span class="bi-id"><span class="bi-code">{}</span>'.format(e(cid or "—"))
                 + '<span class="bi-name">{}</span></span></span>'.format(e(name or (title or "").strip()))
-                + '<span class="bi-edge r-{}"><small>The edge</small><b>{}</b></span>'.format(e(code), e(edge))
-                + ('<span class="bi-rows">{}</span>'.format(rows) if rows else "")
-                + ('<span class="bi-why">{}</span>'.format(e(why)) if why else ""))
+                + '<span class="bi-edge r-{}">{}</span>'.format(e(code), edge_html)
+                + '<span class="bi-ask">Asking <b>{}</b><span class="bi-gtag g-{}">{}</span></span>'.format(
+                    e(M(aif2)) if aif2 else "—", e(gkind), e(gtag_text)))
         try:
             aip = d.get("all_in_home")
             base_p = aip if aip not in (None, "") else price
@@ -588,17 +610,19 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
         dkey = (pid or re.sub(r"[^a-z0-9]+", "", (title or "").lower()), glabel, pr)
         entries.append((rank, seen or "", dkey,
                         '<div class="hun-item">'
-                        '<a class="hun card sig-{}" href="{}" data-key="{}" data-signal="{}">'
+                        '<a class="hun card sig-{}" href="{}" target="_blank" rel="noopener" data-key="{}" data-signal="{}">'
                         '<span class="card-face">{}'
                         '<span class="card-seal s-{}" title="{}" aria-label="{}" data-tip="{}">{}</span>'
                         '<span class="card-info">{}</span>'
                         '<span class="laser l-{}"></span></span>'
+                        '<span class="card-id">{}</span>'
                         '<span class="card-pi"><span class="card-price">{}</span><span class="card-grade g-{}">{}</span>{}</span>'
                         '<span class="card-meta">{}<span class="card-when">{}</span></span>'
                         '</a>{}</div>'.format(
                             e(code), e(url), e(key), e(code), art,
                             e(code), e(read), e(read), e(read), e(_SEAL.get(code, "?")),
                             info, e(code),
+                            e(cid or "—"),
                             e(price_txt), e(gkind), e(glabel), chip + "@@REP@@", _mkt_icon(source),
                             ((e(when)) if when else "") + (" \u00b7 {} pics".format(own) if own > 1 else ""),
                             pilef)))
@@ -1871,16 +1895,23 @@ a.hun.card:hover .card-info,a.hun.card:focus-visible .card-info{opacity:1;transf
 .bi-top{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(244,238,223,.14);background:rgba(255,255,255,.04)}
 .bi-thumb{width:34px;height:48px;object-fit:contain;flex:none;border-radius:3px;background:rgba(255,255,255,.07);border:1px solid rgba(244,238,223,.2)}
 .bi-id{display:flex;flex-direction:column;gap:5px;min-width:0}
+.bi-code{font:800 12px/1 "SF Mono",ui-monospace,Menlo,Consolas,monospace;letter-spacing:.04em;color:#fff;
+background:rgba(255,255,255,.1);border:1px solid rgba(244,238,223,.3);border-radius:5px;padding:4px 7px;align-self:flex-start;white-space:nowrap}
 .bi-gtag{align-self:flex-start;font:800 10.5px/1 "Helvetica Neue",Arial,sans-serif;letter-spacing:.06em;padding:4px 9px;border-radius:999px;white-space:nowrap}
 .bi-gtag.g-graded{color:#cdbcff;background:rgba(138,126,240,.24);border:1px solid rgba(138,126,240,.6)}
 .bi-gtag.g-raw{color:#e7dcc4;background:rgba(244,238,223,.12);border:1px solid rgba(244,238,223,.32)}
 .bi-gtag.g-lot{color:#f0c078;background:rgba(230,162,60,.22);border:1px solid rgba(230,162,60,.6)}
 .bi-name{font-size:12px;font-weight:650;line-height:1.3;color:#f4eedf;
 display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.bi-edge{display:flex;flex-direction:column;gap:3px;padding:9px 12px;border-bottom:1px solid rgba(244,238,223,.1)}
-.bi-edge small{font-size:9px;font-weight:750;letter-spacing:.12em;text-transform:uppercase;color:#9aa0a6}
-.bi-edge b{font-size:13px;font-weight:800;line-height:1.3}
+.bi-edge{display:flex;flex-direction:row;align-items:center;gap:7px;padding:9px 12px;border-bottom:1px solid rgba(244,238,223,.1)}
+.bi-edge small{font-size:9px;font-weight:750;letter-spacing:.08em;text-transform:uppercase;color:#9aa0a6}
+.bi-edge b{font-size:17px;font-weight:850;line-height:1;font-variant-numeric:tabular-nums}
+.bi-tri{font-size:15px;line-height:1}
+.bi-tri.up{color:#5ad79a}.bi-tri.down{color:#f08080}
 .bi-edge.r-good b{color:#5ad79a}.bi-edge.r-avg b{color:#f0c078}.bi-edge.r-bad b{color:#f08080}.bi-edge.r-none b{color:#c2c8ce}
+.bi-ask{display:flex;align-items:center;gap:8px;padding:8px 12px 10px;font-size:10px;font-weight:750;letter-spacing:.08em;text-transform:uppercase;color:#9aa0a6}
+.bi-ask b{font-size:15px;font-weight:850;letter-spacing:-.01em;color:#fff;font-variant-numeric:tabular-nums;text-transform:none}
+.bi-ask .bi-gtag{margin-left:auto}
 .bi-rows{display:flex;flex-direction:column;padding:6px 12px 2px}
 .bi-row{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:5px 0;border-top:1px solid rgba(244,238,223,.1)}
 .bi-row:first-child{border-top:0}
@@ -1893,10 +1924,12 @@ display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hi
 .bi-sparkrow .hun-spark .spark{width:100%;height:26px}
 .bi-why{margin-top:auto;padding:8px 12px 10px;border-top:1px solid rgba(244,238,223,.14);
 font-size:10.5px;line-height:1.45;color:#c2c8b1;background:rgba(0,0,0,.18)}
-.card-pi{display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap}
-.card-price{background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:4px 16px;
-font-family:"Avenir Next","Helvetica Neue",Arial,sans-serif;font-size:18px;font-weight:800;letter-spacing:-.01em;color:var(--fg);font-variant-numeric:tabular-nums;white-space:nowrap;box-shadow:0 2px 6px rgba(30,40,30,.08)}
-.card-grade{font:800 10.5px/1 "Helvetica Neue",Arial,sans-serif;letter-spacing:.03em;padding:4px 9px;border-radius:999px;white-space:nowrap}
+.card-id{font:800 12px/1 "SF Mono",ui-monospace,Menlo,Consolas,monospace;letter-spacing:.04em;color:var(--fg);
+text-align:center;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.card-pi{display:flex;align-items:center;justify-content:center;gap:7px;flex-wrap:wrap}
+.card-price{background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:5px 18px;
+font-family:"Avenir Next","Helvetica Neue",Arial,sans-serif;font-size:21px;font-weight:850;letter-spacing:-.015em;color:var(--fg);font-variant-numeric:tabular-nums;white-space:nowrap;box-shadow:0 2px 6px rgba(30,40,30,.1)}
+.card-grade{font:850 11.5px/1 "Helvetica Neue",Arial,sans-serif;letter-spacing:.03em;padding:5px 11px;border-radius:999px;white-space:nowrap}
 .card-grade.g-graded{color:#5b48c8;background:rgba(138,126,240,.16);border:1px solid rgba(138,126,240,.55)}
 .card-grade.g-raw{color:var(--fg2);background:var(--surface);border:1px solid var(--line)}
 .card-grade.g-lot{color:#a4701d;background:rgba(230,162,60,.18);border:1px solid rgba(230,162,60,.55)}
@@ -1913,6 +1946,9 @@ font-family:"Avenir Next","Helvetica Neue",Arial,sans-serif;font-size:18px;font-
 .bi-top{padding:0;border-bottom:0;background:none;gap:8px}.bi-thumb{width:28px;height:40px}
 .bi-gtag.g-graded{color:#5b48c8}.bi-gtag.g-raw{color:var(--fg2)}.bi-gtag.g-lot{color:#a4701d}
 .bi-name{color:var(--fg);font-size:11px}
+.bi-code{color:var(--fg);background:var(--surface);border-color:var(--line)}
+.bi-ask{padding:4px 0;color:var(--muted)}.bi-ask b{color:var(--fg)}
+.bi-tri.up{color:#1c8a4d}.bi-tri.down{color:#c0392b}
 .bi-edge{padding:4px 0;border-bottom:0}.bi-edge small{color:var(--muted)}
 .bi-edge.r-good b{color:#1c8a4d}.bi-edge.r-avg b{color:#a4701d}.bi-edge.r-bad b{color:#c0392b}.bi-edge.r-none b{color:var(--muted)}
 .bi-rows{padding:2px 0}.bi-row{padding:2px 0;border-top:0}.bi-row small{color:var(--muted)}.bi-row b{color:var(--fg);font-size:12px}

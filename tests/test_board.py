@@ -238,8 +238,8 @@ def test_home_hunt_passes_on_a_measured_discount_not_a_flag(board):
     # a hair over the ceiling is fair market, worth a look, not a skip
     _add_listing(db, "fair", payload=D(kinds=[], scenarios=[sc(pid=pid, max_buy=300.0)], printing_id=pid, all_in_home=320.0, priced_share=1.0))
     page = get("/")
-    assert re.search(r'class="hun card sig-good" href="[^"]*" data-key="ebay_browse:EBAY_US:deal"', page)
-    assert re.search(r'class="hun card sig-avg" href="[^"]*" data-key="ebay_browse:EBAY_US:fair"', page)
+    assert re.search(r'class="hun card sig-good" href="[^"]*"[^>]*data-key="ebay_browse:EBAY_US:deal"', page)
+    assert re.search(r'class="hun card sig-avg" href="[^"]*"[^>]*data-key="ebay_browse:EBAY_US:fair"', page)
     assert "Under what to pay" in page and "Worth a second look" in page
 
 
@@ -257,8 +257,8 @@ def test_home_hunt_counts_an_under_pc_ask_with_no_sales_as_a_deal(board):
                       ("USD", "TWD", "32", "2026-11-03T12:00:00+00:00", "test", "0", "2026-11-03T12:00:00+00:00"))
     st.db.close()
     page = get("/")
-    assert re.search(r'class="hun card sig-good" href="[^"]*" data-key="ebay_browse:EBAY_US:pcdeal"', page)
-    assert "PriceCharting comp" in page
+    assert re.search(r'class="hun card sig-good" href="[^"]*"[^>]*data-key="ebay_browse:EBAY_US:pcdeal"', page)
+    assert "under PC market" in page
 
 
 def test_home_labels_the_grade_and_collapses_identical_asks(board):
@@ -277,7 +277,7 @@ def test_home_labels_the_grade_and_collapses_identical_asks(board):
     assert 'class="card-grade g-graded">PSA 1<' in page
     assert 'class="card-grade g-raw">Raw<' in page
     assert re.search(r'class="card-rep"[^>]*>\u00d72<', page)
-    keys = re.findall(r'class="hun card sig-\w+" href="[^"]*" data-key="ebay_browse:EBAY_US:(dup\d)"', page)
+    keys = re.findall(r'class="hun card sig-\w+" href="[^"]*"[^>]*data-key="ebay_browse:EBAY_US:(dup\d)"', page)
     assert len(keys) == 1, keys
 
 
