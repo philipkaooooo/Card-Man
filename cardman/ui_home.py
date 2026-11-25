@@ -42,15 +42,17 @@ def card_id_of(d: dict, title: str | None) -> str:
     set code written in the title wins. A bare passcode is the last resort - never a guessed set, because the
     artwork is passcode-keyed and shows whichever printing YGOPRODeck chose, not the one being sold."""
     pids = [d.get("printing_id")] + [s.get("printing_id") for s in (d.get("scenarios") or [])]
-    codes = {p.split(":")[2] for p in pids if p and len(p.split(":")) > 2 and p.split(":")[2]}
+    codes = {p.split(":")[2] for p in pids if p and len(p.split(":")) > 2 and p.split(":")[2] not in ("", "-")}
     if len(codes) == 1:
         return codes.pop()
     m = _SETCODE.search(title or "")
     if m:
         return m.group(1)
-    if len(codes) > 1:
-        return ""
-    return passcode_of(d.get("printing_id")) or ""
+    for p in pids:
+        pc = passcode_of(p)
+        if pc:
+            return pc
+    return ""
 
 
 def img(passcode: str | None, size: str = "small", alt: str = "", cls: str = "card") -> str:
@@ -597,7 +599,7 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
         edge_html = (tri + '<b>{:.0f}%</b><small>{}</small>'.format(edge_pct, e(edge_basis))) if edge_pct is not None else '<small>No sales history yet</small>'
         info = ('<span class="bi-top">' + thumb
                 + '<span class="bi-id"><span class="bi-code">{}</span>'.format(e(cid or "—"))
-                + '<span class="bi-name">{}</span></span></span>'.format(e(name or (title or "").strip()))
+                + '<span class="bi-name">{}</span></span></span>'.format(e(name if (cid and not cid.isdigit()) else (title or name or "").strip()))
                 + '<span class="bi-edge r-{}">{}</span>'.format(e(code), edge_html)
                 + '<span class="bi-ask">Asking <b>{}</b><span class="bi-gtag g-{}">{}</span></span>'.format(
                     e(M(aif2)) if aif2 else "—", e(gkind), e(gtag_text)))
