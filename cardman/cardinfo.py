@@ -16,6 +16,7 @@ import difflib
 import math
 import hashlib
 import json
+import os
 import re
 import sqlite3
 import threading
@@ -304,7 +305,8 @@ class ImageCache:
         if not body or not any(k.split("/")[1] in ctype for k in kinds):
             miss.touch()
             return None
-        tmp = path.with_suffix(path.suffix + ".tmp")
+        # A private temp file per writer: two requests for the same uncached image must not share one.
+        tmp = path.with_suffix(f"{path.suffix}.{os.getpid()}.{threading.get_ident()}.tmp")
         tmp.write_bytes(body)
         tmp.replace(path)
         return body, kinds[0]
@@ -315,6 +317,19 @@ class ImageCache:
             return PLACEHOLDER, "image/svg+xml"
         path = self.root / "artwork" / (size or "full") / f"{passcode}.jpg"
         got = self._cached(path, ARTWORK_URL.format(size=f"_{size}" if size else "", passcode=passcode), ("image/jpeg",))
+        return got or (PLACEHOLDER, "image/svg+xml")
+
+    def pkm(self, card_id: str, url: str | None, size: str = "small") -> tuple[bytes, str]:
+        """A Pokémon card picture from images.pokemontcg.io or Scrydex (newer sets), cached like the Yu-Gi-Oh!
+        artwork."""
+        url = url or ""
+        tcg = url.startswith("https://tcgplayer-cdn.tcgplayer.com/")
+        ok_host = url.startswith("https://images.pokemontcg.io/") or url.startswith("https://images.scrydex.com/")
+        if not re.fullmatch(r"[a-z0-9.]{2,16}-[A-Za-z0-9]{1,10}", card_id or "") or size not in ("small", "large") \
+                or not (ok_host or tcg):
+            return PLACEHOLDER, "image/svg+xml"
+        path = self.root / "pkm" / size / (f"{card_id}.jpg" if tcg else f"{card_id}.png")
+        got = self._cached(path, url, ("image/jpeg",) if tcg else ("image/png",))
         return got or (PLACEHOLDER, "image/svg+xml")
 
     def scan(self, filename: str) -> tuple[bytes, str]:

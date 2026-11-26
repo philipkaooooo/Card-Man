@@ -68,13 +68,17 @@ def assess(observations: list[MarketObservation], as_of: datetime) -> dict[str, 
             flag(o, SHIPPING_GAMED, f"Shipping {o.shipping_amount} dwarfs the price {o.original_amount}: the sale price is not the real price.")
 
     # Sales kept so far, strongest first: a weaker record matching one is the duplicate.
+    # One-to-one: a kept sale absorbs at most one record from each other source, so two real sales at the same price
+    # on one site are not both swallowed by a single sale seen on another.
     kept: list[MarketObservation] = []
+    absorbed: set[tuple[str, str]] = set()
     for o in sales:
-        twin = next((k for k in kept if k.source != o.source and k.currency == o.currency
+        twin = next((k for k in kept if k.source != o.source and (k.id, o.source) not in absorbed and k.currency == o.currency
                      and abs(k.original_amount - o.original_amount) <= k.original_amount * Decimal('0.01')
                      and abs(k.event_time - o.event_time) <= timedelta(days=2)
                      and (k.seller_ref == o.seller_ref or not k.seller_ref or not o.seller_ref)), None)
         if twin:
+            absorbed.add((twin.id, o.source))
             flag(o, CROSS_POST_DUP, f"Same price within 2 days as {twin.id} on {twin.source}.")
         else:
             kept.append(o)

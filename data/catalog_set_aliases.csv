@@ -1,0 +1,60 @@
+game,source,source_set,our_set,note
+# Hand-checked: TCGplayer set names that differ from the pokemontcg.io / identity names. One row per set.
+pkm,tcgplayer,SM Base Set,sm1,Sun & Moon base set
+pkm,tcgplayer,SM - Burning Shadows,sm3,
+pkm,tcgplayer,SM Promos,smp,SM Black Star Promos
+pkm,tcgplayer,SWSH: Sword & Shield Promo Cards,swshp,SWSH Black Star Promos
+pkm,tcgplayer,SV: Scarlet & Violet Promo Cards,svp,Scarlet & Violet Black Star Promos
+pkm,tcgplayer,Black and White Promos,bwp,BW Black Star Promos
+pkm,tcgplayer,XY Promos,xyp,XY Black Star Promos
+pkm,tcgplayer,Diamond and Pearl Promos,dpp,DP Black Star Promos
+pkm,tcgplayer,Nintendo Promos,np,Nintendo Black Star Promos
+pkm,tcgplayer,WoTC Promo,basep,Wizards Black Star Promos
+pkm,tcgplayer,HGSS Promos,hsp,HGSS Black Star Promos
+pkm,tcgplayer,Rumble,ru1,Pokémon Rumble
+pkm,tcgplayer,McDonald's Promos 2011,mcd11,McDonald's Collection 2011
+pkm,tcgplayer,McDonald's Promos 2012,mcd12,
+pkm,tcgplayer,McDonald's Promos 2014,mcd14,
+pkm,tcgplayer,McDonald's Promos 2015,mcd15,
+pkm,tcgplayer,McDonald's Promos 2016,mcd16,
+pkm,tcgplayer,McDonald's Promos 2017,mcd17,
+pkm,tcgplayer,McDonald's Promos 2018,mcd18,
+pkm,tcgplayer,McDonald's Promos 2019,mcd19,
+pkm,tcgplayer,McDonald's 25th Anniversary Promos,mcd21,McDonald's Collection 2021 (25th Anniversary)
+pkm,tcgplayer,McDonald's Promos 2022,mcd22,
+pkm,tcgplayer,EX Trainer Kit 1: Latias & Latios,tk1a|tk1b,one TCGplayer group for both decks
+pkm,tcgplayer,EX Trainer Kit 2: Plusle & Minun,tk2a|tk2b,one TCGplayer group for both decks
+# TCGdex set ids that differ from ours (completeness check). "-" = not traded as single cards; the note says why.
+pkm,tcgdex,30th-c,me55c,30th Celebration Classic Collection
+pkm,tcgdex,2023sv,tcg-g23306,McDonald's Promos 2023
+pkm,tcgdex,2024sv,tcg-g24163,McDonald's Promos 2024
+pkm,tcgdex,fut2020,fut20,Pokémon Futsal Collection
+pkm,tcgdex,mee,tcg-g24461,MEE: Mega Evolution Energies
+pkm,tcgdex,mep,tcg-g24451,ME: Mega Evolution Promo
+pkm,tcgdex,tk-dp-l,tcg-g1541,DP Trainer Kit: Manaphy & Lucario (one TCGplayer group for both decks)
+pkm,tcgdex,tk-dp-m,tcg-g1541,
+pkm,tcgdex,tk-hs-g,tcg-g1540,HGSS Trainer Kit: Gyarados & Raichu
+pkm,tcgdex,tk-hs-r,tcg-g1540,
+pkm,tcgdex,tk-bw-e,tcg-g1538,BW Trainer Kit: Excadrill & Zoroark
+pkm,tcgdex,tk-bw-z,tcg-g1538,
+pkm,tcgdex,tk-sm-l,tcg-g2069,SM Trainer Kit: Lycanroc & Alolan Raichu
+pkm,tcgdex,tk-sm-r,tcg-g2069,
+pkm,tcgdex,tk-xy-b,tcg-g1533,XY Trainer Kit: Bisharp & Wigglytuff
+pkm,tcgdex,tk-xy-w,tcg-g1533,
+pkm,tcgdex,tk-xy-latia,tcg-g1536,XY Trainer Kit: Latias & Latios
+pkm,tcgdex,tk-xy-latio,tcg-g1536,
+pkm,tcgdex,tk-xy-p,tcg-g1796,XY Trainer Kit: Pikachu Libre & Suicune
+pkm,tcgdex,tk-xy-su,tcg-g1796,
+pkm,tcgdex,tk-xy-sy,tcg-g1532,XY Trainer Kit: Sylveon & Noivern
+pkm,tcgdex,tk-xy-n,tcg-g1532,
+pkm,tcgplayer,Generations: Radiant Collection,g1,our source keeps the RC cards inside Generations
+pkm,tcgplayer,Legendary Treasures: Radiant Collection,bw11,our source keeps the RC cards inside Legendary Treasures
+pkm,tcgdex,rc,bw11,Radiant Collection (inside Legendary Treasures)
+pkm,tcgdex,exu,ex10,Unown A-Z ! ? are inside Unseen Forces
+pkm,tcgdex,xya,xy4|xy3|xy10|xy6|xy9|g1,"Yellow ""A"" alternates sit in their own sets (24a, 28a, 54a, 55a, 92a, 107a)"
+pkm,tcgdex,miscp,tcg-g2374,Ancient Mew is in TCGplayer's Miscellaneous Cards & Products
+pkm,tcgdex,ex5.5,-,Poké Card Creator Pack: sold only as a sealed pack; TCGplayer lists no single cards
+pkm,tcgdex,mfb,-,My First Battle: sold only as sealed starter decks; TCGplayer lists no single cards
+ygo,ygoprodeck,Make-A-Wish Foundation promotional card,-,Tyler the Great Warrior: a single copy exists; never sold
+ygo,ygoprodeck,Yu-Gi-Oh! World Championship 2005 prize cards,-,one-of-a-kind prize cards; never sold
+ygo,ygoprodeck,Yu-Gi-Oh! World Championship 2004 prize cards,-,Ulevo and Meteo the Matchless are one-of-a-kind prize cards (Sengenjin is in our list under the tournament promos)

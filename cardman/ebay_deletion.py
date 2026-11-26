@@ -51,6 +51,11 @@ def _canonical_hash(data: dict) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
+_TOKEN = re.compile(rb"[A-Za-z0-9_.\-]{1,200}")
+_TOKEN_S = re.compile(r"[A-Za-z0-9_.\-]{1,200}")
+_ALLOWED = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-")
+
+
 def purge_database(path: str | Path, identifiers: list[str]) -> PurgeResult:
     res = PurgeResult()
     rx = _pattern(identifiers)
@@ -58,10 +63,22 @@ def purge_database(path: str | Path, identifiers: list[str]) -> PurgeResult:
     if rx is None or not path.exists():
         return res
     ids = set(identifiers)
+    # A token screen decides whether a value can hold a whole-word match at all; the token alphabet is a superset of
+    # the whole-word boundaries, so the screen never passes a value the pattern would match. An identifier outside the
+    # alphabet (an EIAS token carries + / =) is screened by plain containment instead: a whole-word match implies it.
+    plain = [i for i in ids if not set(i) <= _ALLOWED]
+    rx_plain = re.compile("|".join(map(re.escape, plain))) if plain else None
+
+    def hits(v) -> bool:
+        return isinstance(v, str) and (any(t in ids for t in _TOKEN_S.findall(v)) or (rx_plain is not None and rx_plain.search(v) is not None))
+
+    def scrub(v):
+        return rx.sub(REDACTED, v) if hits(v) else v
+
     db = sqlite3.connect(str(path), timeout=30)
     db.execute("PRAGMA secure_delete=ON")
-    db.create_function("cm_has", 1, lambda v: 1 if isinstance(v, str) and rx.search(v) else 0, deterministic=True)
-    db.create_function("cm_scrub", 1, lambda v: rx.sub(REDACTED, v) if isinstance(v, str) else v, deterministic=True)
+    db.create_function("cm_has", 1, lambda v: 1 if hits(v) else 0, deterministic=True)
+    db.create_function("cm_scrub", 1, scrub, deterministic=True)
     tables = [r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
     with db:
         # Structured seller fields become empty, not a shared placeholder that would look like one busy seller.
@@ -88,22 +105,47 @@ def purge_database(path: str | Path, identifiers: list[str]) -> PurgeResult:
             cols = [c[1] for c in db.execute(f'PRAGMA table_info("{t}")') if c[2].upper() == "TEXT" and not c[5]]
             for c in cols:
                 res.rows += db.execute(f'UPDATE "{t}" SET "{c}"=cm_scrub("{c}") WHERE cm_has("{c}")').rowcount
-    if res.rows:
+    if res.rows and _space_for_vacuum(path):
         db.execute("VACUUM")
     db.close()
     return res
 
 
+def _space_for_vacuum(path: Path) -> bool:
+    """VACUUM rebuilds the file next to itself; without room it fails the whole purge. secure_delete already zeroed
+    the freed pages, so skipping the shrink leaves nothing readable, only slack in the file."""
+    try:
+        need = path.stat().st_size * 1.1
+        free = os.statvfs(path.parent).f_bavail * os.statvfs(path.parent).f_frsize
+        return free > need
+    except OSError:
+        return False
+
+
+_TOKEN = re.compile(rb"[A-Za-z0-9_.\-+/@*]{3,120}")
+_ALLOWED = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-+/@*")
+
+
 def purge_files(raw_root: str | Path, identifiers: list[str]) -> int:
-    rx = _pattern(identifiers)
+    ids = {i.encode() for i in identifiers if i}
     root = Path(raw_root)
-    if rx is None or not root.exists():
+    if not ids or not root.exists():
         return 0
+    rx = _pattern(identifiers)
+    # An identifier outside the token alphabet cannot be found by the fast membership test; containment is the cheap
+    # equivalent for those, since a match necessarily contains the identifier as written.
+    plain = [i.encode() for i in identifiers if i and not set(i) <= _ALLOWED]
+    rx_plain = re.compile(b"|".join(map(re.escape, plain))) if plain else None
     changed = 0
     for f in root.rglob("*"):
         if not f.is_file():
             continue
-        text = f.read_bytes().decode("utf-8", errors="surrogateescape")
+        data = f.read_bytes()
+        # Far cheaper than a 1,200-way alternation scoped to whole words: a file without any candidate token cannot
+        # contain a match, so only those that do pay for the precise substitution.
+        if not any(t in ids for t in _TOKEN.findall(data)) and (rx_plain is None or rx_plain.search(data) is None):
+            continue
+        text = data.decode("utf-8", errors="surrogateescape")
         new = rx.sub(REDACTED, text)
         if new != text:
             with open(f, "r+b") as out:     # same blocks where the filesystem allows it
@@ -159,15 +201,27 @@ def sync(*, url: str | None = None, secret: str | None = None, databases=None, r
     raw = raw if raw is not None else paths["raw"]
     log_db = log_db or databases[0]
     total = {"configured": True, "processed": 0, "rows": 0, "files": 0}
+    records: list[dict] = []
+    seen_ids: set[str] = set()
     for _ in range(max_batches):
-        records = call(url, secret)["deletions"]
-        if not records:
+        batch = [r for r in call(url, secret)["deletions"] if r.get("notificationId") and r["notificationId"] not in seen_ids]
+        if not batch:
             break
+        seen_ids.update(r["notificationId"] for r in batch)
+        records += batch
+    # One purge for the whole queue: a batch-by-batch drain re-read every raw file per batch. Nothing is confirmed
+    # until the single pass succeeds, so an interruption leaves the queue untouched and it is simply redone.
+    while records:
         out = purge(records, databases=databases, raw=raw, log_db=log_db)
-        call(url, secret, {"processed": out["processed"]})     # only after every purge above succeeded
+        # The webhook removes at most 500 ids per confirmation; a larger list is rejected whole and the queue never clears.
+        for i in range(0, len(out["processed"]), 500):
+            call(url, secret, {"processed": out["processed"][i:i + 500]})     # only after every purge above succeeded
         total["processed"] += len(out["processed"])
         total["rows"] += out["rows"]
         total["files"] += out["files"]
+        records = [r for r in call(url, secret)["deletions"]
+                   if r.get("notificationId") and r["notificationId"] not in seen_ids] if len(records) == max_batches else []
+        seen_ids.update(r["notificationId"] for r in records)
     return total
 
 

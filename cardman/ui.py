@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import argparse
 import html
+import json
 import secrets
 import statistics
 import tempfile
+import threading
 from datetime import datetime, timezone
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal, InvalidOperation
 from email.parser import BytesParser
@@ -33,7 +35,9 @@ from .workflow import Action, Decision
 
 STATUSES = ("CANCELLED", "REFUNDED", "RELISTED", "INVALID", "DUPLICATE", "VALID")
 MAX_UPLOAD = 5 * 1024 * 1024
+MAX_PAGES_UPLOAD = 80 * 1024 * 1024     # saved results pages are a few MB each, several at once
 MIN_COMPS = 3
+COVERAGE_ROWS = 300      # overview table cap: one row per printing is 39k rows and half a minute of HTML otherwise
 SYN = ' <span class="tag syn">synthetic</span>'
 
 GATES = ("identity", "authenticity", "comps", "ceiling", "fresh_availability")
@@ -106,15 +110,23 @@ def icon(ok: bool | None) -> str:
 
 
 CSS = """
-:root{color-scheme:light;--bg:#f9f9f7;--surface:#fcfcfb;--fg:#0b0b0b;--fg2:#52514e;--muted:#898781;
---line:#e1e0d9;--axis:#c3c2b7;--soft:#f0efec;--accent:#256abf;
---s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;--neg:#e34948;
---good:#0ca30c;--good-text:#006300;--crit:#d03b3b;--warn:#fab219}
+:root{color-scheme:light;--bg:#fbf9f4;--surface:#ffffff;--fg:#111c25;--fg2:#3e4f5c;--muted:#677888;
+--line:#e1e9f0;--axis:#ccdae4;--soft:#edf3f8;--accent:#0e7f7b;
+--s1:#0e7f7b;--s2:#3b82d6;--s3:#12a08f;--s4:#c77b12;--neg:#d0453f;
+--good:#12a08f;--good-text:#0b6f64;--crit:#c9383b;--warn:#c98a12;
+--sky:#7fc3e6;--sky-text:#1f76a5;--teal:#12a08f;--teal-deep:#0b6f64;--slate:#4b6175;--grey:#5f7080;
+--track:#e1e9f0;--shadow:0 1px 2px rgba(15,30,45,.05),0 8px 24px rgba(15,30,45,.06);
+--shadow-hi:0 2px 6px rgba(15,30,45,.07),0 16px 40px rgba(15,30,45,.12);
+--canvas:linear-gradient(180deg,#ffffff 0,#fdfbf7 55%,#f9f6ee 100%);
+--ease:cubic-bezier(.2,.8,.2,1);--r:14px}
 @media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){color-scheme:dark;--bg:#0d0d0d;
 --surface:#1a1a19;--fg:#f0efec;--fg2:#c3c2b7;--muted:#898781;--line:#2c2c2a;--axis:#383835;--soft:#232322;
---accent:#6da7ec;--s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;--neg:#e66767;--good-text:#0ca30c}}
+--accent:#6da7ec;--s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;--neg:#e66767;--good-text:#0ca30c;
+--sky:#8EC9E8;--sky-text:#8EC9E8;--teal:#4CC9C3;--teal-deep:#4CC9C3;--slate:#A9B8C8;--grey:#9AA6AE;--track:#23323B;
+--shadow:0 1px 2px rgba(0,0,0,.25),0 4px 16px rgba(0,0,0,.2);--shadow-hi:0 2px 4px rgba(0,0,0,.3),0 12px 32px rgba(0,0,0,.35);--canvas:none}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,"Segoe UI",
+body{margin:0;color:var(--fg);background:var(--bg);background-image:var(--canvas);background-attachment:fixed;
+font:14px/1.5 system-ui,-apple-system,"Segoe UI",
 "Noto Sans TC","Noto Sans JP",sans-serif}
 header{background:var(--surface);border-bottom:1px solid var(--line);padding:10px 16px;display:flex;gap:14px;
 align-items:center;flex-wrap:wrap;position:sticky;top:0;z-index:5}
@@ -140,7 +152,7 @@ aside .menu:not([open])>details{display:none}header .store{display:none}}
 h1{font-size:20px;margin:6px 0 2px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 h2{font-size:15px;margin:0 0 4px}
 .sub{color:var(--fg2);margin:0 0 14px}
-section{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:16px;margin:0 0 14px}
+section{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;margin:0 0 14px;box-shadow:var(--shadow)}
 section .why{color:var(--fg2);margin:0 0 10px;max-width:78ch}
 a{color:var(--accent)}
 table{border-collapse:collapse;width:100%}
@@ -166,7 +178,7 @@ list-style:none}
 .next{margin:12px 0 0;padding:10px 12px;background:var(--soft);border-radius:6px}
 .next ol{margin:4px 0 0;padding-left:20px}
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:0 0 14px}
-.tile{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px;box-shadow:var(--shadow)}
 .tile small{display:block;color:var(--fg2);font-size:12px}.tile span{font-size:22px;font-weight:600}
 .tile em{display:block;font-style:normal;color:var(--muted);font-size:12px}
 .cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}@media(max-width:860px){.cols{grid-template-columns:1fr}}
@@ -207,6 +219,23 @@ box-shadow:0 4px 14px rgba(0,0,0,.12)}
 .tip .tv{color:var(--fg);font-weight:600;font-size:13px}
 header .curs{display:inline-flex;border:1px solid var(--axis);border-radius:6px;overflow:hidden}
 header .curs a{padding:0 8px;font-size:12px}header .curs a.on{background:var(--fg);color:var(--surface)}
+header .tg{display:inline-flex;gap:4px;flex:none;margin-left:auto}
+header .tg a{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:9px;color:var(--fg2);
+text-decoration:none;border:1px solid transparent;transition:background .15s,color .15s}
+header .tg a:hover{background:var(--soft);color:var(--fg)}
+header .tg a.on{color:var(--fg);background:var(--surface);border-color:var(--axis);box-shadow:var(--shadow)}
+header .curmenu{position:relative;flex:none;margin-left:6px}
+header .curmenu>summary{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 12px;border:1px solid var(--axis);
+border-radius:9px;background:var(--surface);color:var(--fg);font-size:12.5px;font-weight:650;cursor:pointer;list-style:none}
+header .curmenu>summary::-webkit-details-marker{display:none}
+header .curmenu>summary svg{opacity:.65}
+header .curmenu[open]>summary{border-color:var(--accent)}
+header .curmenu>div{position:absolute;right:0;top:calc(100% + 8px);display:flex;flex-direction:column;min-width:96px;padding:6px;
+background:color-mix(in srgb,var(--surface) 92%,transparent);backdrop-filter:blur(14px) saturate(1.4);border:1px solid var(--line);
+border-radius:12px;box-shadow:0 16px 40px rgba(0,0,0,.22);z-index:60}
+header .curmenu>div a{padding:7px 10px;border-radius:8px;font-size:13px;font-weight:600;color:var(--fg2);text-decoration:none}
+header .curmenu>div a:hover{background:var(--soft);color:var(--fg)}
+header .curmenu>div a.on{color:var(--fg);background:var(--soft)}
 .call{display:inline-flex;align-items:center;gap:6px;font-weight:700;font-size:13px;padding:2px 8px 2px 4px;
 border-radius:999px;border:1px solid var(--axis);white-space:nowrap}
 .call .ci{display:inline-flex;width:18px;height:18px;border-radius:50%;align-items:center;justify-content:center;
@@ -251,6 +280,18 @@ tr.claimed td{background:var(--soft)}
 .score h3{margin:0 0 6px;font-size:14px}
 .score dl{display:grid;grid-template-columns:1fr auto;gap:3px 12px;margin:0}
 .score dt{color:var(--fg2)}.score dd{margin:0;text-align:right;font-weight:600;font-variant-numeric:tabular-nums}
+.pileadd{display:flex;gap:8px;margin:4px 0 16px;flex-wrap:wrap}
+.pileadd input{flex:1;min-width:260px;padding:9px 12px;border:1px solid var(--axis);border-radius:10px;
+background:var(--surface);color:var(--fg);font:inherit}
+.pileadd button{padding:9px 16px;border:0;border-radius:10px;background:var(--accent);color:#fff;font-weight:700;cursor:pointer}
+.pileadd button:hover{filter:brightness(1.06)}
+table.compact{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--line);border-radius:12px}
+table.compact th{text-align:left;font-size:12px;color:var(--muted);padding:8px;border-bottom:1px solid var(--line)}
+table.compact td{border-bottom:1px solid var(--line);vertical-align:middle}
+table.compact tr:last-child td{border-bottom:0}
+button.mini{padding:3px 9px;border:1px solid var(--line);border-radius:7px;background:var(--soft);color:var(--fg2);
+font-size:12px;cursor:pointer}button.mini:hover{border-color:var(--axis);color:var(--fg)}
+.chip.warn{background:var(--surface);border-color:var(--warn);color:var(--warn)}
 """
 
 JS = r"""
@@ -265,7 +306,35 @@ if(el)show(el,ev.clientX,ev.clientY);else tip.style.display='none'});
 document.addEventListener('focusin',function(ev){var el=ev.target.closest&&ev.target.closest('[data-tip]');
 if(el){var r=el.getBoundingClientRect();show(el,r.right,r.top)}});
 document.addEventListener('focusout',function(){tip.style.display='none'});
-var m=document.querySelector('aside .menu');if(m&&window.matchMedia('(max-width:800px)').matches)m.open=false;})();
+var m=document.querySelector('aside .menu');if(m&&window.matchMedia('(max-width:800px)').matches)m.open=false;
+document.querySelectorAll('[data-tip][title]').forEach(function(el){el.removeAttribute('title')});})();
+(function(){document.querySelectorAll('[data-gallery]').forEach(function(g){var main=g.querySelector('.gmain img'),
+ thumbs=[].slice.call(g.querySelectorAll('.gthumbs button')),i=0,zoom=null;if(!main||!thumbs.length)return;
+ function go(n){i=(n+thumbs.length)%thumbs.length;var b=thumbs[i];main.classList.add('swap');
+  setTimeout(function(){main.src=b.getAttribute('data-src');main.alt=b.getAttribute('aria-label');main.classList.remove('swap')},120);
+  thumbs.forEach(function(t,k){t.setAttribute('aria-current',String(k===i))});if(zoom)zoom.querySelector('img').src=b.getAttribute('data-big')}
+ thumbs.forEach(function(b,k){b.addEventListener('click',function(){go(k)})});
+ function open(){if(zoom)return;zoom=document.createElement('div');zoom.className='gzoom';zoom.setAttribute('role','dialog');
+  zoom.setAttribute('aria-label','Photo, enlarged. Arrow keys for the next photo, Escape to close.');zoom.tabIndex=-1;
+  var im=document.createElement('img');im.src=thumbs[i].getAttribute('data-big');im.alt=main.alt;zoom.appendChild(im);
+  zoom.addEventListener('click',close);document.body.appendChild(zoom);zoom.focus()}
+ function close(){if(zoom){zoom.remove();zoom=null;main.focus()}}
+ main.addEventListener('click',open);main.addEventListener('keydown',function(ev){if(ev.key==='Enter'||ev.key===' '){ev.preventDefault();open()}});
+ document.addEventListener('keydown',function(ev){if(!g.isConnected)return;var inG=g.contains(document.activeElement)||zoom;
+  if(!inG)return;if(ev.key==='ArrowRight'){go(i+1);ev.preventDefault()}else if(ev.key==='ArrowLeft'){go(i-1);ev.preventDefault()}
+  else if(ev.key==='Escape')close()})})})();
+(function(){document.querySelectorAll('[data-reveal]').forEach(function(b){
+ b.addEventListener('click',function(ev){ev.preventDefault();ev.stopPropagation();
+  var box=b.parentElement&&b.parentElement.querySelector('.shot-real');if(box)box.hidden=!box.hidden;});
+});})();
+(function(){var q=document.getElementById('cfind'),b=document.getElementById('zmore'),g=document.querySelector('.zgrid');
+if(!q&&!b)return;
+function filt(){var s=q?q.value.toLowerCase():'';
+ document.querySelectorAll('.zd').forEach(function(a){a.hidden=!!(s&&a.getAttribute('data-name').indexOf(s)<0)})}
+if(q)q.addEventListener('input',filt);
+if(b&&g)b.addEventListener('click',function(){var t=document.getElementById('zrest');if(!t)return;
+ g.appendChild(t.content.cloneNode(true));t.remove();b.parentNode.remove();filt()});
+})();
 """
 
 
@@ -273,38 +342,143 @@ CURRENCIES = ("USD", "TWD")
 
 
 ON = ' class="on" aria-current="page"'
-NAV = (("Browse", (("home", "Home", "/"), ("search", "Card search", "/search"))),
-       ("Decide", (("opportunities", "Opportunities", "/opportunities"), ("deals", "Deals", "/deals"),
-                   ("scan", "Scan a listing", "/scan"))),
-       ("Evidence", (("evidence", "Evidence", "/evidence"), ("import", "Import sales", "/import"))),
-       ("Learn", (("results", "Results", "/results"),)),
-       ("Setup", (("costs", "Your costs", "/costs"),)))
+# One header, six places. Cards+ opens on hover to Card Pile and the character index.
+NAV = (("home", "Home", "/"), ("listings", "Listings", "/opportunities"), ("market", "Market", "/market"),
+       ("cards", "Cards+", "/search"), ("add", "Add sales", "/import"), ("settings", "Settings", "/settings"))
+SUBS = {"cards": (("pile", "Card Pile", "/pile"), ("characters", "Characters", "/pkm/characters")),
+        "market": (("board", "Full board", "/market"), ("now", "Under typical & grading", "/market/now"))}
+NAV_OF = {"home": "home", "opportunities": "listings", "market": "market", "now": "market", "search": "cards", "pile": "cards", "import": "add",
+          "costs": "settings", "settings": "settings", "characters": "cards",
+          "deals": "settings", "scan": "settings", "evidence": "settings", "results": "settings", "engine": "settings",
+          "alerts": "listings"}
+PRINT_CSS = """
+/* analog street print: paper grain, misregistration, hand-inked edges. decoration only, never data */
+body::after{content:"";position:fixed;inset:0;z-index:9;pointer-events:none;opacity:.04;
+background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E")}
+main h1,main h2,.hun-h{text-shadow:1.5px 0 rgba(224,82,82,.14),-1.5px 0 rgba(47,108,224,.12)}
+.huntitle{text-shadow:2px 0 rgba(224,82,82,.18),-2px 0 rgba(47,108,224,.14)}
+a.hun{border:2px solid color-mix(in srgb,var(--fg2) 62%,transparent);border-radius:15px 10px 16px 9px/10px 16px 9px 15px;
+box-shadow:3px 4px 0 rgba(0,0,0,.10)}
+a.hun:hover{transform:translate(-1px,-4px);box-shadow:6px 9px 0 rgba(224,82,82,.13),5px 7px 0 rgba(0,0,0,.12)}
+.hunzone{border-radius:22px 16px 24px 14px}
+.hun-deal{border:1.5px solid currentColor;border-radius:7px 11px 6px 12px;transform:rotate(-2deg);background:transparent}
+.hun-stats a,.hun-fresh a{border-radius:10px 7px 12px 8px}
+main h3{text-shadow:1px 0 rgba(224,82,82,.10),-1px 0 rgba(47,108,224,.09)}
+main table{border-collapse:separate;border-spacing:0;border:2px solid color-mix(in srgb,var(--fg2) 45%,transparent);
+border-radius:14px 9px 15px 10px/9px 15px 10px 14px;overflow:hidden}
+main table tbody tr:hover td{background:color-mix(in srgb,var(--accent) 6%,transparent)}
+.tile{border:1.5px solid color-mix(in srgb,var(--fg2) 40%,transparent);border-radius:12px 8px 13px 9px/8px 13px 9px 12px;
+box-shadow:2px 3px 0 rgba(0,0,0,.08)}
+.tile:hover{box-shadow:3px 5px 0 rgba(224,82,82,.10)}
+.tag{border-color:currentColor;border-radius:6px 9px 5px 10px;transform:rotate(-1.2deg)}
+main button:not(.hun-scan){border:2px solid color-mix(in srgb,var(--fg2) 55%,transparent);
+border-radius:10px 7px 11px 8px/7px 11px 8px 10px;box-shadow:2px 3px 0 rgba(0,0,0,.14);transition:transform .12s,box-shadow .12s}
+main button:not(.hun-scan):hover{transform:translate(-1px,-1px);box-shadow:3px 4px 0 rgba(0,0,0,.16)}
+main button:not(.hun-scan):active{transform:translate(1px,2px);box-shadow:0 0 0 rgba(0,0,0,0)}
+.pileadd button{border:0;border-radius:12px 9px 13px 8px/9px 13px 8px 12px;box-shadow:2px 3px 0 rgba(0,0,0,.20)}
+a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+@media(prefers-reduced-motion:reduce){a.hun,a.hun:hover,.tag,main button:not(.hun-scan),main button:not(.hun-scan):hover,main button:not(.hun-scan):active{transform:none}}
+"""
+SHELL_CSS = """
+body{display:flex;flex-direction:column;min-height:100vh}
+header.top{position:sticky;top:0;z-index:30;background:color-mix(in srgb,var(--surface) 86%,transparent);backdrop-filter:saturate(1.5) blur(12px);
+border-bottom:1px solid var(--line);box-shadow:0 1px 0 rgba(15,30,45,.03),0 10px 30px rgba(15,30,45,.05);
+padding:0 22px;display:flex;align-items:center;gap:20px;height:64px}
+header.top .logo{display:inline-flex;align-items:center;gap:9px;font-weight:800;font-size:18px;color:var(--fg);text-decoration:none;letter-spacing:-.01em}
+.rmark{display:inline-flex;gap:2px;height:15px;width:26px;flex:none}
+.rmark>i{flex:1;border-radius:1.5px}
+.rmark>i:nth-child(1){background:#e05252}.rmark>i:nth-child(2){background:#2f6ce0}.rmark>i:nth-child(3){background:#d4af6a}
+.rmark>i:nth-child(4){background:#2fbf71}.rmark>i:nth-child(5){background:#e6a23c}.rmark>i:nth-child(6){background:var(--fg)}
+.lword{position:relative;display:inline-block;padding-bottom:5px}
+.lunder{position:absolute;left:0;right:0;bottom:0;display:flex;height:3.5px;border-radius:2px;overflow:hidden}
+.lunder i{flex:1 1 0;min-width:0}
+.lunder i:nth-child(1){background:#e05252}.lunder i:nth-child(2){background:#2f6ce0}.lunder i:nth-child(3){background:#d4af6a}
+.lunder i:nth-child(4){background:#2fbf71}.lunder i:nth-child(5){background:#e6a23c}.lunder i:nth-child(6){background:var(--fg)}
+nav.main{display:flex;gap:5px;align-items:center}nav.main a{position:relative;color:var(--fg2);text-decoration:none;padding:9px 15px;border-radius:11px;
+font-weight:650;font-size:15px;letter-spacing:-.01em;white-space:nowrap}
+nav.main>a::after,nav.main>.nwrap>a::after{content:"";position:absolute;left:12px;right:12px;bottom:4px;height:2.5px;border-radius:2px;
+background:var(--nc,var(--accent));transform:scaleX(0);transform-origin:left;transition:transform .16s ease}
+nav.main a:hover{color:var(--nc,var(--fg));background:color-mix(in srgb,var(--nc,var(--accent)) 10%,transparent);box-shadow:none}
+nav.main>a:hover::after,nav.main>.nwrap>a:hover::after{transform:scaleX(1)}
+nav.main a.on{color:var(--nc,var(--fg));background:color-mix(in srgb,var(--nc,var(--accent)) 13%,transparent);box-shadow:none}
+nav.main>a.on::after,nav.main>.nwrap>a.on::after{transform:scaleX(1)}
+nav.main .n-home{--nc:#e05252}nav.main .n-listings{--nc:#2f6ce0}nav.main .n-market{--nc:#2fbf71}
+nav.main .n-cards{--nc:#b8862f}nav.main .n-add{--nc:#e6a23c}nav.main .n-settings{--nc:#8a7ef0}
+nav.main .nwrap{position:relative}
+nav.main .caret{display:inline-block;margin-left:5px;font-size:9px;color:var(--muted);transform:translateY(-1px)}
+nav.main .nsub{position:absolute;top:100%;left:0;min-width:190px;display:none;flex-direction:column;gap:1px;padding:6px;
+background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow-hi);z-index:40}
+nav.main .nsub a{padding:9px 12px;border-radius:9px;box-shadow:none;font-size:14.5px}
+nav.main .nsub a:hover{background:var(--soft);box-shadow:none}
+nav.main .nsub a.on{background:var(--soft);box-shadow:none}
+nav.main .nwrap:hover .nsub,nav.main .nwrap:focus-within .nsub{display:flex}
+header.top .hsearch{flex:1;max-width:440px;margin-left:auto}header.top .curs{flex:none}header.top .games a{font-weight:600}header.top .games{margin-left:auto}header.top .hsearch+.games{margin-left:0}@media(max-width:1100px){header.top .hsearch{max-width:300px}}
+main.page{width:100%;max-width:1180px;margin:0 auto;padding:22px 20px 40px;flex:1}
+.crumb-back{display:inline-block;margin:0 0 10px;color:var(--fg2);text-decoration:none;font-size:13px}.crumb-back:hover{color:var(--fg)}
+footer.foot{border-top:1px solid var(--line);color:var(--muted);font-size:12px;padding:12px 20px;text-align:center}
+@media(max-width:860px){header.top{flex-wrap:wrap;height:auto;padding:8px 12px;gap:8px}nav.main{order:3;width:100%;overflow-x:auto}
+header.top .hsearch{order:2;flex-basis:100%;max-width:none;margin:0}main.page{padding:14px 12px 30px}}
+"""
 
 
 def page(title: str, body: str, *, nav: str, store: str, msg: str = "", err: str = "", cur: str = "USD",
-         path: str = "/", theme: str = "market", q: str = "") -> bytes:
+         path: str = "/", theme: str = "market", q: str = "", back: tuple[str, str] | None = None, game: str = "ygo") -> bytes:
     from .ui_home import HOME_CSS, THEMES, header_search
+    from .ui_import import IMPORT_CSS
+    from .ui_listing import LISTING_CSS
+    from .ui_settings import SETTINGS_CSS
+    from .ui_pc import PC_CSS
+    from .ui_market import MARKET_CSS
+    from .ui_now import NOW_CSS
+    from .ui_icons import EFFECTS_CSS, ICON_CSS, SPRITE
+    from .ui_decide import DECIDE_CSS
+    from .ui_alerts import BELL, CSS as ALERTS_CSS
+    from .pile import PILE_CSS
+    from .ui_board import BOARD_CSS
+    from .zone import CHAR_CSS
     theme = theme if theme in THEMES else "market"
-    themes = ('<span class="themes" role="group" aria-label="Look">' + "".join(
-        f'<a href="/theme?{urlencode({"t": t, "back": path})}" class="{"on" if t == theme else ""}">{t.title()}</a>'
-        for t in THEMES) + '</span>')
-    hsearch = "" if nav == "home" else f'<div class="hsearch">{header_search(q)}</div>'
-    groups = []
-    for label, items in NAV:
-        links = "".join(f'<a href="{h}"{ON if k == nav else ""}>{e(t)}</a>' for k, t, h in items)
-        groups.append(f'<details open><summary>{e(label)}</summary><nav>{links}</nav></details>')
-    curs = ('<span class="curs" role="group" aria-label="Display currency">' + "".join(
-        f'<a href="/currency?{urlencode({"c": c, "back": path})}" class="{"on" if c == cur else ""}">{c}</a>'
-        for c in CURRENCIES) + '</span>')
-    here = next((t for _, items in NAV for k, t, _h in items if k == nav), "Menu")
+    where = NAV_OF.get(nav, "")
+    swap = ({"/": "/pkm/", "/market": "/pkm/market", "/market/now": "/pkm/market/now",
+             "/opportunities": "/pkm/opportunities", "/search": "/pkm/search"} if game == "pkm" else {})
+    links = ""
+    for k, t, h in NAV:
+        h = swap.get(h, h)
+        if k in SUBS:
+            items = "".join(f'<a href="{swap.get(sh, sh)}"{ON if sk == where else ""}>{e(st)}</a>'
+                            for sk, st, sh in SUBS[k])
+            links += (f'<div class="nwrap"><a class="n-{k}" href="{h}"{ON if k == where else ""}>{e(t)}'
+                      f'<span class="caret" aria-hidden="true">▾</span></a><div class="nsub">{items}</div></div>')
+        else:
+            links += f'<a class="n-{k}" href="{h}"{ON if k == where else ""}>{e(t)}</a>'
+    ICO_EYE = ('<svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path fill="currentColor" '
+               'd="M12 5.2c5.1 0 9.3 3.6 10 6.8-.7 3.2-4.9 6.8-10 6.8S2.7 15.2 2 12c.7-3.2 4.9-6.8 10-6.8Zm0 2.6a4.2 4.2 0 1 0 0 8.4 4.2 4.2 0 0 0 0-8.4Zm0 2.1a2.1 2.1 0 1 1 0 4.2 2.1 2.1 0 0 1 0-4.2Z"/></svg>')
+    ICO_BALL = ('<svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><circle cx="12" cy="12" r="8.6" fill="none" '
+                'stroke="currentColor" stroke-width="1.9"/><path d="M3.4 12h5.2m6.8 0h5.2" stroke="currentColor" stroke-width="1.9"/>'
+                '<circle cx="12" cy="12" r="2.5" fill="none" stroke="currentColor" stroke-width="1.9"/></svg>')
+    ICO_COIN = ('<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><circle cx="12" cy="12" r="8.6" fill="none" '
+                'stroke="currentColor" stroke-width="1.9"/><circle cx="12" cy="12" r="4.3" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>')
+    curs = ('<details class="curmenu" title="Display currency"><summary>' + ICO_COIN + e(cur)
+            + '</summary><div>' + "".join(
+        '<a href="/currency?{}" class="{}">{}</a>'.format(
+            urlencode({"c": c, "back": path}), "on" if c == cur else "", c)
+        for c in CURRENCIES) + "</div></details>")
+    hsearch = "" if nav == "home" else f'<div class="hsearch">{header_search(q, game)}</div>'
+    from .games import NAME, scope_links
+    games = '<span class="tg" role="group" aria-label="Game">' + "".join(
+        '<a href="/game?{}" class="{}" title="{}" aria-label="{}"{}>{}</a>'.format(
+            urlencode({"g": g, "back": path}), "on" if g == game else "", e(NAME[g]), e(NAME[g]),
+            ' aria-current="page"' if g == game else "", ICO_EYE if g == "ygo" else ICO_BALL)
+        for g in ("ygo", "pkm")) + "</span>"
     flash = (f'<div class="note ok">{e(msg)}</div>' if msg else "") + (f'<div class="note bad">{e(err)}</div>' if err else "")
+    crumb = f'<a class="crumb-back" href="{e(back[1])}">← {e(back[0])}</a>' if back else ""
     tz = datetime.now().astimezone().strftime("UTC%z")
-    return (f'<!doctype html><html lang="en" data-theme="{"vault" if theme == "vault" else "light"}"><head><meta charset="utf-8">'
+    return (f'<!doctype html><html lang="en" data-theme="{"vault" if theme == "vault" else "auto"}"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)} · CardMan</title>'
-            f'<style>{CSS}{HOME_CSS}</style></head><body><header><a class="logo" href="/"><b>CardMan</b></a>{curs}{themes}{hsearch}'
-            f'<span class="store">{e(store)} · times {e(tz)}</span></header>'
-            f'<div class="shell"><aside><details class="menu" open><summary>{e(here)}</summary>{"".join(groups)}</details></aside>'
-            f'<main>{flash}{body}</main></div><script src="/static/ui.js"></script></body></html>').encode()
+            f'<style>{CSS}{HOME_CSS}{IMPORT_CSS}{LISTING_CSS}{SETTINGS_CSS}{PC_CSS}{ICON_CSS}{EFFECTS_CSS}{PRINT_CSS}{SHELL_CSS}{DECIDE_CSS}{CHAR_CSS}{MARKET_CSS}{NOW_CSS}{ALERTS_CSS}{PILE_CSS}{BOARD_CSS}</style></head><body>{SPRITE}'
+            + scope_links(f'<header class="top"><a class="logo" href="/"><span class="lword">CardMan<b class="lunder" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></b></span></a><nav class="main" aria-label="Main">{links}</nav>{BELL}{hsearch}'
+                          f'<span class="rmark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></span>{games}{curs}</header><main class="page">{crumb}{flash}{body}</main>', game) +
+            f'<footer class="foot">Private to this Mac · times {e(tz)} · press <kbd>/</kbd> to search</footer>'
+            f'<script src="/static/ui.js?v={_js_version()}"></script></body></html>').encode()
 
 
 # -- display currency ---------------------------------------------------------------------------
@@ -490,7 +664,7 @@ def gate_icons(gates: list[dict]) -> str:
         f'tabindex="0">{icon(g["passed"])}</span>' for g in gates) + "</span>")
 
 
-def view_deals(st: Store, now: datetime, want: str) -> str:
+def view_deals(st: Store, now: datetime, want: str, show_synthetic: bool = False) -> str:
     models, broken, seen = [], [], {}
     for s in st.snapshots():
         seen[s["listing_ref"]] = seen.get(s["listing_ref"], 0) + 1
@@ -503,6 +677,15 @@ def view_deals(st: Store, now: datetime, want: str) -> str:
             continue
         m["decision"] = s["decision"]
         models.append(m)
+    # Demo and test valuations never sit next to real ones unless asked for.
+    demo = [m for m in models if m["synthetic"]]
+    if not show_synthetic:
+        models = [m for m in models if not m["synthetic"]]
+    if not models and not broken and demo:
+        return ('<h1>Deals</h1><p class="sub">No real deals yet. A deal appears when a listing is confirmed as one exact printing and '
+                'that printing has at least 3 real sales, so the price is backed by evidence.</p>'
+                f'<p class="note">{len(demo)} demo valuation(s) from the setup are hidden: they use made-up sales. '
+                '<a href="/deals?syn=1">Show them</a>.</p>')
     if not models and not broken:
         return ('<h1>Deals</h1><p class="sub">No valuations stored yet. Run '
                 '<code>python -m cardman.slice listing.json [obs.csv] --store PATH</code> to add one.</p>')
@@ -839,15 +1022,14 @@ def reason_group(r: str) -> str:
 
 
 def view_evidence(st: Store, now: datetime, printing: str | None, include_synthetic: bool) -> str:
-    printings = st.printing_ids()
-    opts = '<option value="">All printings</option>' + "".join(
-        f'<option{" selected" if p == printing else ""}>{e(p)}</option>' for p in printings)
     out = ['<h1>Evidence</h1><p class="sub">Market records in the store and whether a valuation made now would use '
            'them.</p><form class="inline" method="get" action="/evidence">'
-           f'<label>Printing<select name="printing">{opts}</select></label>'
+           f'<label>Printing<input name="printing" value="{e(printing or "")}" size="52" '
+           f'placeholder="p:EN_TCG:LOB-EN001:ultra-rare@89631139"></label>'
            f'<label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" name="syn" value="1"'
            f'{" checked" if include_synthetic else ""}>count synthetic fixtures</label><button>Show</button></form>']
-    if not printings:
+    have = st.db.execute("SELECT COUNT(DISTINCT printing_id) FROM observation_printing").fetchone()[0]
+    if not have:
         out.append('<section><p class="muted">No observations stored. Use Import to add a manual CSV.</p></section>')
         return "".join(out)
 
@@ -859,12 +1041,14 @@ def view_evidence(st: Store, now: datetime, printing: str | None, include_synthe
         return comps, v
 
     if not printing:
-        rows = []
         stats = []
-        for pid in printings:
-            obs = st.observation_list(pid, as_of=now)
-            comps, _ = verdicts(pid)
+        for pid, n in st.db.execute(
+                "SELECT p.printing_id, COUNT(DISTINCT o.id) FROM observation_printing p JOIN observation o ON o.id=p.obs_id "
+                "GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT ?", (COVERAGE_ROWS,)):
+            obs = st.observations_for(pid, as_of=now)
+            comps, _ = select_comps(obs, pid, as_of=now, include_synthetic=include_synthetic)
             stats.append((pid, obs, comps))
+        rows = []
         scale = max([MIN_COMPS * 2] + [len(c) for _, _, c in stats])
         for pid, obs, comps in sorted(stats, key=lambda s: -len(s[2])):
             cur = {c.currency for c in comps}
@@ -877,12 +1061,19 @@ def view_evidence(st: Store, now: datetime, printing: str | None, include_synthe
                         f'<span>{len(comps)}</span></span></td><td class="n">{e(med)}</td>'
                         f'<td class="d">{day(last) if last else "—"}</td></tr>')
         out.append('<section><h2>Coverage by printing</h2><p class="why">How many usable sales each printing has. '
-                   f'A valuation needs {MIN_COMPS} (the black tick); fewer means no buy ceiling.</p>'
+                   f'A valuation needs {MIN_COMPS} (the black tick); fewer means no buy ceiling. '
+                   f'The {COVERAGE_ROWS} printings with the most records are shown; type any printing id above for the rest.</p>'
                    '<div class="wrap"><table><tr><th>Printing</th><th class="n">Records</th><th>Usable sales</th>'
                    '<th class="n">Median sale</th><th>Latest sale</th></tr>' + "".join(rows) + '</table></div></section>')
         return "".join(out)
 
     obs = st.observation_list(printing, as_of=now)
+    if not obs:
+        # Most printings have no records yet: say so and show how to add one, instead of failing.
+        return "".join(out) + (
+            '<section><h2>No records for this printing yet</h2><p class="why">Nothing sold or listed has been recorded against '
+            f'<code>{e(printing)}</code>. Import saved sold-results pages on the <a href="/import">Import</a> page, or use '
+            '"Record a sale" on the card page. A price appears once it has 3 sales.</p></section>')
     comps, verdict = verdicts(printing)
     groups: dict[str, int] = {}
     for o in obs:
@@ -1304,6 +1495,7 @@ class EngineMoney:
     def __init__(self, st: Store, home: str, want: str, now: datetime):
         from datetime import timedelta
         self.cur, self.k = home, Decimal(1)
+        self.home, self.now = home, now
         if want != home:
             try:
                 self.k = FxTable(st.fx_rates(), max_age=timedelta(days=7)).convert(Decimal(1), home, want, now)
@@ -1318,6 +1510,25 @@ class EngineMoney:
         return signed(d, self.cur) if sign else money(d, self.cur)
 
 
+_JSV: list = []
+
+
+def _js_version() -> str:
+    """Changes whenever the script changes, so a browser never keeps running an old copy."""
+    if not _JSV:
+        import hashlib
+        from .ui_home import HOME_JS
+        from .ui_import import IMPORT_JS
+        from .ui_decide import DECIDE_JS
+        from .ui_pc import PC_JS
+        from .ui_alerts import JS as ALERTS_JS
+        from .pile import PILE_JS
+        from .ui_board import BOARD_JS
+        _JSV.append(hashlib.sha256((JS + HOME_JS + IMPORT_JS + DECIDE_JS + PC_JS + ALERTS_JS
+                                    + PILE_JS + BOARD_JS).encode()).hexdigest()[:10])
+    return _JSV[0]
+
+
 def _engine_home(st: Store) -> str:
     try:
         from .engine import load_profile
@@ -1329,7 +1540,7 @@ def _engine_home(st: Store) -> str:
 def view_opportunities(st: Store, now: datetime, token: str, cur: str, show: str) -> str:
     head = ('<h1>Opportunities</h1><p class="sub">What the engine found in everything it has collected: ranked by money at '
             'stake, how soon it ends, and what a quick check could settle. Only listings with defensible evidence get escalated '
-            'to a deal.</p>')
+            'to a deal. <a href="/alerts">Did the alerts turn into sales? \u2192</a></p>')
     tick = (f'<form method="post" action="/engine/tick" class="inline"><input type="hidden" name="t" value="{e(token)}">'
             '<button>Check for new listings now</button><span class="muted small">Reads new files in data/inbox (CSV, JSONL, '
             'saved pages) and eBay once its keys exist, then re-analyzes only what changed.</span></form>')
@@ -1621,24 +1832,77 @@ def reevaluate(st: Store, store_path: str, sid: str, now: datetime) -> str:
 
 # -- server -----------------------------------------------------------------------------------
 
-def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezone.utc), catalog=None, cards=None, images=None):
+def _ui_token(store_path: str) -> str:
+    """One form token per store, kept across restarts so an open tab keeps its forms working."""
+    from pathlib import Path
+    p = Path(store_path).resolve().parent / ".ui-token"
+    try:
+        t = p.read_text(encoding="utf-8").strip()
+        if len(t) >= 24:
+            return t
+    except OSError:
+        pass
+    t = secrets.token_urlsafe(24)
+    try:
+        p.write_text(t, encoding="utf-8")
+        p.chmod(0o600)
+    except OSError:
+        pass
+    return t
+
+
+def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezone.utc), catalog=None, cards=None, images=None, pkm=None):
     """catalog: a zero-argument callable returning the identity Catalog (loaded once), or None."""
     from .cardinfo import CardIndex, ImageCache
     cards = cards or CardIndex(catalog=catalog)
     images = images or ImageCache()
 
+    _books: dict = {}
+
     def _book(st, now):
-        """Sold-evidence pricing for card pages; None if costs or rates are not set up yet."""
+        """Sold-evidence pricing for card pages; None if costs or rates are not set up yet. One per state of the
+        evidence: kept while no sale, rate or status changes, so a card page does not re-value everything per view."""
         try:
             from .engine import load_profile
             from .fx_store import FxStore
             from .opportunity import PriceBook
-            return PriceBook(st, FxStore(store_path), load_profile(), now)
+            marker = (st.db.execute("SELECT COUNT(*), MAX(recorded_at) FROM observation").fetchone(),
+                      st.db.execute("SELECT COUNT(*) FROM observation_status").fetchone(),
+                      st.db.execute("SELECT COUNT(*), MAX(as_of) FROM fx_rate").fetchone(), now.strftime("%Y-%m-%d %H"))
+            if _books.get("m") != marker:
+                _books.clear()
+                _books.update(m=marker, cache={})
+            book = PriceBook(st, FxStore(store_path), load_profile(), now)
+            book.cache = _books["cache"]          # finished valuations are plain data: shared until the evidence changes
+            return book
         except Exception:
             return None
 
+    _pk: dict = {}
+
+    def pcards():
+        """The Pokémon card index, loaded once (and again after a catalog sync). None until the catalog exists."""
+        if pkm is not None:
+            return pkm
+        from .pkm_catalog import DB, PkmCatalog
+        from .pkm_index import PkmIndex
+        try:
+            m = DB.stat().st_mtime
+        except OSError:
+            return None
+        if _pk.get("m") != m:
+            try:
+                cat = PkmCatalog(DB)
+                idx = PkmIndex(cat) if len(cat) else None
+            except Exception:
+                idx = None
+            if idx is not None:
+                _pk.update(m=m, idx=idx)          # a rebuild that empties the file must not wipe the catalog already on screen
+        return _pk.get("idx")
+
     class H(BaseHTTPRequestHandler):
         server_version = "CardMan"
+        game = "ygo"
 
         def log_message(self, *a):
             pass
@@ -1678,28 +1942,293 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     return v
             return "market"
 
-        def _page(self, nav, title, body, qs):
+        def _page(self, nav, title, body, qs, crumb=None):
+            if crumb is None and nav in ("deals", "scan", "evidence", "results", "engine", "costs"):
+                crumb = ("Settings", "/settings")
             u = urlsplit(self.path)
             back = u.path + ("?" + urlencode({k: v[0] for k, v in qs.items() if k not in ("msg", "err")})
                              if any(k not in ("msg", "err") for k in qs) else "")
             self._send(200, page(title, body, nav=nav, store=store_path, cur=self._cur(), path=back,
                                  msg=qs.get("msg", [""])[0], err=qs.get("err", [""])[0], theme=self._theme(),
-                                 q=qs.get("q", [""])[0][:120] if nav == "search" else ""))
+                                 q=qs.get("q", [""])[0][:120] if nav == "search" else "", back=crumb, game=self.game))
+
+        def _cookie(self, name: str) -> str:
+            for part in (self.headers.get("Cookie") or "").split(";"):
+                k, _, v = part.strip().partition("=")
+                if k == name:
+                    return v
+            return ""
+
+        def _go(self, to: str):
+            self.send_response(302)
+            self.send_header("Location", to)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def _switch_game(self, qs):
+            """Yu-Gi-Oh! | Pokémon: remembered per browser; the same kind of page in the other game when there is one."""
+            g = qs.get("g", [""])[0]
+            back = qs.get("back", ["/"])[0]
+            if not back.startswith("/") or back.startswith("//"):
+                back = "/"
+            base = (back[4:] if back.startswith("/pkm") else back) or "/"
+            same = base.split("?")[0] in ("/", "/opportunities", "/search", "/market", "/market/now")
+            target = base if same else "/"
+            to = ("/pkm" + target) if g == "pkm" else target
+            self.send_response(303)
+            if g in ("ygo", "pkm"):
+                self.send_header("Set-Cookie", f"game={g}; Path=/; SameSite=Lax; Max-Age=31536000")
+            self.send_header("Location", to)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def _pkm_get(self, st, now, parts, qs):
+            """Pokémon pages: Home, Listings, Cards (search), a card, its chart data, pictures and suggestions."""
+            import re as _re
+            from .games import card_href
+            idx = pcards()
+            try:
+                if len(parts) == 3 and parts[:2] == ["img", "pkm"] and parts[2].endswith(".png"):
+                    cid = parts[2][:-4]
+                    size = qs.get("size", ["small"])[0]
+                    url = idx.image_url("pkm-" + cid, "large" if size == "large" else "small") if idx else None
+                    body, ctype = images.pkm(cid, url, "large" if size == "large" else "small")
+                    return self._send(200, body, ctype)
+                if parts == ["api", "suggest"]:
+                    return self._send(200, json.dumps(idx.suggest(qs.get("q", [""])[0][:80])).encode(), "application/json; charset=utf-8")
+                if len(parts) >= 2 and parts[0] == "card" and _re.fullmatch(r"[a-z0-9.]{2,16}-[A-Za-z0-9]{1,8}", parts[1]):
+                    key = "pkm-" + parts[1]
+                    c = idx.card(key)
+                    if not c:
+                        raise KeyError(parts[1])
+                    if len(parts) == 3 and parts[2] in ("history.json", "history.html"):
+                        from .ui_chart import chips, table
+                        from .ui_home import history_for
+                        hist = history_for(st, key, idx.printings(key), now, self._cur(), _engine_home(st), _book(st, now),
+                                           guide=idx.cat.guide_history)
+                        if parts[2] == "history.json":
+                            return self._send(200, json.dumps(hist).encode(), "application/json")
+                        s_ = next((x for x in hist["series"] if x["key"] == qs.get("key", [""])[0]), None)
+                        if s_ is None:
+                            return self._send(404, b"no such series", "text/plain")
+                        return self._send(200, (chips(s_, hist["currency"]) + table(s_, hist["currency"])).encode(), "text/html; charset=utf-8")
+                    if len(parts) == 2:
+                        from .ui_home import view_card
+                        return self._page("search", c["name_en"], view_card(
+                            st, idx, key, now, self._cur(), book=_book(st, now), catalog=idx.cat, home=_engine_home(st), token=token,
+                            filters={k: qs.get(k, [""])[0][:300] for k in ("platform", "graded", "type", "v")}), qs, crumb=("Cards", "/pkm/search"))
+                if len(parts) == 2 and parts[0] == "character" and _re.fullmatch(r"[a-z0-9-]{1,48}", parts[1]):
+                    from .character import find_species
+                    who = find_species(idx.cat, parts[1]) if idx else None
+                    if not who:
+                        raise KeyError(parts[1])
+                    from .ui_home import view_character
+                    return self._page("search", who, view_character(st, idx, who, token, now, self._cur(),
+                                                                    _engine_home(st), _book(st, now)), qs,
+                                      crumb=("Cards", "/pkm/search"))
+                if len(parts) == 2 and parts[0] == "icon" and parts[1].endswith(".png") and parts[1][:-4].isdigit():
+                    from .zone import icon
+                    body, ctype = icon(int(parts[1][:-4]))
+                    return self._send(200, body, ctype)
+                if parts == ["characters"]:
+                    from .zone import view_zone
+                    return self._page("characters", "Characters", view_zone(st, idx.cat if idx else None, now, self._cur(), _engine_home(st), qs), qs, crumb=("Cards", "/pkm/search"))
+                if parts == ["pile"]:
+                    from .pile import view as view_pile
+                    return self._page("pile", "Card Pile", view_pile(st, idx, EngineMoney(st, _engine_home(st), self._cur(), now), now, token,
+                                                                      game="pkm", back="/pkm/pile",
+                                                                      added=qs.get("added", [""])[0][:512]), qs)
+                if parts == ["search"]:
+                    from .ui_home import Money, view_search
+                    q = qs.get("q", [""])[0][:120]
+                    hits = idx.search(q, 2) if q else []
+                    if hits and (len(hits) == 1 and hits[0].score >= 80 or (len(hits) == 2 and hits[0].score >= 100 > hits[1].score + 25)):
+                        return self._go(card_href(hits[0].passcode))
+                    return self._page("search", q or "Card search", view_search(idx, q, st, Money(st, _engine_home(st), self._cur(), now)), qs)
+                if not parts:
+                    from .ui_home import view_home
+                    try:
+                        from .engine import load_profile
+                        assumed = bool(load_profile().get("_assumed"))
+                    except Exception:
+                        assumed = True
+                    EM = EngineMoney(st, _engine_home(st), self._cur(), now) if _engine_ready(st) else None
+                    return self._page("home", "Pokémon", view_home(st, idx, now, self._cur(), self._theme(), assumed_costs=assumed, EM=EM, token=token,
+                                                                     game="pkm", qs=qs), qs)
+                if parts == ["market"]:
+                    from .ui_market import view_market
+                    return self._page("market", "Market", view_market(st, now, self._cur(), _engine_home(st), qs, game="pkm", pkm=idx.cat, token=token), qs)
+                if parts == ["market", "now"]:
+                    from .ui_now import view_now
+                    return self._page("market", "Now", view_now(st, now, self._cur(), _engine_home(st), qs, game="pkm", pkm=idx.cat, token=token), qs)
+                if parts == ["opportunities"]:
+                    from .ui_board import view_board
+                    if not _engine_ready(st):
+                        return self._page("opportunities", "Listings", '<h1>Listings</h1><p class="empty">No listings checked yet.</p>', qs)
+                    M = EngineMoney(st, _engine_home(st), self._cur(), now)
+                    return self._page("opportunities", "Listings", view_board(
+                        st, idx, now, M, qs=qs, home_cur=M.cur, game="pkm", token=token, back="/pkm/opportunities"), qs)
+                if parts[:1] in (["opp"], ["import"], ["settings"], ["costs"], ["static"]):
+                    return self._go("/" + "/".join(parts) + (("?" + urlsplit(self.path).query) if urlsplit(self.path).query else ""))
+                return self._send(404, page("Not found", "<h1>Not found</h1>", nav="", store=store_path, game="pkm"))
+            except KeyError as x:
+                return self._send(404, page("Not found", f"<h1>Not found</h1><p>{e(x)}</p>", nav="", store=store_path, game="pkm"))
+            finally:
+                st.db.close()
 
         def do_GET(self):
             u = urlsplit(self.path)
             qs = parse_qs(u.query)
             parts = [p for p in u.path.split("/") if p]
+            self.game = "ygo"
+            if parts[:1] == ["pkm"]:
+                self.game, parts = "pkm", parts[1:]
+            if parts == ["game"]:
+                return self._switch_game(qs)
+            if parts == ["engine", "status"]:
+                import fcntl as _fc
+                scanning, lockh = True, None
+                try:
+                    lockh = open(Path(str(store_path) + ".engine.lock"), "a+")
+                    _fc.flock(lockh, _fc.LOCK_EX | _fc.LOCK_NB)
+                    scanning = False
+                except OSError:
+                    pass
+                out = {"scanning": scanning, "at": None, "age_s": None, "new": 0, "fresh_at": None, "progress": None, "interval_min": None}
+                qp = None
+                try:
+                    import sqlite3 as _sq3
+                    db = _sq3.connect("file://{}?mode=ro".format(_quote(str(Path(store_path).resolve()))), uri=True)
+                    row = db.execute("SELECT at, data_json FROM engine_run ORDER BY at DESC LIMIT 1").fetchone()
+                    fr = db.execute("SELECT MAX(first_seen) FROM listing").fetchone()
+                    if fr and fr[0]:
+                        out["fresh_at"] = fr[0]
+                    try:
+                        pr = db.execute("SELECT v FROM engine_meta WHERE k='scan_progress'").fetchone()
+                        if pr and scanning:
+                            out["progress"] = pr[0]
+                        im = db.execute("SELECT v FROM engine_meta WHERE k='loop_interval_min'").fetchone()
+                        if im:
+                            out["interval_min"] = float(im[0])
+                        qp = db.execute("SELECT v FROM engine_meta WHERE k='quick_pass'").fetchone()
+                        act = []
+                        for title, price, cur, status, kinds, upd in db.execute(
+                                "SELECT l.title, l.price, l.currency, o.status, o.kinds, o.updated_at "
+                                "FROM opportunity o JOIN listing l ON l.key=o.key WHERE l.ended_at IS NULL "
+                                "AND COALESCE(json_extract(o.payload_json,'$.game'),'ygo')=? "
+                                "ORDER BY o.updated_at DESC LIMIT 10", (self.game,)):
+                            kj = json.loads(kinds or "[]")
+                            passed = status == "REJECTED"
+                            if passed:
+                                read = ("identity unclear" if "MISIDENTIFIED" in kj else
+                                        "a lot, not one card" if ("LOT" in kj or "COLLECTION" in kj) else
+                                        "print not settled" if "RIGHT_PRINT_ONLY" in kj else "above what to pay")
+                            else:
+                                read = ("under what to pay" if "UNDERPRICED" in kj else
+                                        "under the PC comp" if "REFERENCE_GAP" in kj else "worth a look")
+                            age = None
+                            try:
+                                age = max(0, int((datetime.now(timezone.utc) - datetime.fromisoformat(upd)).total_seconds()))
+                            except (ValueError, TypeError):
+                                pass
+                            act.append({"title": (title or "").strip()[:80], "price": price, "currency": cur,
+                                        "action": "pass" if passed else "take", "read": read, "age_s": age})
+                        out["activity"] = act
+                    except Exception:
+                        pass
+                    db.close()
+                    if row:
+                        out["at"] = row[0]
+                        try:
+                            out["new"] = int(json.loads(row[1]).get("new_listings") or 0)
+                        except Exception:
+                            pass
+                        try:
+                            t = datetime.fromisoformat(row[0])
+                            out["age_s"] = max(0, int((datetime.now(t.tzinfo) - t).total_seconds()))
+                        except ValueError:
+                            pass
+                    if qp and qp[0]:
+                        try:
+                            q = json.loads(qp[0])
+                            qt = datetime.fromisoformat(q["at"])
+                            if out["at"] is None or qt > datetime.fromisoformat(out["at"]):
+                                out["at"] = q["at"]
+                                out["new"] = int(q.get("new") or 0)
+                                out["age_s"] = max(0, int((datetime.now(qt.tzinfo) - qt).total_seconds()))
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                if lockh is not None:
+                    _fc.flock(lockh, _fc.LOCK_UN)
+                    lockh.close()
+                return self._send(200, json.dumps(out).encode(), "application/json")
+            if parts == ["static", "hunt.gif"] or parts == ["static", "hunt-still.png"]:
+                fp = Path(__file__).resolve().parent / "assets" / parts[1]
+                if not fp.exists():
+                    return self._send(404, b"", "text/plain")
+                return self._send(200, fp.read_bytes(), "image/gif" if parts[1].endswith("gif") else "image/png")
+            if not parts and self.game == "ygo" and self._cookie("game") == "pkm" and "g" not in qs and not u.query:
+                return self._go("/pkm/")
+            if self.game == "ygo" and parts == ["market"] and self._cookie("game") == "pkm":
+                return self._go("/pkm/market" + (("?" + u.query) if u.query else ""))
+            if self.game == "ygo" and parts[:2] == ["market", "now"] and self._cookie("game") == "pkm":
+                return self._go("/pkm/market/now" + (("?" + u.query) if u.query else ""))
+            if self.game == "pkm" and pcards() is None and parts[:1] in (["search"], ["card"], ["character"], ["characters"]):
+                from .catalog_boot import read_status
+                stt = read_status()
+                detail = stt.get("detail") or "The download starts with CardMan. This page fills in once the card list is in place."
+                return self._send(200, page("Pokémon", f'<h1>Pokémon</h1><p class="empty">{e(detail)}</p>', nav="home", store=store_path,
+                                            game="pkm", cur=self._cur(), theme=self._theme()))
             st = Store(store_path)
             now = clock()
+            if self.game == "pkm":
+                return self._pkm_get(st, now, parts, qs)
             if parts == ["static", "ui.js"]:
                 st.db.close()
                 from .ui_home import HOME_JS
-                return self._send(200, (JS + HOME_JS).encode(), "text/javascript; charset=utf-8")
+                from .ui_import import IMPORT_JS
+                from .ui_decide import DECIDE_JS
+                from .ui_pc import PC_JS
+                from .ui_alerts import JS as ALERTS_JS
+                from .pile import PILE_JS
+                from .ui_board import BOARD_JS
+                return self._send(200, (JS + HOME_JS + IMPORT_JS + DECIDE_JS + PC_JS + ALERTS_JS
+                                        + PILE_JS + BOARD_JS).encode(), "text/javascript; charset=utf-8")
+            if len(parts) == 3 and parts[0] == "card" and parts[1].isdigit() and parts[2] in ("history.json", "history.html"):
+                try:
+                    from .identity import edition_variants
+                    from .ui_chart import chips, table
+                    from .ui_home import history_for
+                    cat = catalog() if catalog else None
+                    vs = [v for p in cards.printings(parts[1]) for v in (edition_variants(p, cat) if cat is not None else [p])]
+                    hist = history_for(st, parts[1], vs, now, self._cur(), _engine_home(st), _book(st, now))
+                finally:
+                    st.db.close()
+                if parts[2] == "history.json":
+                    return self._send(200, json.dumps(hist).encode(), "application/json")
+                k = qs.get("key", [""])[0]
+                s_ = next((x for x in hist["series"] if x["key"] == k), None)
+                if s_ is None:
+                    return self._send(404, b"no such series", "text/plain")
+                return self._send(200, (chips(s_, hist["currency"]) + table(s_, hist["currency"])).encode(),
+                                  "text/html; charset=utf-8")
             if len(parts) == 3 and parts[:2] == ["img", "card"] and parts[2].endswith(".jpg"):
                 st.db.close()
                 body, ctype = images.artwork(parts[2][:-4], qs.get("size", [""])[0])
                 return self._send(200, body, ctype)
+            if len(parts) == 4 and parts[:2] == ["img", "listing"] and parts[3].endswith(".jpg") and parts[3][:-4].isdigit():
+                # A listing's own photo, served from CardMan's cache (fetched once from eBay's image host).
+                from . import listing_detail
+                try:
+                    got = listing_detail.photo(st.db, parts[2], int(parts[3][:-4]), qs.get("s", ["m"])[0])
+                finally:
+                    st.db.close()
+                if not got:
+                    from .cardinfo import PLACEHOLDER
+                    return self._send(200, PLACEHOLDER, "image/svg+xml")
+                return self._send(200, got[0], got[1])
             if len(parts) == 3 and parts[:2] == ["img", "scan"]:
                 st.db.close()
                 name = unquote(parts[2])
@@ -1709,6 +2238,23 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                 st.db.close()
                 from .ui_home import suggest_json
                 return self._send(200, suggest_json(cards, qs.get("q", [""])[0][:80]), "application/json; charset=utf-8")
+            if parts == ["alerts.json"]:
+                from . import alerts as _alerts
+                try:
+                    items = _alerts.recent(st, cards=cards)
+                except Exception:
+                    items = []
+                try:
+                    disp = Disp(self._cur(), _engine_home(st), FxTable(st.fx_rates()), now)
+                    for it in items:
+                        it["ask"] = disp.f(it.get("ask"))
+                        it["typical"] = disp.f(it.get("typical"))
+                        it["sale"] = disp.f(it.get("sale"))
+                        it["cur"] = disp.cur
+                except Exception:
+                    pass
+                st.db.close()
+                return self._send(200, json.dumps({"items": items}, ensure_ascii=False).encode(), "application/json; charset=utf-8")
             if parts == ["theme"]:
                 st.db.close()
                 t = qs.get("t", [""])[0]
@@ -1733,12 +2279,43 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                 self.send_header("Location", back)
                 self.send_header("Content-Length", "0")
                 return self.end_headers()
+            ALIASES = {("listings",): "/opportunities", ("cards",): "/search", ("add-sales",): "/import", ("sales",): "/import",
+                       ("advanced",): "/settings#advanced", ("home",): "/"}
+            if tuple(parts) in ALIASES:
+                st.db.close()
+                self.send_response(301)
+                self.send_header("Location", ALIASES[tuple(parts)] + ("?" + u.query if u.query else ""))
+                self.send_header("Content-Length", "0")
+                return self.end_headers()
             try:
-                if not parts:
+                if parts == ["settings"]:
+                    from .ui_settings import view_settings
+                    try:
+                        from .engine import load_profile
+                        prof = load_profile()
+                    except Exception:
+                        prof = None
+                    from .capture import worth_pricing
+                    pc = qs.get("card", [""])[0]
+                    focus = cards.card(pc) if pc.isdigit() else None
+                    self._page("settings", "Settings", view_settings(st, now, self._cur(), self._theme(), prof, ENGINE_STATUS,
+                                                                     fill=worth_pricing(st, cards), focus=focus)
+                               .replace("__TOKEN__", token), qs)
+                elif not parts:
                     from .ui_home import view_home
-                    self._page("home", "Home", view_home(st, cards, now, self._cur(), self._theme()), qs)
+                    try:
+                        from .engine import load_profile
+                        assumed = bool(load_profile().get("_assumed"))
+                    except Exception:
+                        assumed = True
+                    EM = EngineMoney(st, _engine_home(st), self._cur(), now) if _engine_ready(st) else None
+                    self._page("home", "Home", view_home(st, cards, now, self._cur(), self._theme(), assumed_costs=assumed, EM=EM, qs=qs, token=token), qs)
+                elif parts == ["pile"]:
+                    from .pile import view as view_pile
+                    self._page("pile", "Card Pile", view_pile(st, cards, EngineMoney(st, _engine_home(st), self._cur(), now), now, token,
+                                                              added=qs.get("added", [""])[0][:512]), qs)
                 elif parts == ["deals"]:
-                    self._page("deals", "Deals", view_deals(st, now, self._cur()), qs)
+                    self._page("deals", "Deals", view_deals(st, now, self._cur(), qs.get("syn", [""])[0] == "1"), qs)
                 elif parts == ["search"]:
                     from .ui_home import view_search
                     q = qs.get("q", [""])[0][:120]
@@ -1748,27 +2325,65 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                         self.send_header("Location", f"/card/{hits[0].passcode}")
                         self.send_header("Content-Length", "0")
                         return self.end_headers()
-                    self._page("search", q or "Card search", view_search(cards, q), qs)
+                    from .ui_home import Money
+                    self._page("search", q or "Card search", view_search(cards, q, st, Money(st, _engine_home(st), self._cur(), now)), qs)
                 elif parts[0] == "card" and len(parts) == 2 and parts[1].isdigit():
                     from .ui_home import view_card
                     self._page("search", (cards.card(parts[1]) or {}).get("name_en") or parts[1],
-                               view_card(st, cards, parts[1], now, self._cur(), book=_book(st, now), catalog=catalog() if catalog else None), qs)
+                               view_card(st, cards, parts[1], now, self._cur(), book=_book(st, now), catalog=catalog() if catalog else None,
+                                         token=token, filters={k: qs.get(k, [""])[0][:300] for k in ("platform", "graded", "type", "v")}),
+                               qs, crumb=("Cards", "/search"))
                 elif parts[0] == "deal" and len(parts) == 2:
-                    self._page("deals", parts[1], view_deal(st, parts[1], now, token, self._cur()), qs)
+                    self._page("deals", "Deal", view_deal(st, parts[1], now, token, self._cur()), qs, crumb=("Deals", "/deals"))
                 elif parts == ["evidence"]:
                     self._page("evidence", "Evidence", view_evidence(st, now, qs.get("printing", [""])[0] or None,
                                                                      qs.get("syn", [""])[0] == "1"), qs)
                 elif parts[0] == "obs" and len(parts) == 2:
                     oid = unquote(parts[1])
-                    self._page("evidence", oid, view_obs(st, oid, now, token), qs)
+                    self._page("evidence", "Record", view_obs(st, oid, now, token), qs, crumb=("Evidence", "/evidence"))
                 elif parts == ["import"]:
-                    self._page("import", "Import", view_import(token), qs)
+                    from .ui_import import view_import as view_import_pages
+                    csv_form = view_import(token).replace("<h1>Import</h1>", "<h2>Or a CSV you prepared</h2>", 1)
+                    from .capture import bookmarklet, capture_key, worth_pricing
+                    port = self.server.server_address[1]
+                    self._page("import", "Import", view_import_pages(st, token, qs.get("batch", [""])[0] or None,
+                                                                     catalog() if catalog else None, csv_form,
+                                                                     bookmark=bookmarklet(port, capture_key()), searches=[]), qs)
+                elif parts == ["market"]:
+                    from .ui_market import view_market
+                    self._page("market", "Market", view_market(st, now, self._cur(), _engine_home(st), qs, game="ygo", cards=cards, token=token), qs)
+                elif parts == ["market", "now"]:
+                    from .ui_now import view_now
+                    self._page("market", "Now", view_now(st, now, self._cur(), _engine_home(st), qs, game="ygo", cards=cards, token=token), qs)
                 elif parts == ["opportunities"]:
-                    self._page("opportunities", "Opportunities",
-                               view_opportunities(st, now, token, self._cur(), qs.get("show", ["open"])[0]), qs)
+                    if not _engine_ready(st):
+                        self._page("opportunities", "Listings", view_opportunities(st, now, token, self._cur(), "open"), qs)
+                    else:
+                        from .ui_board import view_board
+                        M = EngineMoney(st, _engine_home(st), self._cur(), now)
+                        self._page("opportunities", "Listings",
+                                   view_board(st, cards, now, M, qs=qs, home_cur=M.cur, token=token, back="/opportunities"), qs)
+                elif parts == ["alerts"]:
+                    from .ui_alerts import view_alerts
+                    self._page("alerts", "Alerts", view_alerts(st, now, _engine_home(st)), qs)
+                elif parts == ["opportunities", "engine"]:
+                    self._page("engine", "Engine details", view_opportunities(st, now, token, self._cur(), qs.get("show", ["open"])[0]), qs)
                 elif parts[0] == "opp" and len(parts) == 2:
+                    from .ui_listing import view_one
                     k = unquote(parts[1])
-                    self._page("opportunities", k, view_opportunity(st, k, now, token, self._cur()), qs)
+                    if not _engine_ready(st):
+                        raise KeyError(k)
+                    try:
+                        from .engine import load_profile
+                        prof = load_profile()
+                    except Exception:
+                        prof = None
+                    row = st.db.execute("SELECT payload_json FROM opportunity WHERE key=?", (k,)).fetchone()
+                    g = (json.loads(row[0]).get("game") if row else None) or "ygo"
+                    self.game = g
+                    idx = (pcards() if g == "pkm" else cards) or cards
+                    self._page("opportunities", "Listing", view_one(st, idx, k, now, token, EngineMoney(st, _engine_home(st), self._cur(), now), prof),
+                               qs, crumb=("Listings", "/pkm/opportunities" if g == "pkm" else "/opportunities"))
                 elif parts == ["costs"]:
                     self._page("costs", "Your costs", view_costs(token), qs)
                 elif parts == ["scan"]:
@@ -1787,11 +2402,12 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
             u = urlsplit(self.path)
             parts = [p for p in u.path.split("/") if p]
             n = int(self.headers.get("Content-Length") or 0)
-            if n > MAX_UPLOAD:
+            if n > (MAX_PAGES_UPLOAD if parts in (["import", "pages"], ["capture"]) else MAX_UPLOAD):   # a full 240-result page is several MB
                 return self._send(413, page("Too large", "<h1>Upload too large</h1>", nav="", store=store_path))
             raw = self.rfile.read(n)
             ctype = self.headers.get("Content-Type", "")
             files: dict[str, tuple[str, bytes]] = {}
+            many: dict[str, list[tuple[str, bytes]]] = {}
             if ctype.startswith("multipart/form-data"):
                 msg = BytesParser(policy=HTTP).parsebytes(b"Content-Type: " + ctype.encode() + b"\r\n\r\n" + raw)
                 form = {}
@@ -1799,17 +2415,165 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                     name = part.get_param("name", header="content-disposition")
                     if part.get_filename() is not None:
                         files[name] = (part.get_filename(), part.get_payload(decode=True) or b"")
+                        if files[name][1]:
+                            many.setdefault(name, []).append(files[name])
                     else:
                         form[name] = (part.get_payload(decode=True) or b"").decode()
             else:
                 form = {k: v[0] for k, v in parse_qs(raw.decode(), keep_blank_values=True).items()}
+            if parts == ["capture"]:
+                # The "Send to CardMan" bookmark posts from the marketplace's own page: it carries the capture key, not the
+                # form token, and only ever adds evidence.
+                from .capture import capture_key, file_name_for
+                if not secrets.compare_digest(form.get("k", ""), capture_key()):
+                    return self._send(403, page("Refused", "<h1>Refused</h1><p>This bookmark's key does not match. Add the bookmark "
+                                                "again from the Import page.</p>", nav="", store=store_path))
+                html_text = form.get("html", "")
+                if not html_text:
+                    return self._redirect("/import", err="the bookmark sent an empty page")
+                from .engine import Engine
+                from .sold_import import import_pages
+                try:
+                    eng = Engine(store_path, catalog=catalog() if catalog else None)
+                    res = import_pages(eng, [(file_name_for(form.get("url", "")), html_text.encode("utf-8"))], clock())
+                except Exception as x:
+                    return self._redirect("/import", err=f"Capture failed: {type(x).__name__}: {x}")
+                return self._redirect(f"/import?batch={res['batch']}", msg=f"Captured {res['rows']} sale(s) from the page; {res['new']} new.",
+                                      err="; ".join(res["errors"][:3]))
             if not secrets.compare_digest(form.get("t", ""), token):
                 return self._send(403, page("Refused", "<h1>Refused</h1><p>Form token mismatch. Reload the page.</p>",
                                             nav="", store=store_path))
             st = Store(store_path)
             now = clock()
             try:
-                if len(parts) == 3 and parts[0] == "deal" and parts[2] == "decide":
+                def _pile_back(added: str = ""):
+                    b = form.get("back", "")
+                    if not (b.startswith("/") and not b.startswith("//")):
+                        b = "/pile"
+                    if added:
+                        b += ("&" if "?" in b else "?") + urlencode({"added": added})
+                    return b
+
+                if parts[:1] == ["board"]:
+                    from . import ui_board as B
+                    B.ensure(st)
+                    ajax = form.get("ajax") == "1"
+                    back_to = form.get("back", "/opportunities")
+                    if not (back_to.startswith("/") and not back_to.startswith("//")):
+                        back_to = "/opportunities"
+                    raw_keys = ([] if ctype.startswith("multipart/form-data")
+                                else parse_qs(raw.decode(), keep_blank_values=True).get("keys", []))
+                    keys = list(dict.fromkeys(k.strip() for k in (form.get("keys", "").split("\n") + raw_keys) if k.strip()))[:500]
+
+                    def _done(payload, msg):
+                        if ajax:
+                            return self._send(200, json.dumps(payload).encode(), "application/json; charset=utf-8")
+                        self._redirect(back_to, msg=msg)
+
+                    if parts == ["board", "mark"]:
+                        if form.get("restore"):
+                            try:
+                                prev = json.loads(form["restore"])
+                            except ValueError:
+                                prev = {}
+                            B.restore_marks(st, {k: v for k, v in prev.items() if isinstance(v, str)}, now)
+                            return _done({"ok": 1}, "Marks restored.")
+                        mark = form.get("mark", "")
+                        if mark not in B.MARKS + ("none",):
+                            return _done({"ok": 0}, "Unknown mark.")
+                        prev = B.apply_mark(st, keys, mark, now)
+                        word = {"pinned": "Pinned to top.", "reviewed": "Marked reviewed.",
+                                "hidden": "Hidden from the board.", "none": "Marks cleared."}[mark]
+                        return _done({"ok": 1, "prev": prev}, word)
+                    if parts == ["board", "bulk"]:
+                        act = form.get("act", "")
+                        if act == "label":
+                            added = B.apply_label(st, keys, form.get("label", ""), form.get("color", "ink"), now)
+                            return _done({"ok": 1, "added": added}, f"Labeled {len(added)} listings.")
+                        if act in B.MARKS + ("none",):
+                            prev = B.apply_mark(st, keys, act, now)
+                            return _done({"ok": 1, "prev": prev}, "Handled.")
+                        return _done({"ok": 0}, "Unknown action.")
+                    if parts == ["board", "label"]:
+                        added = B.apply_label(st, keys, form.get("label", ""), form.get("color", "ink"), now)
+                        return _done({"ok": 1, "added": added}, "Labeled.")
+                    if parts == ["board", "unlabel"]:
+                        B.remove_label(st, keys, form.get("label", ""))
+                        return _done({"ok": 1}, "Label removed.")
+                    if parts == ["board", "view"]:
+                        vid = form.get("id", "")
+                        vid = int(vid) if vid.isdigit() else None
+                        new_id = B.save_view(st, form.get("name", ""), form.get("qs", ""), form.get("game", "ygo"), now, vid)
+                        return _done({"ok": 1, "id": new_id}, "View saved.")
+                    if parts == ["board", "viewdel"]:
+                        vid = form.get("id", "")
+                        gone = B.del_view(st, int(vid)) if vid.isdigit() else None
+                        return _done({"ok": 1 if gone else 0, "view": gone}, "View forgotten.")
+                    return self._send(404, page("Not found", "<h1>Not found</h1>", nav="", store=store_path))
+                if parts == ["pile"]:
+                    from .pile import add as pile_add, resolve as pile_resolve
+                    key = pile_resolve(st, form.get("url", "")[:2048])
+                    if not key:
+                        self._redirect(_pile_back(), err="No card behind that link yet. Try a TCGplayer product link, an eBay listing link, or an item number.")
+                    else:
+                        self._redirect(_pile_back(key), msg="In the pile - sort it left or right."
+                                        if pile_add(st, key, now) else "Already in the pile.")
+                elif parts == ["pile", "add"]:
+                    from .pile import add as pile_add, known as pile_known
+                    key = form.get("key", "")[:512]
+                    if not pile_known(st, key):
+                        self._redirect(_pile_back(), err="That card is not in the store yet.")
+                    else:
+                        self._redirect(_pile_back(key), msg="In the pile - sort it left or right."
+                                        if pile_add(st, key, now) else "Already in the pile.")
+                elif parts == ["pile", "sort"]:
+                    from .pile import sort as pile_sort
+                    res = pile_sort(st, form.get("key", "")[:512], form.get("side", ""), now, _engine_home(st))
+                    msg = {"nocard": "No card behind that listing to chase - it stays in the pile.",
+                           "noprice": "No price to set a chase against - it stays in the pile.",
+                           "missing": "That card is no longer in the pile."}.get(res, "Sorted.")
+                    self._redirect(_pile_back(), msg=msg)
+                elif parts == ["pile", "remove"]:
+                    from .pile import remove as pile_remove
+                    pile_remove(st, form.get("key", "")[:512])
+                    self._redirect(_pile_back(), msg="Removed from the pile.")
+                elif parts == ["pile", "chase"]:
+                    from .pile import chase_add
+                    try:
+                        th = float(form.get("threshold", ""))
+                        if not (th > 0 and th < 1e9):
+                            raise ValueError
+                    except ValueError:
+                        self._redirect(_pile_back(), err="Threshold needs to be a number above zero.")
+                    else:
+                        passcode = form.get("passcode", "")[:40]
+                        printing = form.get("printing", "")[:64]
+                        label = form.get("label", "")[:120] or passcode
+                        if not passcode:
+                            self._redirect(_pile_back(), err="No card picked.")
+                        else:
+                            chase_add(st, passcode, printing, label, th, _engine_home(st), now)
+                            self._redirect(_pile_back(), msg="Chase started. The bell fires when an ask lands under your number.")
+                elif parts == ["pile", "chase", "set"]:
+                    from .pile import chase_set
+                    try:
+                        cid = int(form.get("id", ""))
+                        th = float(form.get("threshold", ""))
+                        if not (th > 0 and th < 1e9):
+                            raise ValueError
+                    except ValueError:
+                        self._redirect(_pile_back(), err="Threshold needs to be a number above zero.")
+                    else:
+                        chase_set(st, cid, th)
+                        self._redirect(_pile_back(), msg="Chase threshold updated.")
+                elif parts == ["pile", "chase", "remove"]:
+                    from .pile import chase_remove
+                    try:
+                        chase_remove(st, int(form.get("id", "")))
+                    except ValueError:
+                        pass
+                    self._redirect(_pile_back(), msg="Chase stopped.")
+                elif len(parts) == 3 and parts[0] == "deal" and parts[2] == "decide":
                     sid = parts[1]
                     try:
                         st.record_decision(Decision(sid, Action(form.get("action", "")), form.get("rationale", "").strip(),
@@ -1836,14 +2600,25 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                         self._redirect(f"/obs/{quote(oid)}", err=str(x))
                 elif parts == ["engine", "tick"]:
                     try:
-                        from .engine import Engine
-                        eng = Engine(store_path, catalog=catalog() if catalog else None)
-                        rep = eng.tick(now)
-                        eng.db.close()
-                        self._redirect("/opportunities", msg=f"Checked: {rep.new_listings} new, {rep.analyzed} analyzed, "
-                                       f"{rep.open_opportunities} open.", err="; ".join(rep.errors[:3]))
+                        import subprocess
+                        import sys as _sys
+                        qv = form.get("quick")
+                        qv = qv[0] if isinstance(qv, list) else qv
+                        argv = [_sys.executable, "-m", "cardman.engine", "once", "--store", store_path]
+                        if str(qv or "") == "1":
+                            argv.append("--quick")
+                        subprocess.Popen(argv,
+                                         cwd=str(Path(__file__).resolve().parent.parent),
+                                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                         start_new_session=True)
+                        back = form.get("back") or ""
+                        if isinstance(back, list):
+                            back = back[0] if back else ""
+                        if not (str(back).startswith("/") and not str(back).startswith("//")):
+                            back = "/opportunities"
+                        self._redirect(str(back), msg="Check started. It runs in its own process, so the board stays live.")
                     except Exception as x:
-                        self._redirect("/opportunities", err=f"Check failed: {type(x).__name__}: {x}")
+                        self._redirect("/opportunities", err=f"Check failed to start: {type(x).__name__}: {x}")
                 elif len(parts) == 3 and parts[0] == "opp" and parts[2] == "confirm":
                     k = unquote(parts[1])
                     try:
@@ -1868,6 +2643,69 @@ def make_handler(store_path: str, token: str, clock=lambda: datetime.now(timezon
                         self._redirect("/results", msg=record_outcome(st, form, now))
                     except (ValueError, KeyError) as x:
                         self._redirect("/results", err=f"Not recorded: {x}")
+                elif parts == ["import", "pages"]:
+                    if not many.get("pages"):
+                        return self._redirect("/import", err="choose one or more saved pages")
+                    from .engine import Engine
+                    from .sold_import import import_pages
+                    try:
+                        eng = Engine(store_path, catalog=catalog() if catalog else None)
+                        res = import_pages(eng, many["pages"], now)
+                    except SystemExit as x:
+                        return self._redirect("/import", err=str(x))
+                    except Exception as x:          # nothing half-done is shown as success
+                        return self._redirect("/import", err=f"Import failed: {type(x).__name__}: {x}")
+                    msg = (f"Read {res['rows']} sale(s) from {len(res['pages'])} page(s); {res['new']} new." +
+                           (" Some are synthetic test pages and never price anything." if any(p['synthetic'] for p in res['pages']) else ""))
+                    self._redirect(f"/import?batch={res['batch']}", msg=msg, err="; ".join(res["errors"][:5]))
+                elif len(parts) == 3 and parts[0] == "obs" and parts[2] == "identify":
+                    oid, pid = unquote(parts[1]), form.get("printing", "")
+                    back = form.get("back") or "/import"
+                    if not back.startswith("/") or back.startswith("//"):
+                        back = "/import"
+                    cat = catalog() if catalog else None
+                    known = cat is not None and any(p.id == pid.split("|")[0] for p in cat.printings)
+                    if not known:
+                        return self._redirect(back, err="unknown printing")
+                    try:
+                        st.confirm_identity(oid, pid, actor="ui", now=now)
+                        # The same sale seen on another site (eBay and 130point) is the same card: confirm every copy.
+                        twins = [i for i in st.same_sale(oid) if i != oid]
+                        for i in twins:
+                            st.confirm_identity(i, pid, actor="ui", now=now)
+                        self._redirect(back, msg="Confirmed. That sale now counts for this printing"
+                                       + (f" (and its {len(twins)} copy on another site)." if twins else "."))
+                    except KeyError:
+                        self._redirect(back, err="no such sale")
+                elif parts == ["pkm", "character", "sale"] and pcards() is not None:
+                    from .ui_home import record_sale
+                    pid = form.get("printing") or ""
+                    card_key = pid.split("|")[0].rsplit("@", 1)[-1]
+                    back = form.get("back") or "/pkm/"
+                    if not back.startswith("/pkm/character/") or back.startswith("//"):
+                        back = "/pkm/"
+                    if not card_key.startswith("pkm-"):
+                        return self._redirect(back, err="pick a version of one card")
+                    try:
+                        record_sale(st, pcards().cat, card_key, form, now)
+                        self._redirect(back, msg="Sale added. It counts toward that version only.")
+                    except ValueError as x:
+                        self._redirect(back, err=str(x))
+                elif len(parts) == 4 and parts[0] == "pkm" and parts[1] == "card" and parts[3] == "sale" and pcards() is not None:
+                    from .ui_home import record_sale
+                    try:
+                        record_sale(st, pcards().cat, "pkm-" + parts[2], form, now)
+                        self._redirect(f"/pkm/card/{parts[2]}", msg="Sale added. It counts toward this version's price from now on.")
+                    except ValueError as x:
+                        self._redirect(f"/pkm/card/{parts[2]}", err=str(x))
+                elif len(parts) == 3 and parts[0] == "card" and parts[2] == "sale" and parts[1].isdigit():
+                    from .ui_home import record_sale
+                    cat = catalog() if catalog else None
+                    try:
+                        oid = record_sale(st, cat, parts[1], form, now)
+                        self._redirect(f"/card/{parts[1]}", msg="Sale added. It counts toward this version's price from now on.")
+                    except ValueError as x:
+                        self._redirect(f"/card/{parts[1]}", err=str(x))
                 elif parts == ["import"]:
                     if "csv" not in files:
                         return self._redirect("/import", err="choose a CSV file")
@@ -1899,16 +2737,71 @@ def catalog_loader(path: str):
     return get
 
 
+def _num(v: str) -> float | None:
+    try:
+        return float(v.replace(",", "")) if v.strip() else None
+    except (ValueError, AttributeError):
+        return None
+
+
+class CardManServer(ThreadingHTTPServer):
+    """A page asks for two dozen card images at once; the standard queue of 5 waiting connections made some of them fail
+    with "connection reset" (a card picture or a search suggestion silently missing)."""
+    request_queue_size = 128
+    daemon_threads = True
+
+
+ENGINE_LOCK = threading.Lock()
+ENGINE_STATUS: dict = {"every_min": 0, "last": None, "next": None, "running": False, "error": None}
+
+
+def background_engine(store_path: str, catalog, every_min: float, stop: "threading.Event") -> None:
+    """While the UI is open, run an engine pass every `every_min` minutes. One pass at a time, shared with the button."""
+    from datetime import timedelta
+    ENGINE_STATUS["every_min"] = every_min
+    while not stop.is_set():
+        if ENGINE_LOCK.acquire(blocking=False):
+            ENGINE_STATUS["running"] = True
+            try:
+                from .engine import Engine
+                eng = Engine(store_path, catalog=catalog() if catalog else None)
+                eng._skip_daily_catalog = False     # the app's own engine refreshes the master card list once a day
+                eng.tick()
+                eng.db.close()
+                ENGINE_STATUS["error"] = None
+            except Exception as x:            # keep the loop alive; the next pass may succeed
+                ENGINE_STATUS["error"] = f"{type(x).__name__}: {x}"
+            finally:
+                ENGINE_STATUS["running"] = False
+                ENGINE_STATUS["last"] = datetime.now(timezone.utc)
+                ENGINE_LOCK.release()
+        ENGINE_STATUS["next"] = datetime.now(timezone.utc) + timedelta(minutes=every_min)
+        stop.wait(every_min * 60)
+
+
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(prog="python -m cardman.ui")
     ap.add_argument("--store", default="data/store/evidence.sqlite")
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--catalog", default="data/cache/identity.sqlite", help="identity cache for the Scan page")
+    ap.add_argument("--engine-every", type=float, default=15, help="minutes between background engine passes; 0 turns them off")
     a = ap.parse_args(argv)
     Store(a.store).db.close()          # create the file and schema up front
-    srv = ThreadingHTTPServer(("127.0.0.1", a.port), make_handler(a.store, secrets.token_urlsafe(24),
+    def _boot():
+        try:
+            from .catalog_boot import ensure
+            ensure()
+        except Exception as x:
+            from .catalog_boot import write_status
+            write_status("error", f"{type(x).__name__}: {x}")
+    threading.Thread(target=_boot, daemon=True, name="catalog-boot").start()
+    srv = CardManServer(("127.0.0.1", a.port), make_handler(a.store, _ui_token(a.store),
                                                                   catalog=catalog_loader(a.catalog)))
     print(f"CardMan UI on http://127.0.0.1:{a.port}  (store {a.store}; Ctrl+C to stop)")
+    if a.engine_every > 0:
+        stop = threading.Event()
+        threading.Thread(target=background_engine, args=(a.store, catalog_loader(a.catalog), a.engine_every, stop), daemon=True,
+                         name="cardman-engine").start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

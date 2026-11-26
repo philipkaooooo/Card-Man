@@ -83,6 +83,28 @@ def test_raw_pages_are_rewritten(tmp_path):
     assert (d / "b.bin").read_bytes() == b"\xff\xfe binary untouched"
 
 
+def test_eias_token_does_not_widen_the_sweep(db):
+    token = "nY+sHZ2PrBmdj6wVnY+sEZ2PrA2dj6MMmIWoCJOBpQudj6x9nY+seQ=="
+    with sqlite3.connect(db) as c:
+        c.execute("INSERT INTO listing VALUES ('c','other',?)", (json.dumps({"eias": token}),))
+    purge_database(db, ["gone_user", token])
+    st = Store(db)
+    assert st.original("o3").seller_ref == "other"          # a value holding neither identifier is not rewritten
+    assert st.original("o1").seller_ref is None
+    assert REDACTED in st.db.execute("SELECT data_json FROM listing WHERE key='c'").fetchone()[0]
+    assert token.encode() not in db.read_bytes()
+
+
+def test_raw_files_match_an_eias_token_by_containment(tmp_path):
+    token = "nY+sHZ2PrBmdj6wVnY+sEZ2PrA2dj6MMmIWoCJOBpQudj6x9nY+seQ=="
+    d = tmp_path / "raw"
+    d.mkdir()
+    (d / "a.bin").write_text(json.dumps({"eias": token}))
+    (d / "b.bin").write_text("nothing here")
+    assert purge_files(d, ["gone_user", token]) == 1
+    assert token not in (d / "a.bin").read_text() and (d / "b.bin").read_text() == "nothing here"
+
+
 def test_regex_characters_in_a_name_are_literal(db):
     assert purge_database(db, ["g.ne_user"]).rows == 0
 

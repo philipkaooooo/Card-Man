@@ -1,0 +1,404 @@
+"""The PriceCharting cross-market: captured pages parse exactly, and the board shows them without inventing picks."""
+import json
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal as D
+
+import pytest
+
+from cardman import pc, trends
+from cardman.fx import FxRate
+from cardman.models import EvidenceType as ET, MarketObservation
+from cardman.store import Store
+
+NOW = datetime(2026, 11, 12, tzinfo=timezone.utc)
+P = "p:EN_TCG:LOB-EN001:legend-of-blue-eyes:ultra-rare@89631139"
+
+PD = ("Ungraded\tGrade 7\tGrade 8\t\n \n\n$2.38 +$0.22\t$17.95 -$0.01\t$21.40 -$0.01\t\n \n\n"
+      "1 sale per day\t5 sales per year\t1 sale per month\t\n+ \n\n \t \t \t\n \n\n"
+      "Grade 9\tGrade 9.5\tPSA 10\t\n \n\n$24.00 +$1.69\t$26.00 +$1.00\t$141.25 +$6.25\t\n \n\n"
+      "1 sale per week\t4 sales per year\t2 sales per week\t\n")
+
+SERIES = {
+    "Ungraded": [[1761955200000, 3.0], [1740812400000, 3.0], [1754028000000, 1.95],
+                 [1780293600000, 2.0], [1793512800000, 2.38]],
+    "7": [[1761955200000, 0.0], [1740812400000, 0.0], [1754028000000, 9.99],
+          [1780293600000, 14.54], [1793512800000, 17.95]],
+    "8": [[1761955200000, 0.0], [1740812400000, 0.0], [1754028000000, 11.13],
+          [1780293600000, 15.0], [1793512800000, 21.4]],
+    "9": [[1761955200000, 12.56], [1740812400000, 12.56], [1754028000000, 11.61],
+          [1780293600000, 20.79], [1793512800000, 24.0]],
+    "BGS 9.5": [[1761955200000, 14.0], [1740812400000, 14.0], [1754028000000, 14.38],
+                [1780293600000, 27.75], [1793512800000, 26.0]],
+    "PSA 10": [[1761955200000, 39.99], [1740812400000, 39.99], [1754028000000, 60.61],
+               [1780293600000, 87.5], [1793512800000, 141.25]],
+}
+
+
+def payload(url="https://www.pricecharting.com/game/pokemon-journey-together/mimikyu-ex-69"):
+    return {"title": "Mimikyu ex #69 Prices | Pokemon Journey Together | Pokemon Cards", "url": url,
+            "product": {"id": 8871273}, "pd": PD, "series": SERIES,
+            "pop": {"psa": [0, 1, 0, 3, 0, 5, 16, 70, 259, 124]}}
+
+
+def store_row(st, pid, row, game="pkm"):
+    from cardman.pc import SCHEMA
+    st.db.executescript(SCHEMA)
+    with st.db:
+        st.db.execute(
+            "INSERT OR REPLACE INTO pc_card (printing_id, game, url, title, query, match_note, grades, series, pop, "
+            "fetched, status) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (pid, game, row.get("url"), row.get("title"), "q", "test", json.dumps(row["grades"]),
+             json.dumps(row["series"]), json.dumps(row["pop"]), NOW.isoformat(), "ok"))
+
+
+def test_grade_cells_parse_in_display_order():
+    g = pc.parse_price_data(PD)
+    assert list(g) == ["Ungraded", "Grade 7", "Grade 8", "Grade 9", "Grade 9.5", "PSA 10"]
+    assert g["Ungraded"] == {"p": 2.38, "c": 0.22, "vol": "1 sale per day"}
+    assert g["PSA 10"] == {"p": 141.25, "c": 6.25, "vol": "2 sales per week"}
+    assert g["Grade 8"]["c"] == -0.01
+
+
+def test_zero_change_cells_do_not_shift_the_prices():
+    """PriceCharting prints an unchanged grade as `$1,922.70 $0.00`; that second dollar is a change, not a price."""
+    cells = {"Ungraded": "$1.04 -$0.08", "Grade 7": "$287.10 -$0.05", "Grade 8": "$437.60 -$0.08",
+             "Grade 9": "$1,922.70\n     \n     $0.00", "Grade 9.5": "$2,115.00\n   $0.00",
+             "PSA 10": "$2,307.00\n   $0.00"}
+    vols = ["1 sale per day", "rare", "rare", "volume: \n 1 sale per week", "volume: \n rare", "volume: \n rare"]
+    g = pc.cells_to_grades(cells, vols)
+    assert g["Grade 9"] == {"p": 1922.7, "c": 0.0, "vol": "1 sale per week"}
+    assert g["PSA 10"] == {"p": 2307.0, "c": 0.0, "vol": "rare"}
+    assert g["Ungraded"]["c"] == -0.08
+    assert g["Grade 7"]["vol"] == "rare"
+
+
+def test_series_are_named_like_the_grade_strip_and_keep_a_year():
+    row = pc.parse_product(payload())
+    assert row["grades"]["PSA 10"]["p"] == 141.25
+    assert set(row["series"]) == {"Ungraded", "Grade 7", "Grade 8", "Grade 9", "BGS 9.5", "PSA 10"}
+    assert row["series"]["PSA 10"][-1] == [1793512800000, 141.25]
+    assert all(v > 0 for pts in row["series"].values() for _t, v in pts)   # a zero month is no sale, not a $0 price
+
+
+def test_grade_series_matches_our_grade_keys():
+    row = pc.parse_product(payload())
+    assert pc.grade_series(row, "|")[0] == "Ungraded"
+    assert pc.grade_series(row, "PSA|10")[0] == "PSA 10"
+    assert pc.grade_series(row, "BGS|9.5")[0] == "BGS 9.5"
+    assert pc.grade_series(row, "BGS|7")[0] == "Grade 7"
+
+
+def test_grade_series_names_the_nearest_series_when_ours_is_absent():
+    """CGC 10 has no series of its own; the exact-grade rule is close as possible, and the label says which answered."""
+    row = pc.parse_product(payload())
+    assert pc.grade_series(row, "CGC|10")[0] == "PSA 10"
+    assert pc.grade_series(row, "CGC|9.5")[0] == "BGS 9.5"
+    assert pc.grade_series(row, "CGC|8")[0] == "Grade 8"
+    assert pc.grade_series(row, "CGC|5")[0] == "Grade 7"
+
+
+def test_year_change_compares_the_last_year_not_the_whole_chart():
+    month = 365 / 12 * 86_400_000
+    pts = [[int(i * month), 100.0] for i in range(60)]          # five years flat at 100
+    pts[-13][1] = 50.0                                          # exactly twelve months ago it was 50
+    assert pc.year_change(pts) == pytest.approx(100.0)          # +100% over the year, not +0% over five
+    assert pc.year_change([[1, 10.0], [2, 20.0], [3, 30.0]]) is None   # too short to call a year
+    thin = {"series": {"Ungraded": [[1, 2.0], [2, 2.5]]}}
+    assert pc.grade_series(thin, "PSA|10") is None          # nothing published to stand in: say nothing
+    assert pc.grade_series(thin, "SGC|Authentic") is None
+
+
+def test_pick_link_prefers_the_exact_number():
+    links = [{"h": "/game/pokemon-journey-together/mimikyu-ex-67", "t": "Mimikyu ex #67"},
+             {"h": "/game/pokemon-journey-together/mimikyu-ex-69", "t": "Mimikyu ex #69"},
+             {"h": "/game/pokemon-journey-together/mimikyu-ex-69-jumbo", "t": "Jumbo"}]
+    url, why = pc.pick_link(links, name="Mimikyu ex Journey Together", number="69")
+    assert url == "/game/pokemon-journey-together/mimikyu-ex-69" and why
+
+
+def test_pick_link_keeps_the_rarity_we_track():
+    links = [{"h": "/game/yugioh-magnificent-maestros/the-guiding-flute-starlight-rare-mams-en003", "t": ""},
+             {"h": "/game/yugioh-magnificent-maestros/the-guiding-flute-starlight-rare-mams-en003",
+              "t": "The Guiding Flute of Summoning Dragons [Starlight Rare] MAMS-EN003"},
+             {"h": "/game/yugioh-magnificent-maestros/the-guiding-flute-mams-en003",
+              "t": "The Guiding Flute of Summoning Dragons MAMS-EN003"},
+             {"h": "/game/yugioh-magnificent-maestros/the-guiding-flute-grand-master-rare-mams-en003",
+              "t": "The Guiding Flute of Summoning Dragons [Grand Master Rare] MAMS-EN003"}]
+    url, _ = pc.pick_link(links, code="MAMS-EN003", rarity="ultra rare")
+    assert url.endswith("/the-guiding-flute-mams-en003")
+    url, _ = pc.pick_link(links, code="MAMS-EN003", rarity="starlight rare")
+    assert url.endswith("/the-guiding-flute-starlight-rare-mams-en003")
+
+
+def test_pick_link_refuses_a_product_for_another_card():
+    links = [{"h": "/game/pokemon-secret-wonders/lugia-14", "t": "Lugia #14"},
+             {"h": "/game/pokemon-secret-wonders/mew-15", "t": "Mew #15"}]
+    url, why = pc.pick_link(links, name="Wormadam Plant Cloak Secret Wonders", number="41")
+    assert url is None and why == "no confident match"     # set words sit in every candidate's path
+    # a promo whose number PC lists under another scheme cannot be corroborated: no confident page
+    links = [{"h": "/game/pokemon-promo/volcarona-100", "t": "Volcarona [Staff] #100 Prices | Promo"}]
+    url, why = pc.pick_link(links, name="Volcarona", number="BW40", set_name="BW Black Star Promos")
+    assert url is None and why == "no confident match"
+
+
+def test_sweep_skips_fresh_rows_and_ingest_parses_captures(tmp_path):
+    st = Store(tmp_path / "e.sqlite")
+    store_row(st, "pk:EN:sv9-69:holo@pkm-sv9-69", pc.parse_product(payload()))
+    cap = tmp_path / "cap.json"
+    cap.write_text(json.dumps([{"printing_id": "pk:EN:sv10-1:normal@pkm-sv10-1", "payload": payload()}]))
+    assert pc.ingest(st, str(cap)) == 1
+    assert set(pc.rows_for(st, ["pk:EN:sv9-69:holo@pkm-sv9-69", "pk:EN:sv10-1:normal@pkm-sv10-1"])) == {
+        "pk:EN:sv9-69:holo@pkm-sv9-69", "pk:EN:sv10-1:normal@pkm-sv10-1"}
+
+
+def add_sales(st, printing, prices, days_ago):
+    for i, (amount, d) in enumerate(zip(prices, days_ago)):
+        when = NOW - timedelta(days=d)
+        st.add_observation(MarketObservation(
+            id=f"{printing[-8:]}-{i}", evidence_type=ET.MARKETPLACE_MARKED_SOLD, source="fixture",
+            original_amount=D(str(amount)), currency="TWD", event_time=when, capture_time=when,
+            source_url=f"fixture://{i}", printing_candidates=(printing,)), now=NOW)
+
+
+def test_board_keeps_the_year_line_and_the_zone_holds_the_grading_play(tmp_path):
+    from cardman.ui_market import view_market
+    from cardman.ui_now import view_now
+    st = Store(tmp_path / "e.sqlite")
+    add_sales(st, P, (100, 100, 100), (2, 5, 9))
+    st.add_fx(FxRate("USD", "TWD", D("32"), NOW - timedelta(hours=1), "test"), now=NOW)
+    trends.refresh(st, NOW, "TWD")
+    row = pc.parse_product(payload("https://www.pricecharting.com/game/yugioh-legend-of-blue-eyes/blue-eyes"))
+    row["grades"]["PSA 10"]["p"] = 141.25
+    store_row(st, P, row, game="ygo")
+    h = view_market(st, NOW, "TWD", "TWD", {}, game="ygo")
+    assert "1 yr · PC" in h and 'class="mpc mpcl down"' in h
+    assert "Ungraded · -21%" in h                          # 3.00 -> 2.38 is a fall
+    # the grading play lives in the Now zone; the board starts straight at the printing list
+    assert 'id="under"' not in h and 'id="grade"' not in h
+    z = view_now(st, NOW, "TWD", "TWD", {}, game="ygo")
+    # no live ask: the tile names the most the raw card may cost, after grading, shipping and fees
+    assert "Buy raw → grade → sell PSA 10" in z
+    assert "wait for" in z and "pay at most" in z and "all-in" in z
+
+
+def test_grading_tile_buys_at_the_live_ask_and_counts_its_costs(tmp_path):
+    from cardman.card_market import _SCHEMA as CARD_SCHEMA
+    from cardman.engine import _SCHEMA as ENGINE_SCHEMA
+    from cardman.history import ASK_SCHEMA
+    from cardman.ui_now import view_now
+    st = Store(tmp_path / "e.sqlite")
+    add_sales(st, P, (100, 100, 100), (2, 5, 9))
+    st.add_fx(FxRate("USD", "TWD", D("32"), NOW - timedelta(hours=1), "test"), now=NOW)
+    st.db.executescript(ENGINE_SCHEMA + CARD_SCHEMA + ASK_SCHEMA)
+    with st.db:
+        st.db.execute("INSERT INTO ask_daily VALUES (?,?,?,?,?,?,?)",
+                      (P, "|", NOW.date().isoformat(), 300.0, 300.0, 1, "TWD"))
+        st.db.execute("INSERT INTO listing (key, kind, price, currency, url, title, last_seen) "
+                      "VALUES ('l1', 'ask', '300', 'TWD', 'https://www.ebay.com/itm/1', 'Blue-Eyes LOB-EN001', ?)",
+                      (NOW.isoformat(),))
+        st.db.execute("INSERT INTO card_listing (passcode, key, card_prob, printing_id, printing_prob, lot, status) "
+                      "VALUES ('89631139', 'l1', 0.97, ?, 0.94, 0, 'SEEN')", (P,))
+    trends.refresh(st, NOW, "TWD")
+    row = pc.parse_product(payload("https://www.pricecharting.com/game/yugioh-legend-of-blue-eyes/blue-eyes"))
+    store_row(st, P, row, game="ygo")
+    h = view_now(st, NOW, "TWD", "TWD", {}, game="ygo")
+    assert "buy now" in h and "Open the raw listing" in h
+    # 4520 PSA 10 - 16.75% fees - 300 shipping = 3462.9 net; 1.015 * 300 + 2100 fixed = 2404.5 all-in
+    assert "NT$1,058" in h and "all-in" in h
+
+
+def test_zone_tiles_carry_values_images_and_sold_proof(tmp_path):
+    from cardman.card_market import _SCHEMA as CARD_SCHEMA
+    from cardman.engine import _SCHEMA as ENGINE_SCHEMA
+    from cardman.history import ASK_SCHEMA
+    from cardman.ui_now import view_now
+    st = Store(tmp_path / "e.sqlite")
+    add_sales(st, P, (2000, 2000, 2000), (2, 5, 9))
+    st.add_fx(FxRate("USD", "TWD", D("32"), NOW - timedelta(hours=1), "test"), now=NOW)
+    st.db.executescript(ENGINE_SCHEMA + CARD_SCHEMA + ASK_SCHEMA)
+    with st.db:
+        st.db.execute("INSERT INTO ask_daily VALUES (?,?,?,?,?,?,?)",
+                      (P, "|", NOW.date().isoformat(), 700.0, 700.0, 1, "TWD"))
+        st.db.execute("INSERT INTO listing (key, kind, price, currency, url, title, last_seen) "
+                      "VALUES ('l1', 'ask', '700', 'TWD', 'https://www.ebay.com/itm/1', 'Blue-Eyes LOB-EN001', ?)",
+                      (NOW.isoformat(),))
+        st.db.execute("INSERT INTO card_listing (passcode, key, card_prob, printing_id, printing_prob, lot, status) "
+                      "VALUES ('89631139', 'l1', 0.97, ?, 0.94, 0, 'SEEN')", (P,))
+    trends.refresh(st, NOW, "TWD")
+    h = view_now(st, NOW, "TWD", "TWD", {}, game="ygo")
+    under = h.split("Under typical now")[1].split("Buy raw")[0]
+    assert 'class="nz-tile"' in under and 'class="nz-art"' in under
+    assert "NT$700" in under and "NT$2,000" in under and "65% under" in under
+    assert 'class="sp"' in under and "marketplace marked sold" in under   # sold listings as proof
+    assert "Open the listing" in under
+
+
+def test_card_page_section_draws_all_six_grades(tmp_path):
+    from cardman.ui_pc import section
+    st = Store(tmp_path / "e.sqlite")
+    st.add_fx(FxRate("USD", "TWD", D("32"), NOW - timedelta(hours=1), "test"), now=NOW)
+    store_row(st, P, pc.parse_product(payload()), game="ygo")
+    h = section(st, P, "TWD", NOW)
+    assert "Graded prices on PriceCharting" in h
+    assert '<tr data-g="PSA 10">' in h and "NT$4,520.00" in h and "NT$76.16" in h
+    assert "2 sales per week" in h and "PSA 10: 124 graded" in h
+    assert 'data-pcsheet' in h and '"PSA 10"' in h
+    assert section(st, "p:EN_TCG:NOPE-EN001:x@1", "TWD", NOW) == ""
+
+
+def test_unswept_rows_say_so_instead_of_guessing(tmp_path):
+    from cardman.ui_market import view_market
+    from cardman.ui_now import view_now
+    st = Store(tmp_path / "e.sqlite")
+    add_sales(st, P, (100, 100, 100), (2, 5, 9))
+    trends.refresh(st, NOW, "TWD")
+    h = view_market(st, NOW, "TWD", "TWD", {}, game="ygo")
+    assert "not swept" in h and " copies/mo" in h
+    z = view_now(st, NOW, "TWD", "TWD", {}, game="ygo")
+    assert "No raw ask clears" in z and 'class="nz-tile grade"' not in z
+
+
+def test_card_page_trend_panel_is_pricecharting_with_a_decision_line(tmp_path):
+    from cardman.ui_home import Money, _trend_box
+    st = Store(tmp_path / "e.sqlite")
+    st.add_fx(FxRate("USD", "TWD", D("32"), NOW - timedelta(hours=1), "test"), now=NOW)
+    store_row(st, P, pc.parse_product(payload()), game="ygo")
+    h = _trend_box(st, P, "TWD", NOW, Money(st, "TWD", "TWD", NOW))
+    assert 'class="trendbox falling"' in h and "Slipping" in h and "-21%" in h   # 3.00 -> 2.38
+    assert "12-month trend · PriceCharting" in h and 'href="#pcsheet"' in h
+    assert "12-mo low" in h and "12-mo high" in h and "Monthly points" in h and ">5<" in h
+    assert "NT$76" in h and "Wait, or bid well under typical" in h
+    assert "newest" not in h                                 # our own move is out of the call
+    nothing = _trend_box(st, "p:EN_TCG:NOPE-EN001:x@1", "TWD", NOW, Money(st, "TWD", "TWD", NOW))
+    assert 'class="trendbox none"' in nothing and "No PriceCharting sold series" in nothing
+
+
+def test_chart_carries_a_dot_per_point_and_a_range_switch(tmp_path):
+    """Every monthly point ships in the payload; the plot draws one dot per point and the 3/6/9/12 switch rescales."""
+    import re
+    from cardman.ui_pc import section, PC_JS, PC_CSS
+    st = Store(tmp_path / "e.sqlite")
+    st.add_fx(FxRate("USD", "TWD", D("32"), NOW - timedelta(hours=1), "test"), now=NOW)
+    store_row(st, P, pc.parse_product(payload()), game="ygo")
+    h = section(st, P, "TWD", NOW)
+    data = json.loads(re.search(r'<script type="application/json" class="pcjson">(.*?)</script>', h, re.S).group(1))
+    psa = [g for g in data["grades"] if g["g"] == "PSA 10"][0]
+    assert len(psa["pts"]) == 5 and psa["pts"][-1][1] == round(141.25 * 32, 2)
+    assert data["sym"] == "NT$" and data["cur"] == "TWD"
+    assert 'class="pcrng"' in h and 'class="pctabs"' in h
+    assert 'class="n py"' in h and "prh" in h
+    assert "RANGES=[3,6,9,12]" in PC_JS
+    assert "dots.push(" in PC_JS and "stop(best)" in PC_JS      # snap to nearest dot, not nearest x
+    assert "setChangeTable()" in PC_JS and "months+' mo'" in PC_JS
+    assert ".htip" in PC_CSS and "position:absolute" in PC_CSS
+
+
+def test_captures_accumulate_so_history_deepens_past_the_26_week_window(tmp_path):
+    """A capture carries ~26 weeks; pc_point keeps every point it has ever seen, and rows_for merges them."""
+    from cardman.pc import SCHEMA, ingest, rows_for
+    st = Store(tmp_path / "e.sqlite")
+    st.db.executescript(SCHEMA)
+    pid = "pk:EN:sv9-69:holo@pkm-sv9-69"
+    first = {"printing_id": pid, "game": "pkm", "payload": payload()}
+    a = tmp_path / "a.json"
+    a.write_text(json.dumps([first]))
+    assert ingest(st, str(a)) == 1
+    later = json.loads(json.dumps(first))
+    later["payload"]["series"] = {"Ungraded": [[1796114800000, 2.5]],
+                                  "PSA 10": [[1793512800000, 150.0], [1796114800000, 160.0]]}
+    b = tmp_path / "b.json"
+    b.write_text(json.dumps([later]))
+    assert ingest(st, str(b)) == 1
+    ser = rows_for(st, [pid])[pid]["series"]
+    assert len(ser["PSA 10"]) == 6                       # 5 from the first capture, one point reused, one new
+    assert ser["PSA 10"][-2] == [1793512800000, 150.0]   # same week restated wins
+    assert len(ser["Ungraded"]) == 6                     # 5 + 1 new
+    assert [x for x, _v in ser["PSA 10"]] == sorted(x for x, _v in ser["PSA 10"])
+
+
+def test_rows_for_repairs_a_cents_history_against_the_grade_cell(tmp_path):
+    """A capture written before the unit correction stores cents; the reader anchors it to the grade cell."""
+    st = Store(tmp_path / "e.sqlite")
+    row = pc.parse_product(payload())
+    row["grades"]["Ungraded"]["p"] = 1606.4
+    row["series"]["Ungraded"] = [[1793512800000, 160640.0], [1790834400000, 149901.0]]
+    store_row(st, P, row)
+    got = pc.rows_for(st, [P])[P]["series"]["Ungraded"]
+    assert got == [[1790834400000, 1499.01], [1793512800000, 1606.4]]
+
+
+def test_rows_for_fixes_one_stray_cents_point_inside_a_dollar_series(tmp_path):
+    st = Store(tmp_path / "e.sqlite")
+    row = pc.parse_product(payload())
+    row["grades"]["Ungraded"]["p"] = 2.38
+    row["series"]["Ungraded"] = [[1740812400000, 300.0], [1780293600000, 2.0], [1793512800000, 2.38]]
+    store_row(st, P, row)
+    got = dict(pc.rows_for(st, [P])[P]["series"]["Ungraded"])
+    assert got[1740812400000] == 3.0 and got[1780293600000] == 2.0 and got[1793512800000] == 2.38
+
+
+def test_pick_link_discriminates_the_set_in_the_path():
+    links = [{"h": "/game/pokemon-30th-celebration/charizard-4", "t": "Charizard #4 Prices | Pokemon 30th Celebration"},
+             {"h": "/game/pokemon-base-set/charizard-4", "t": "Charizard #4 Prices | Pokemon Base Set"}]
+    url, _ = pc.pick_link(links, name="Charizard Base Set", number="4")
+    assert url == "/game/pokemon-base-set/charizard-4"
+
+
+def test_canonical_binds_the_standard_print_not_a_premium_variant():
+    class Pr:
+        def __init__(self, pid):
+            self.id = pid
+
+    class Cat:
+        def versions(self, cid):
+            return [Pr("pk:EN:base1-4:1st-edition-holo@pkm-base1-4"),
+                    Pr("pk:EN:base1-4:shadowless@pkm-base1-4"),
+                    Pr("pk:EN:base1-4:unlimited-holo@pkm-base1-4")]
+
+    assert pc.canonical(Cat(), "base1-4") == "pk:EN:base1-4:unlimited-holo@pkm-base1-4"
+
+
+def test_scope_is_every_card_of_the_first_151_and_nothing_past_it():
+    class Pr:
+        def __init__(self, pid):
+            self.id = pid
+
+    class Cat:
+        def __init__(self):
+            self._cards = {"a": ("a", "Charizard", "charizard", "base1", "4", "Pokémon", "Rare", None, None, "1999-01-09"),
+                           "b": ("b", "Chikorita", "chikorita", "neo1", "1", "Pokémon", "Rare", None, None, "2000-12-16")}
+
+        def versions(self, cid):
+            return [Pr(f"pk:EN:{cid}:holo@pkm-{cid}"), Pr(f"pk:EN:{cid}:reverse-holo@pkm-{cid}")]
+
+    class Who:
+        def dex(self, name):
+            return {"Charizard": 6, "Chikorita": 152}.get(name)
+
+    sc = pc.pkm_scope(Cat(), Who(), 151)
+    assert sorted(sc) == ["a"]                                  # one card is one product, whatever the printings
+    assert set(sc.values()) == {6}
+
+
+def test_sweep_never_searches_an_empty_query(tmp_path, monkeypatch):
+    """A printing with no card identity in the local catalog is labelled, not searched: PriceCharting
+    answers an empty q with 'No Results For ""', which is the defect this guards."""
+    st = Store(tmp_path / "e.sqlite")
+    pid = "pk:EN:tcg-125127:normal@pkm-tcg-125127"   # a TCGplayer id absent from the pkm catalog
+
+    class FakeBrowser:
+        def __init__(self, **kw): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def boom(*a, **k):
+        raise AssertionError("sweep fired a search for a printing with no identity")
+
+    monkeypatch.setattr(pc, "Browser", FakeBrowser)
+    monkeypatch.setattr(pc, "fetch_card", boom)
+    monkeypatch.setattr(pc, "_identify", lambda st, q: ({}, {}, {}, {}, {}))
+    out = pc.sweep(st, pids=[pid], log=lambda *a: None)
+    assert out["noidentity"] == 1 and out["done"] == 1
+    row = st.db.execute("SELECT status, query FROM pc_card WHERE printing_id=?", (pid,)).fetchone()
+    assert row == ("noidentity", "")
+    st.db.close()

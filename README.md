@@ -1,15 +1,22 @@
-# CardMan: private Yu-Gi-Oh! buying intelligence
+# CardMan: private card-market buying intelligence (Yu-Gi-Oh! OCG/TCG + Pokémon)
 
-Scope and rules: see the project's CLAUDE.md execution contract (JP OCG + EN TCG, TWD default, no Pokémon, no SaaS).
+Pricing rules: `docs/pricing-method.md` — a price comes from real sales of one exact printing, in one exact condition.
 
-## Status (2026-11-04, second pass)
+## Status (2026-11-21)
 
 ### Data access (tested, see `data/source_registry.json`)
 - **Working:** YAML Yugi (github.com/DawnbrandBots/yaml-yugi, compiled from Yugipedia) through the git proxy.
-  Revision `f0bbcfe1` (2026-11-04): 14,416 cards, 86,185 JP/EN printings in the local cache.
-- **Blocked (HTTP 403 from the environment's network proxy):** YGOResources, YGOPRODeck, Konami DB, eBay,
-  TCGplayer, PriceCharting, PSA, Yahoo! Auctions JP, Mercari JP. The network setting has to allow these hosts.
-- **No credentials set:** eBay, TCGplayer, PriceCharting.
+  Incremental sync into `data/cache/identity.sqlite` (printings, history, retire-don't-delete).
+- **Sold data:** saved result pages from eBay, 130point, Yahoo! Auctions and Mercari are read by the Import page
+  (`cardman/sold_import.py`, `cardman/sold_pages.py`); manual CSV remains the fallback. A guide price is a lead,
+  never a sale; each catalog version is priced from its own row (`cardman/tcgplayer.py`, `cardman/catalog/`).
+- **Live TCGplayer asks:** `python -m cardman.tcgplayer --feed all` stores one cheapest Near Mint page per Gen I
+  version in `public_listing`; the daily ask table joins it to the catalog by product id and finish, so the
+  character page, card page and market read TCGplayer asks next to eBay's. `scripts/tcg_feed_loop.py` repeats it daily.
+- **Catalogs:** Pokémon (`data/cache/pkm.sqlite`), Yu-Gi-Oh! (`identity.sqlite`) and the joined master list
+  (`catalog.sqlite`, one TCGplayer price per version) are re-downloaded automatically when missing
+  (`cardman/catalog_boot.py`).
+- **Blocked without keys or an open network:** eBay Browse API, live TCGplayer, PriceCharting, PSA.
 
 ### Identity
 - `identity_sources.py`: YAML Yugi normalizer (family = Konami ID; artwork = passcode, so alternate-art
@@ -31,6 +38,63 @@ Scope and rules: see the project's CLAUDE.md execution contract (JP OCG + EN TCG
   flagged. Untested live (no keys, host blocked).
 - Manual import (`examples/manual_import_TEMPLATE.csv`) is the path for sold, accepted-offer (eBay Product
   Research) and Japanese marketplace records until an API path opens.
+- `pc.py`: the PriceCharting cross-market. `python -m cardman.pc sweep` launches a headed Chrome over the
+  DevTools pipe (the site's Cloudflare challenge passes in the real browser, not in a scripted client),
+  resolves each product through the site search once, and stores the six grade prices, the sales-volume note
+  and the monthly points in `pc_card` (~2 KB a card). Scope is the first 151 Pokémon by National Dex, every
+  card of those characters (~5.6k): uncaptured rows first, then by sales demand. PriceCharting ships one
+  edition-blind product per card, so each catalog card binds to one product - its standard printing
+  (holo/normal/unlimited, `canonical`) - and a 1st-edition, reverse or jumbo print is not summed in beside
+  it. Those characters refresh daily and the rest of the board weekly; `--ttl-days` overrides, `--dex-max`
+  widens the scope, `--pid` narrows to one, `--refetch` re-checks a set, and `python -m cardman.pc cover`
+  prints priced / partial / missing per character. A product page parsed once serves every row that
+  resolves to it in the same pass, the set name in the card name scores the match against the whole href
+  path (two sets ship the same `charizard-4`), and a link with the right shape but the wrong card is
+  refused as nomatch instead of stored. History is
+  anchored to the grade cells on read (`_fix_units`): a capture written in cents is corrected against the
+  dollar cell, so a card cannot read 100x high. The market board's `1 yr · PC` column reads it against our
+  sold medians; a card whose PriceCharting raw price sits more than 3x from ours is treated as a different
+  printing. The grading strip buys raw at the cheapest live ask (linking the listing), adds inbound shipping
+  and the PSA fee from `data/profile.json`, and nets the PSA 10 after selling fees: it names the profit in
+  currency and the most the raw may cost when no ask is low enough. Each card page carries a PriceCharting
+  section of its own (`ui_pc.py`): all six grades selectable; every monthly sold point is its own dot and
+  hover snaps to the nearest one, naming the month, the price and the move since the month before - warm
+  dots on a rise, cold on a fall - under the capture date. A 3/6/9/12-month switch rescales plot and table
+  together, the change column recomputes client-side, and end tags price each live line, plus PSA/CGC
+  population. Every capture's points also go into `pc_point`, so the series deepens sweep over sweep. The
+  Characters tab (`zone.py`) covers the same first 151: one tile per Pokémon, cap from the latest Ungraded
+  price of every priced printing, a 12-month move only when a year of stored history exists and only from
+  current captures, sales pace from our ledger, and a tape counting fully priced and partial characters.
+  sweep and the 9/12-month views fill out instead of stopping at one capture's window.
+- `pile.py` is a board: new additions land in a full-width staging pile at the top (fanned, draggable),
+  and each card sorts left into Set aside or right into Chases - drag it across the zones or press its
+  buttons. A chase opens at the sold typical, the live ask when there is no comp; the card stays put when
+  neither exists.
+- `alerts.py` catches asks under the typical sold price the moment they land: the engine scans each batch
+  right after it is analyzed and sweeps the whole board at the end of every pass, writing one `ASK_UNDER`
+  signal per printing per price point (fee math identical to the under-typical section: raw in, raw out).
+  The bell in the header polls `/alerts.json` every 40 s, badges what is unseen, toasts new asks while the app
+  is open, and can post a desktop notification after one explicit click. Every alert links to its card page.
+- Alerts are followed to their end (`alert_outcomes.py`): the listing ended sold / accepted an offer is direct
+  evidence, a vanished ask counts as sold near the ask only when a raw sale of the same print lands inside the
+  ask band within 21 days, and anything else is gone. The Alerts page (`/alerts`) shows sell-through, the money
+  caught and the edge left on the table per week, plus every followed signal with what actually happened; the
+  bell shows each ask's state and how past alerts on that print resolved. Sell-through feeds back: with four or
+  more resolved alerts, a print under 25% stops alerting, and the bell and toasts are ordered by money at stake
+  times that print's past sell-through, each ask carrying a meter of its rate.
+- The board's **Trend** column (`trends.py`) uses one rule on every row: the median of the newest k sales
+  against the median of the k before them, k = min(5, sales/2). Up 5%+ is Climbing, down 5%+ Slipping,
+  inside that Holding. Too few sales for that, PriceCharting's own weekly series for the same grade supplies
+  the call from its 12-month change (the cell says `PC 12 mo`); only rows where neither can answer are Thin.
+  The header draws the same four categories as a segmented bar with a clickable count tile each (a second
+  click clears the filter), plus how many live asks sit under typical and the listed / sold-30d totals.
+- A card page carries the same call beside the price (`_trend_box` in `ui_home.py`): direction, percent, and
+  the evidence in plain words, with PriceCharting's weekly line drawn small and linked to the grade table.
+  The old price-over-time chart is gone - it drew one flat line from a handful of backfilled sales, so the
+  space belongs to the trend and the sales table stays below.
+- Raw sales are restated to Near Mint on the condition ladder (`conditions.py`) before any median, and a raw
+  ask in a played condition is restated up to NM the same way, so a cheaper lower-grade copy never poses as a
+  cheap NM copy. Unknown condition stays NM - it is never guessed.
 
 ### Evidence and decisions (`store.py`)
 - Observations are written once; rewriting one with different content is refused. Cancellations, refunds,
@@ -109,7 +173,7 @@ Paste a title and description as the seller wrote them (English or Japanese) wit
 
 ### Run
 ```
-pip install pytest && python -m pytest -q                      # 179 pass
+pip install pytest && python -m pytest -q                      # 506 pass
 python -m cardman.sources                                       # re-probe every source
 python -m cardman.identity_cache sync                           # clone/update YAML Yugi, sync cache
 python -m cardman.slice examples/identity_only_LB-01.json examples/manual_import_TEMPLATE.csv
@@ -119,11 +183,12 @@ python -m cardman.ui --store data/store/evidence.sqlite                         
 # the Scan page needs the identity cache: python -m cardman.identity_cache sync
 ```
 
-### Remaining gaps
-1. Network policy: open the hosts above, then test YGOResources (edition-level data) and YGOPRODeck live.
-2. EN edition (1st / Unlimited / Limited) and release dates: not in YAML Yugi; EN prints abstain until a
-   source with editions is reachable. Asian-English prints: no source yet (codes are quarantined on sight).
-3. eBay app keys for Browse; account exports for Product Research; no sold-data source is reachable yet,
-   so there are no real market observations.
-4. FX rates are still per listing file; comps from older runs need a rate near their sale date in that file.
-5. Image/OCR, grading sensitivities, Taiwan/JP sources, portfolio outcomes: not started.
+### Remaining gaps (2026-11-21)
+1. eBay app keys for Browse; sold data arrives as saved pages until then, so freshness depends on you re-saving.
+2. Japanese print dates: YGOResources lists English prints broadly and JP ones poorly — a missing date is unknown,
+   never "not the original".
+3. Two pricing lines ran in parallel on `main` and this branch (`mark`/refused-book caps over there, simulated
+   max-buy and an engine-checked spread scanner here). The one-SKU TCGplayer screening from `main` is imported;
+   the caps line is not merged. Pick one economics before further `main` work.
+4. The real-catalog registry tests skip until `catalog.sqlite` has been built once with an open network
+   (`python -c "from cardman.catalog_boot import ensure; ensure()"`).

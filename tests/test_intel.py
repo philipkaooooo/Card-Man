@@ -119,3 +119,22 @@ def test_rush_duel_is_blocked_even_when_a_duel_monsters_name_matches():
     for t in ("Harpie Lady Rush Rare RD/KP01-JP001", "Blue-Eyes White Dragon ラッシュデュエル", "Dark Magician Rush Duel promo"):
         a = analyze(t, CATALOG)
         assert a.blocked and a.has("OUT_OF_SCOPE")
+
+
+def test_a_year_is_not_a_lot_size():
+    from cardman.listing_parser import parse_listing_text as P
+    assert P("Vintage Yugioh 1996 Card Lot").lot_size is None
+    assert P("Lot of 160 Yu-Gi-Oh Cards From 1996").lot_size == 160
+    assert P("Yu-Gi-Oh! Collection Lot 250+ Cards").lot_size == 250
+
+
+def test_a_shortened_long_name_is_the_codes_own_card_not_a_mistake():
+    from cardman.identity import Catalog
+    from cardman.models import CardFamily, Printing, Region
+    short = CardFamily("fam:a", {"en": "Blue-Eyes Ultimate Dragon"})
+    long_ = CardFamily("fam:b", {"en": "Blue-Eyes Ultimate Dragon, the God-Surpassing Servant"})
+    cat = Catalog([short, long_], [Printing("p:a", "fam:a", "art:pw1", Region.JP_OCG, "ja", "x", "Ultra Rare", set_code="ABC-JP001"),
+                                   Printing("p:b", "fam:b", "art:pw2", Region.JP_OCG, "ja", "y", "Ultra Rare", set_code="YAC1-JP004")])
+    a = analyze("Blue-Eyes Ultimate Dragon YAC1-JP004 Ultra Rare", cat)
+    assert not a.has("CODE_NAME_MISMATCH") and [p.id for p in a.identity.candidates] == ["p:b"]
+    assert analyze("Blue-Eyes White Dragon LOB-EN005", CATALOG).has("CODE_NAME_MISMATCH")      # a real mismatch still flags

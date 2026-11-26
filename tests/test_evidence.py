@@ -57,3 +57,12 @@ def test_no_future_leakage_and_max_ten():
     rows.append(obs(99, E.MARKETPLACE_MARKED_SOLD, 1, listing_id="F", when=T + timedelta(days=1)))
     comps, _ = select_comps(rows, P_LOB_1ST.id, as_of=T, include_synthetic=True)
     assert len(comps) == 10 and comps[0].id == "o0"
+
+
+def test_the_same_print_named_twice_links_once(tmp_path):
+    from cardman.store import Store
+    st = Store(tmp_path / "s.sqlite")
+    assert st.add_observation(obs(1, E.MARKETPLACE_MARKED_SOLD, 30000,
+                                  printing_candidates=(P_LOB_1ST.id, P_LOB_1ST.id)), now=T)
+    assert st.db.execute("SELECT COUNT(*) FROM observation_printing").fetchone()[0] == 1
+    st.db.close()

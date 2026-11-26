@@ -7,3 +7,5 @@ data/store/
 data/profile.json
 data/privacy_salt
 data/screens/
+data/capture_key
+data/exports/

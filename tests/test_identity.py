@@ -1,6 +1,6 @@
 from cardman.identity import ListingSignals, parse_set_code, resolve
 from cardman.models import IdentityStatus, Region
-from tests.fixtures import CATALOG, P_JP_VOL1, P_LOB_1ST, STRUCT_QCSR
+from tests.fixtures import CATALOG, P_DM_LOB_1ST, P_JP_VOL1, P_LOB_1ST, STRUCT_QCSR
 
 
 def r(**kw):
@@ -24,6 +24,17 @@ def test_seller_typed_code_alone_never_resolves():
     res = r(title="Blue-Eyes White Dragon", seller_set_code="LOB-EN001", verified_edition="1st")
     assert res.status == IdentityStatus.CANDIDATES
     assert "set code only seller-entered" in res.blocking_reasons
+
+
+def test_seller_code_backed_by_exact_name_resolves_one_documented_printing():
+    res = r(title="Dark Magician LOB-EN005 Ultra Rare", seller_set_code="LOB-EN005", code_confirmed_by_name=True)
+    assert res.status == IdentityStatus.RESOLVED and res.printing == P_DM_LOB_1ST
+
+
+def test_seller_code_backed_by_exact_name_still_needs_the_edition_stamp():
+    res = r(title="Blue-Eyes White Dragon LOB-EN001", seller_set_code="LOB-EN001", code_confirmed_by_name=True)
+    assert res.status == IdentityStatus.CANDIDATES
+    assert any("edition" in e.lower() or "stamp" in e.lower() for e in res.evidence_needed)
 
 
 def test_japanese_vintage_without_set_code_is_first_class():

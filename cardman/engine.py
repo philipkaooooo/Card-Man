@@ -39,6 +39,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS listing (key TEXT PRIMARY KEY, source TEXT, listing_id TEXT, market TEXT, title TEXT, url TEXT, seller TEXT,
   kind TEXT, price TEXT, currency TEXT, ends_at TEXT, first_seen TEXT, last_seen TEXT, ended_at TEXT, fingerprint TEXT, data_json TEXT);
 CREATE INDEX IF NOT EXISTS listing_seller ON listing(seller, first_seen);
+CREATE INDEX IF NOT EXISTS listing_fresh ON listing(first_seen) WHERE ended_at IS NULL AND kind IN ('ask','bid','auction');
 CREATE TABLE IF NOT EXISTS listing_event (key TEXT, at TEXT, kind TEXT, old TEXT, new TEXT);
 CREATE INDEX IF NOT EXISTS listing_event_key ON listing_event(key, at);
 CREATE TABLE IF NOT EXISTS listing_review (key TEXT, at TEXT, actor TEXT, verified_json TEXT);
@@ -48,7 +49,9 @@ CREATE INDEX IF NOT EXISTS opp_rank ON opportunity(status, priority);
 CREATE TABLE IF NOT EXISTS inbox_seen (hash TEXT PRIMARY KEY, file TEXT, at TEXT);
 CREATE TABLE IF NOT EXISTS ocr_cache (path TEXT, mtime REAL, codes_json TEXT, text TEXT, PRIMARY KEY (path, mtime));
 CREATE TABLE IF NOT EXISTS market_signal (id TEXT PRIMARY KEY, kind TEXT, printing_id TEXT, at TEXT, detail_json TEXT);
+CREATE TABLE IF NOT EXISTS listing_analysis (key TEXT PRIMARY KEY, ids_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS engine_run (at TEXT, data_json TEXT);
+CREATE TABLE IF NOT EXISTS engine_meta (k TEXT PRIMARY KEY, v TEXT);
 """
 
 
@@ -73,8 +76,19 @@ class TickReport:
     rejected: int = 0
     signals: int = 0
     seconds: float = 0.0
+    ask_rows: int = 0
+    trends: int = 0
+    alerts: int = 0
+    validated: int = 0
+    watches: int = 0
     errors: list[str] = field(default_factory=list)
     routes: list[dict] = field(default_factory=list)
+    ebay_sold: dict = field(default_factory=dict)
+
+
+# Pokémon searches when the profile names none. eBay files them under the "Pokémon TCG" game aspect.
+PKM_QUERIES = ["pokemon special illustration rare", "pokemon 1st edition holo", "pokemon psa 10", "pokemon alt art",
+               "pokemon base set holo", "pokemon full art"]
 
 
 class Engine:
@@ -82,7 +96,7 @@ class Engine:
                  inbox: str | Path | None = None, raw_dir: str | Path | None = None, fx_get=None, reference_get=None, use_reference: bool = True):
         self.store_path = store_path
         self.store = Store(store_path)
-        self.db = sqlite3.connect(store_path)
+        self.db = sqlite3.connect(store_path, timeout=30)
         self.db.executescript(_SCHEMA)
         self.catalog_db = catalog_db or str(ROOT / "data" / "cache" / "identity.sqlite")
         self.catalog = catalog if catalog is not None else self._load_catalog()
@@ -93,9 +107,120 @@ class Engine:
         self.inbox = InboxAdapter(inbox or (ROOT / "data" / "inbox"), self.raw, self._seen)
         from .settings import load_env
         load_env()                       # eBay keys from the git-ignored .env, if present
-        self.ebay = EbayAdapter(self.raw, list(self.profile.get("ebay_queries") or []), self.catalog)
+        self.pkm = self._load_pkm()
+        pkm_q = [(q, "pkm") for q in (self.profile.get("pkm_ebay_queries") or PKM_QUERIES)] if self.pkm is not None else []
+        self.ebay = EbayAdapter(self.raw, list(self.profile.get("ebay_queries") or []) + pkm_q, self.catalog)
         self.reference = YgoprodeckReference(self.db, get=reference_get) if use_reference else None
         self.routes = [self.inbox, self.ebay] + ([self.reference] if self.reference else [])
+
+    def _load_pkm(self):
+        """The Pokémon catalog, if it has been synced (python -m cardman.pkm_catalog). Without it Pokémon stays off."""
+        from .pkm_catalog import DB, PkmCatalog
+        path = getattr(self, "pkm_db", None) or DB
+        try:
+            if not Path(path).exists():
+                return None
+            cat = PkmCatalog(path)
+            return cat if len(cat) else None
+        except Exception:
+            return None
+
+    def _daily_catalog(self, now: datetime, rep) -> None:
+        """Once a day after TCGplayer's daily update (~20:00 UTC): refresh its list and prices, rebuild the master card
+        list, and say loudly what any source lists that we do not."""
+        import sqlite3 as _sq
+        from .catalog import registry, tcgcsv
+        if getattr(self, "_skip_daily_catalog", True):       # off unless the app turns it on (never in tests)
+            return
+        try:
+            con = _sq.connect(registry.DB)
+            con.executescript(registry.SCHEMA)
+            built = dict(con.execute("SELECT k, v FROM catalog_meta").fetchall())
+            con.close()
+            if built.get("built_pkm") == now.date().isoformat() or now.hour < 21:
+                return
+            for g in ("pkm", "ygo"):
+                tcgcsv.sync(g, log=lambda *_: None)
+            registry.fetch_setlists()
+            from .pkm_catalog import PkmCatalog
+            # the plain Pokémon catalog: the build must never read the list it is writing
+            registry.build(ygo=self.catalog, pkm=PkmCatalog(self.pkm.db_path, registry=False), tcg_ygo=tcgcsv.latest("ygo"), tcg_pkm=tcgcsv.latest("pkm"), log=lambda *_: None)
+            con = _sq.connect(registry.DB)
+            miss = registry.missing(con)
+            con.close()
+            for game, m in miss.items():
+                if m.get("set") or m.get("card"):
+                    rep.errors.append(f"Missing from our card list ({game}): {m.get('set', 0)} sets, {m.get('card', 0)} cards")
+        except Exception as x:
+            rep.errors.append(f"card list refresh: {type(x).__name__}: {x}")
+
+    def _catalog_stamp(self) -> str:
+        """Changes whenever what identification reads changes: the rules (ANALYSIS_VERSION) or the master card list."""
+        from .catalog.registry import DB as REG
+        if getattr(self, "_stamp_at", 0) > time.monotonic() - 60:
+            return self._stamp
+        try:
+            built = REG.stat().st_mtime if REG.exists() else 0
+        except OSError:
+            built = 0
+        self._stamp, self._stamp_at = f"{ANALYSIS_VERSION}|{built:.0f}", time.monotonic()
+        return self._stamp
+
+    def catalog_for(self, game: str):
+        return self.pkm if game == "pkm" else self.catalog
+
+    def _analyze(self, r: RawListing, verified: dict, *, ocr: bool = False):
+        """Title, then eBay's item details as strong evidence when they agree, then what a person confirmed (wins)."""
+        from . import aspect_identity, listing_detail
+        from .intel import BLOCK, INFO, WARN, Finding
+        sig = listing_detail.signals((listing_detail.get(self.db, r.listing_id).get("aspects") or {})) if r.source.startswith("ebay") else {}
+        if r.game == "pkm":
+            from .pkm_intel import analyze as pkm_analyze
+            if self.pkm is None:
+                raise RuntimeError("Pokémon catalog not synced")
+            hint = aspect_identity.pkm(r.title, sig, self.pkm) if sig else aspect_identity.Hint()
+            use = {**hint.verified, "from_details": True} if (hint.verified and not hint.conflict) else {}
+            an = pkm_analyze(r.title, self.pkm, description=r.description, verified={**use, **verified})
+        else:
+            hint = aspect_identity.ygo(r.title, sig, self.catalog) if sig else aspect_identity.Hint()
+            use = hint.verified if not hint.conflict else {}
+            an = analyze(r.title, self.catalog, description=r.description, verified={**use, **verified},
+                         ocr_codes=self._ocr(r) if ocr else ())
+        if hint.other_game:
+            from .games import NAME
+            an.findings.append(Finding("OUT_OF_SCOPE", BLOCK, f"eBay lists this as a {NAME[hint.other_game]} card."))
+        if hint.language and r.game == "pkm":
+            an.findings.append(Finding("OUT_OF_SCOPE", BLOCK, "eBay's item details say it is not an English card."))
+        if hint.conflict:
+            an.findings.append(Finding("ASPECT_CONFLICT", WARN, hint.conflict))
+        elif hint.ignored:
+            an.findings.append(Finding("ASPECTS_IGNORED", INFO, hint.ignored))
+        elif use and an.identity.printing is not None:
+            an.findings.append(Finding("ASPECTS_CONFIRM", INFO, f"eBay's item details confirm this version ({hint.said})."))
+        if hint.grade and not r.grade_company:
+            r.grade_company, r.grade = hint.grade             # graded per eBay: never priced with ungraded copies
+        if not r.grade_company and getattr(an.parsed, "grade_company", None) and an.parsed.grade:
+            r.grade_company, r.grade = an.parsed.grade_company, an.parsed.grade   # "PSA 10" in the title: graded pool only
+        if not r.grade_company:
+            from . import conditions
+            r.condition = conditions.normalize(r.condition) or getattr(an.parsed, "condition", None)
+        r.detail_marker = json.dumps(sig, sort_keys=True)
+        return an
+
+    def _persist_condition(self, key: str, r: RawListing) -> None:
+        """Keep the condition the title names on the stored listing, so later passes price the same copy."""
+        if not r.condition:
+            return
+        row = self.db.execute("SELECT data_json FROM listing WHERE key=?", (key,)).fetchone()
+        if not row:
+            return
+        d = json.loads(row[0] or "{}")
+        if d.get("condition") == r.condition:
+            return
+        d["condition"] = r.condition
+        with self.db:
+            self.db.execute("UPDATE listing SET data_json=?, fingerprint=? WHERE key=?",
+                            (json.dumps(d, ensure_ascii=False), r.fingerprint(), key))
 
     def _load_catalog(self) -> Catalog:
         cache = IdentityCache(self.catalog_db)
@@ -112,11 +237,20 @@ class Engine:
         return self.db.execute("SELECT 1 FROM inbox_seen WHERE hash=?", (h,)).fetchone() is not None
 
     # -- memory ---------------------------------------------------------------------------------------------------
-    def remember(self, r: RawListing, now: datetime, rep: TickReport) -> None:
-        row = self.db.execute("SELECT price, kind FROM listing WHERE key=?", (r.key,)).fetchone()
+    def remember(self, r: RawListing, now: datetime, rep: TickReport) -> str:
+        """Returns "new", "changed" (price or state) or "same"."""
+        if r.photo_urls:
+            from . import listing_detail
+            listing_detail.save(self.db, r.listing_id, {"image": {"imageUrl": r.photo_urls[0]},
+                                                       "additionalImages": [{"imageUrl": u} for u in r.photo_urls[1:]]}, now, "search")
+        row = self.db.execute("SELECT price, kind, data_json FROM listing WHERE key=?", (r.key,)).fetchone()
+        if row and not r.condition:
+            r.condition = (json.loads(row[2] or "{}")).get("condition")   # eBay's "Used" must not erase a title's NM
+        state = "new" if row is None else ("changed" if (Decimal(row[0]) != r.price or row[1] != r.kind) else "same")
         data = {"description": r.description, "shipping": str(r.shipping) if r.shipping is not None else None, "photos": list(r.photos),
                 "grade_company": r.grade_company, "grade": r.grade, "condition": r.condition, "verified": r.verified, "printing_id": r.printing_id,
-                "event_time": r.event_time.isoformat() if r.event_time else None, "raw_ref": r.raw_ref, "synthetic": r.synthetic, "bids": r.bids}
+                "event_time": r.event_time.isoformat() if r.event_time else None, "raw_ref": r.raw_ref, "synthetic": r.synthetic, "bids": r.bids,
+                "game": r.game}
         ended = (r.event_time or now).isoformat() if r.kind in ("sold", "accepted_offer", "transaction", "unsold") else None
         with self.db:
             if row is None:
@@ -136,6 +270,7 @@ class Engine:
                                    fingerprint=?, data_json=? WHERE key=?""",
                                 (r.title, r.url, r.seller, r.kind, str(r.price), r.currency, r.ends_at.isoformat() if r.ends_at else None, now.isoformat(), ended,
                                  r.fingerprint(), json.dumps(data, ensure_ascii=False), r.key))
+        return state
 
     def _record_observation(self, r: RawListing, candidates: list[str], now: datetime, rep: TickReport) -> None:
         try:
@@ -169,7 +304,7 @@ class Engine:
                           shipping=Decimal(d["shipping"]) if d.get("shipping") else None, photos=tuple(d.get("photos") or ()),
                           grade_company=d.get("grade_company"), grade=d.get("grade"), condition=d.get("condition"), verified=d.get("verified") or {},
                           printing_id=d.get("printing_id"), event_time=datetime.fromisoformat(d["event_time"]) if d.get("event_time") else None,
-                          raw_ref=d.get("raw_ref"), synthetic=d.get("synthetic", False), bids=d.get("bids"))
+                          raw_ref=d.get("raw_ref"), synthetic=d.get("synthetic", False), bids=d.get("bids"), game=d.get("game") or "ygo")
 
     # -- analysis -------------------------------------------------------------------------------------------------
     def _ocr(self, r: RawListing) -> tuple[str, ...]:
@@ -199,36 +334,81 @@ class Engine:
     def _evidence_version(self, ids: list[str]) -> str:
         if not ids:
             return "0"
-        ph = ",".join("?" * len(ids[:500]))
-        return "/".join(str(x) for x in self.db.execute(
+        key = tuple(ids[:500])
+        memo = self.__dict__.setdefault("_ev_memo", {})
+        hit = memo.get(key)
+        if hit is not None:
+            return hit
+        ph = ",".join("?" * len(key))
+        val = "/".join(str(x) for x in self.db.execute(
             f"SELECT COUNT(*), MAX(o.recorded_at) FROM observation o JOIN observation_printing p ON p.obs_id=o.id WHERE p.printing_id IN ({ph})",
-            ids[:500]).fetchone())
+            key).fetchone())
+        memo[key] = val
+        return val
 
     def analyze_listing(self, key: str, book: PriceBook, now: datetime, rep: TickReport, *, force: bool = False) -> Opportunity | None:
         r = self.listing_from_row(key)
         verified = {**r.verified, **self.reviews(key)}
         authenticity = verified.pop("authenticity_ok", None)
-        an = analyze(r.title, self.catalog, description=r.description, verified=verified, ocr_codes=self._ocr(r))
-        ids = [p.id for p in an.identity.candidates]
-        fp = hashlib.sha256(json.dumps([ANALYSIS_VERSION, r.fingerprint(), verified, authenticity, ids[:500], self._evidence_version(ids),
-                                        now.date().isoformat() if r.ends_at else ""], sort_keys=True, default=str).encode()).hexdigest()[:16]
+        stamp = (getattr(r, "detail_marker", ""), self._catalog_stamp(), now.date().isoformat() if r.ends_at else "")
         prev = self.db.execute("SELECT analysis_fp, created_at, snapshot_id FROM opportunity WHERE key=?", (key,)).fetchone()
+
+        def fingerprint(ids: list[str]) -> str:
+            return hashlib.sha256(json.dumps([ANALYSIS_VERSION, r.fingerprint(), verified, authenticity, ids[:500], self._evidence_version(ids),
+                                              *stamp], sort_keys=True, default=str).encode()).hexdigest()[:16]
+
+        # Replay the last candidate set instead of re-identifying the card: the identity inputs are the only thing that changes.
+        if prev and not force:
+            stored = self.db.execute("SELECT ids_json FROM listing_analysis WHERE key=?", (key,)).fetchone()
+            if stored:
+                try:
+                    ids = json.loads(stored[0])
+                except ValueError:
+                    ids = None
+                if isinstance(ids, list) and prev[0] == fingerprint(ids):
+                    rep.skipped_unchanged += 1
+                    return None
+        an = self._analyze(r, verified, ocr=True)
+        self._persist_condition(key, r)
+        ids = [p.id for p in an.identity.candidates]
+        fp = fingerprint(ids)
         if prev and prev[0] == fp and not force:
             rep.skipped_unchanged += 1
+            with self.db:
+                self.db.execute("INSERT OR REPLACE INTO listing_analysis VALUES (?,?)", (key, json.dumps(ids)))
             return None
         rep.analyzed += 1
-        op = evaluate_listing(r, an, book, self.catalog, self.ledger, now)
+        op = evaluate_listing(r, an, book, self.catalog_for(r.game), self.ledger, now)
+        from .photo_match import apply
+        guarded = apply({**op.to_dict(), "listing_id": r.listing_id, "game": r.game}, key, self.db)
+        if guarded.get("photo") == "clash":
+            op.printing_id = None
+            op.expected_profit = None
+            op.kinds = [k for k in op.kinds if k not in ("REFERENCE_GAP", "UNDERPRICED", "RIGHT_PRINT_ONLY")]
+            if guarded.get("photo") == "clash" and "PHOTO_REJECTED" not in op.kinds:
+                op.kinds.append("PHOTO_REJECTED")
         snapshot = prev[2] if prev else None
-        escalated = self._escalate(r, an, op, verified, authenticity, book, now, rep)
+        escalated = (self._escalate(r, an, op, verified, authenticity, book, now, rep)
+                     if r.game == "ygo" and guarded.get("photo") != "clash" else None)
         if escalated:
             snapshot, op.stage, op.status = escalated
             rep.escalated += 1
         if op.status == REJECTED:
             rep.rejected += 1
+        body = {**op.to_dict(), "game": r.game, "kind": r.kind, "listing_id": r.listing_id,
+                "shipping": str(r.shipping) if r.shipping is not None else None, "price": str(r.price),
+                "currency": r.currency, "grade_company": r.grade_company, "grade": r.grade, "bids": r.bids,
+                "photo": guarded.get("photo")}
+        if guarded.get("photo") == "clash":
+            body["scenarios"] = guarded["scenarios"]
+            body["printing_id"] = None
+            body["expected_profit"] = None
+            body["kinds"] = op.kinds
         with self.db:
+            self.db.execute("INSERT OR REPLACE INTO listing_analysis VALUES (?,?)", (key, json.dumps(ids)))
             self.db.execute("INSERT OR REPLACE INTO opportunity VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                             (key, op.stage, op.status, op.priority, op.expected_profit, op.evpi, json.dumps(op.kinds), op.printing_id, snapshot, fp,
-                             json.dumps(op.to_dict(), ensure_ascii=False, default=str), prev[1] if prev else now.isoformat(), now.isoformat()))
+                             json.dumps(body, ensure_ascii=False, default=str), prev[1] if prev else now.isoformat(), now.isoformat()))
         return op
 
     def _escalate(self, r: RawListing, an, op: Opportunity, verified: dict, authenticity, book: PriceBook, now: datetime, rep: TickReport):
@@ -236,7 +416,7 @@ class Engine:
         p = an.identity.printing
         if not p or op.status == REJECTED or r.kind not in ("ask", "bid", "auction"):
             return None
-        val = book.value(p.id, r.grade_company, r.grade)
+        val = book.value(p.id, r.grade_company, r.grade, r.condition)
         if len(val.sales) < int(self.profile.get("min_comps", 3)) or not val.estimate:
             return None
         scenario = next((s for s in op.scenarios if s.printing_id == p.id), None)
@@ -320,50 +500,147 @@ class Engine:
         return added
 
     # -- the tick -------------------------------------------------------------------------------------------------
-    def tick(self, now: datetime | None = None) -> TickReport:
+    def tick(self, now: datetime | None = None, quick: bool = False) -> TickReport:
         started = time.monotonic()
         now = now or datetime.now(timezone.utc)
         rep = TickReport(at=now.isoformat())
+        self.__dict__.pop("_ev_memo", None)
         home = self.profile["home_currency"]
-        for base in ("USD", "JPY", "TWD"):
-            if base != home:
+        if not quick:
+            for base in ("USD", "JPY", "TWD"):
+                if base != home:
+                    try:
+                        self.fx.sync_latest(base, (home,))
+                    except Exception as x:
+                        rep.errors.append(f"FX {base}/{home}: {x}")
+        if not quick:
+            try:
+                from .ebay_deletion import sync as sync_deletions
+                sync_deletions(databases=[Path(self.store_path), ROOT / "data" / "cache" / "market.sqlite"], raw=self.raw.root)
+                # A long-running engine keeps decoded records in memory: drop them so an erased seller is gone there too.
+                self.store.__dict__.pop("_original_memo", None)
+            except Exception as x:   # stays queued online and is retried next pass
+                rep.errors.append(f"eBay deletions: {type(x).__name__}")
+        cal = self.ledger.calibration(now)      # the book exists before the first batch, so streamed listings get priced on arrival
+        book = PriceBook(self.store, self.fx, self.profile, now, bias=cal.resale_bias, reference=self.reference)
+        from .games import guess_game
+
+        def ingest(raws, qi=0, qn=0):
+            """One batch, end to end: remember, evidence, opportunity. The board shows it in seconds."""
+            if qn:
                 try:
-                    self.fx.sync_latest(base, (home,))
+                    with self.db:
+                        self.db.execute("INSERT OR REPLACE INTO engine_meta VALUES ('scan_progress', ?)", (f"{qi + 1}/{qn}",))
+                except Exception:
+                    pass
+            fresh = []
+            for r in raws:
+                if r.source not in ("ebay_browse:EBAY_US",) and not r.source.startswith("ebay_browse") and r.game == "ygo":
+                    r.game = guess_game(f"{r.title} {r.description}", self.pkm)     # imported pages: either game
+                # An unchanged asking price seen again is not a new fact: recording it every pass only bloated the store.
+                if self.remember(r, now, rep) != "same" or r.kind not in ("ask", "bid", "auction"):
+                    self._take_evidence(r, now, rep)
+                fresh.append(r.key)
+            for k in fresh:
+                try:
+                    self.analyze_listing(k, book, now, rep)
                 except Exception as x:
-                    rep.errors.append(f"FX {base}/{home}: {x}")
-        try:
-            from .ebay_deletion import sync as sync_deletions
-            sync_deletions(databases=[Path(self.store_path), ROOT / "data" / "cache" / "market.sqlite"], raw=self.raw.root)
-            # A long-running engine keeps decoded records in memory: drop them so an erased seller is gone there too.
-            self.store.__dict__.pop("_original_memo", None)
-        except Exception as x:   # stays queued online and is retried next pass
-            rep.errors.append(f"eBay deletions: {type(x).__name__}")
-        new: list[RawListing] = []
+                    rep.errors.append(f"{k}: {type(x).__name__}: {x}")
+            if fresh:   # an ask that beats its typical alerts now, not when the pass finishes
+                try:
+                    from . import alerts
+                    from .card_market import ensure_index
+                    ensure_index(self.store)      # the batch is not in card_listing until the index catches up
+                    marks = ",".join("?" * len(fresh))
+                    pids = [r[0] for r in self.db.execute(
+                        f"SELECT DISTINCT printing_id FROM card_listing WHERE key IN ({marks}) AND printing_id IS NOT NULL",
+                        fresh)]
+                    rep.alerts += alerts.scan(self.store, now, home, pids=pids) if pids else 0
+                except Exception as x:
+                    rep.errors.append(f"alerts: {type(x).__name__}: {x}")
+
         for route in (self.inbox, self.ebay):
             rep.routes.append(asdict(route.status()))
             try:
-                got, errs = route.poll(now)
-                new += got
-                rep.errors += errs
+                if route is self.ebay:
+                    _, errs = route.poll(now, on_batch=ingest)
+                    rep.errors += errs
+                else:
+                    got, errs = route.poll(now)
+                    ingest(got)
+                    rep.errors += errs
             except Exception as x:   # one route failing must not stop the others, or read as "no supply"
                 rep.errors.append(f"{route.name}: {x}")
         if self.reference:
             rep.routes.append(asdict(self.reference.status()))
-        for r in new:
-            self.remember(r, now, rep)
-            self._take_evidence(r, now, rep)
-        cal = self.ledger.calibration(now)
-        book = PriceBook(self.store, self.fx, self.profile, now, bias=cal.resale_bias, reference=self.reference)
+        if quick:   # a preview pass: the board has the new listings and their lasers; the rest can wait for the loop
+            rep.seconds = round(time.monotonic() - started, 3)
+            with self.db:   # a manual pass shows on the clock too: the board must not look like nothing landed
+                self.db.execute("INSERT OR REPLACE INTO engine_meta VALUES ('quick_pass', ?)",
+                                (json.dumps({"at": rep.at, "new": rep.new_listings}),))
+            return rep
+        if self.ebay.status().on:
+            # Sales seen through eBay's own API: sold counts that rose on tracked fixed-price listings.
+            from .ebay_sold_watch import check as check_sold_counts
+            try:
+                rep.ebay_sold = asdict(check_sold_counts(self, now, budget=int(self.profile.get("ebay_sold_checks_per_pass", 120))))
+            except Exception as x:
+                rep.errors.append(f"eBay sold counts: {type(x).__name__}: {x}")
         cutoff = (now - GONE_AFTER).isoformat()
         keys = [k for (k,) in self.db.execute("SELECT key FROM listing WHERE ended_at IS NULL AND last_seen>=? AND (ends_at IS NULL OR ends_at>?)",
                                               (cutoff, now.isoformat()))]
+        # When the card list or the rules change, every listing still shown is identified again, not only recent ones:
+        # a decision on screen never comes from an older card list.
+        stamp, was = self._catalog_stamp(), (self.db.execute("SELECT v FROM engine_meta WHERE k='catalog_stamp'").fetchone() or [None])[0]
+        if stamp != was:
+            seen = set(keys)
+            keys += [k for (k,) in self.db.execute("SELECT o.key FROM opportunity o JOIN listing l ON l.key=o.key WHERE l.ended_at IS NULL "
+                                                   "AND (l.ends_at IS NULL OR l.ends_at>?)", (now.isoformat(),)) if k not in seen]
         for k in keys:
             try:
                 self.analyze_listing(k, book, now, rep)
             except Exception as x:
                 rep.errors.append(f"{k}: {type(x).__name__}: {x}")
         rep.errors += list(dict.fromkeys(book.notes))[:20]
+        if stamp != was:
+            with self.db:
+                self.db.execute("INSERT OR REPLACE INTO engine_meta VALUES ('catalog_stamp', ?)", (stamp,))
+        self._daily_catalog(now, rep)
+        try:
+            # Photos for what people will look at first: listings worth a look, newest first. Ended ones are cleaned up.
+            from . import listing_detail
+            want = [r[0] for r in self.db.execute(
+                "SELECT l.listing_id FROM opportunity o JOIN listing l ON l.key=o.key WHERE l.ended_at IS NULL AND o.status<>'REJECTED' "
+                "AND l.source LIKE 'ebay%' ORDER BY (o.status='SHELVED'), o.priority DESC, l.first_seen DESC LIMIT 400")]
+            listing_detail.warm(self.db, want, limit=150)
+            listing_detail.evict(self.db, now)
+        except Exception as x:
+            rep.errors.append(f"photos: {type(x).__name__}")
         rep.signals = self.scan_market(book, now)
+        try:
+            from .history import update_ask_daily
+            rep.ask_rows = update_ask_daily(self.store, now, home)
+        except Exception as x:
+            rep.errors.append(f"ask snapshots: {type(x).__name__}: {x}")
+        try:
+            from .trends import refresh as refresh_trends
+            rep.trends = refresh_trends(self.store, now, home)
+        except Exception as x:
+            rep.errors.append(f"trend board: {type(x).__name__}: {x}")
+        try:
+            from . import alerts
+            from .card_market import ensure_index
+            ensure_index(self.store)
+            rep.alerts += alerts.scan(self.store, now, home)
+            from . import alert_outcomes
+            rep.validated = alert_outcomes.sweep(self.store, now, home)["sold"]
+        except Exception as x:
+            rep.errors.append(f"alerts: {type(x).__name__}: {x}")
+        try:
+            from . import pile
+            rep.watches = pile.tick(self.store, now, home)
+        except Exception as x:
+            rep.errors.append(f"card pile: {type(x).__name__}: {x}")
         rep.open_opportunities = self.db.execute("SELECT COUNT(*) FROM opportunity WHERE status=?", (OPEN,)).fetchone()[0]
         rep.seconds = round(time.monotonic() - started, 3)
         with self.db:
@@ -376,13 +653,17 @@ class Engine:
         verified.pop("authenticity_ok", None)
         if r.printing_id:
             base = r.printing_id.split("|")[0]
-            if not any(p.id == base for p in self.catalog.printings):
+            cat = self.catalog_for(r.game)
+            if cat is None or not (base in cat.by_id if r.game == "pkm" else any(p.id == base for p in cat.printings)):
                 rep.errors.append(f"{r.key}: unknown printing_id {r.printing_id}")
                 return
             cands = [r.printing_id]
         else:
-            an = analyze(r.title, self.catalog, description=r.description, verified=verified)
-            cands = [p.id for p in an.identity.candidates][:200]
+            if r.game == "pkm" and self.pkm is None:
+                return
+            an = self._analyze(r, verified)
+            self._persist_condition(r.key, r)
+            cands = list(dict.fromkeys(p.id for p in an.identity.candidates))[:200]
         self._record_observation(r, cands, now, rep)
 
 
@@ -392,21 +673,48 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("key", nargs="?")
     ap.add_argument("--store", default=str(ROOT / "data" / "store" / "evidence.sqlite"))
     ap.add_argument("--interval", type=int, default=900)
+    ap.add_argument("--quick", action="store_true")
     for f in ("printed-code", "rarity", "edition", "product", "language", "authentic"):
         ap.add_argument(f"--{f}")
     a = ap.parse_args(argv)
-    eng = Engine(a.store)
     if a.cmd == "confirm":
+        eng = Engine(a.store)
         if not a.key:
             ap.error("confirm needs a listing key")
         eng.confirm(a.key, {"printed_set_code": a.printed_code, "verified_rarity": a.rarity, "verified_edition": a.edition, "verified_product": a.product,
                             "card_language": a.language, "authenticity_ok": {"yes": True, "no": False}.get(a.authentic or "")},
                     actor="cli", now=datetime.now(timezone.utc))
+        return
+    import fcntl                          # one pass at a time across the loop, the Check button, and a manual run
+    lockfile = Path(str(a.store) + ".engine.lock")
+
+    def acquire():
+        h = open(lockfile, "a+")
+        try:
+            fcntl.flock(h, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            h.close()
+            return None
+        return h
+
+    holder = acquire()
+    if holder is None:
+        print(json.dumps({"skipped": "another engine is running"}))
+        return
+    eng = Engine(a.store)
+    eng._skip_daily_catalog = False          # the long-running engine keeps the master card list fresh
+    if a.cmd != "run":
+        print(json.dumps(asdict(eng.tick(quick=a.quick)), indent=1, ensure_ascii=False), flush=True)
+        return
     while True:
-        print(json.dumps(asdict(eng.tick()), indent=1, ensure_ascii=False))
-        if a.cmd != "run":
-            return
+        with eng.db:
+            eng.db.execute("INSERT OR REPLACE INTO engine_meta VALUES ('loop_heartbeat', ?)", (datetime.now(timezone.utc).isoformat(),))
+            eng.db.execute("INSERT OR REPLACE INTO engine_meta VALUES ('loop_interval_min', ?)", (f"{a.interval / 60:g}",))
+        print(json.dumps(asdict(eng.tick()), indent=1, ensure_ascii=False), flush=True)
+        holder.close()                       # the lock spans a pass, not the sleep, so the Check button can cut in
         time.sleep(a.interval)
+        while (holder := acquire()) is None:
+            time.sleep(5)
 
 
 if __name__ == "__main__":

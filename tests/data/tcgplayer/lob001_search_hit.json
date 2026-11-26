@@ -1,0 +1,47 @@
+{
+ "productId": 21792.0,
+ "productLineId": 2.0,
+ "productName": "Blue-Eyes White Dragon",
+ "setName": "The Legend of Blue Eyes White Dragon",
+ "setCode": "LOB",
+ "rarityName": "Ultra Rare",
+ "sealed": false,
+ "marketPrice": 119.14,
+ "lowestPrice": 15.0,
+ "medianPrice": 131.74,
+ "customAttributes": {
+  "number": "LOB-001"
+ },
+ "listings": [
+  {
+   "listingId": 355518411.0,
+   "productId": 21792.0,
+   "price": 161.99,
+   "shippingPrice": 3.99,
+   "condition": "Near Mint",
+   "printing": "Unlimited",
+   "language": "English",
+   "quantity": 2.0
+  },
+  {
+   "listingId": 516879650.0,
+   "productId": 21792.0,
+   "price": 19.87,
+   "shippingPrice": 0.0,
+   "condition": "Damaged",
+   "printing": "Unlimited",
+   "language": "English",
+   "quantity": 1.0
+  },
+  {
+   "listingId": 851892901.0,
+   "productId": 21792.0,
+   "price": 19.9,
+   "shippingPrice": 0.0,
+   "condition": "Damaged",
+   "printing": "Unlimited",
+   "language": "English",
+   "quantity": 1.0
+  }
+ ]
+}

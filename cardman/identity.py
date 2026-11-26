@@ -40,6 +40,7 @@ class ListingSignals:
     title: str
     printed_set_code: str | None = None       # read from the card image (verified), or None
     seller_set_code: str | None = None        # what the seller typed
+    code_confirmed_by_name: bool = False      # the title's exact card name points at the typed code's own card
     seller_rarity: str | None = None
     verified_rarity: str | None = None        # confirmed from angled imagery
     verified_edition: str | None = None       # confirmed from edition-stamp photo
@@ -329,7 +330,9 @@ def resolve(signals: ListingSignals, catalog: Catalog) -> IdentityResult:
             # A typo-matched name is fine for candidates but needs image confirmation.
             return IdentityResult(IdentityStatus.CANDIDATES, cands, ev, block + ["name matched only fuzzily"],
                                   ["front photo with readable card name"])
-        if not (printed or p.set_code is None):
+        if not (printed or p.set_code is None) and not signals.code_confirmed_by_name:
+            # A typed code the exact card name independently backs is two seller statements agreeing
+            # on one printing; the photo check is the arbiter. A code no name backs stays unconfirmed.
             return IdentityResult(IdentityStatus.CANDIDATES, cands, ev,
                                   block + ["set code only seller-entered"], [DIMENSION_EVIDENCE["set_code"]])
         if p.identity_status != "documented":
