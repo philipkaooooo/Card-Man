@@ -243,7 +243,7 @@ def test_home_hunt_passes_on_a_measured_discount_not_a_flag(board):
     assert "Under what to pay" in page and "Worth a second look" in page
 
 
-def test_home_hunt_counts_an_under_pc_ask_with_no_sales_as_a_deal(board):
+def test_home_hunt_counts_an_under_pc_ask_with_no_sales_as_a_look_not_a_deal(board):
     get, post, ajax, db = board
     from tests.test_listing_verdict import D, sc
     pid = "p:EN_TCG:LOB-EN001:legend-of-blue-eyes-white-dragon:ultra-rare@89631139"
@@ -257,8 +257,44 @@ def test_home_hunt_counts_an_under_pc_ask_with_no_sales_as_a_deal(board):
                       ("USD", "TWD", "32", "2026-11-03T12:00:00+00:00", "test", "0", "2026-11-03T12:00:00+00:00"))
     st.db.close()
     page = get("/")
-    assert re.search(r'class="hun card sig-good" href="[^"]*"[^>]*data-key="ebay_browse:EBAY_US:pcdeal"', page)
+    # a PriceCharting comp is not a recorded sale: the profile reads this as a 2x Check, so the feed
+    # must agree - amber, never a green deal seal
+    assert re.search(r'class="hun card sig-avg" href="[^"]*"[^>]*data-key="ebay_browse:EBAY_US:pcdeal"', page)
+    assert not re.search(r'class="hun card sig-good" href="[^"]*"[^>]*data-key="ebay_browse:EBAY_US:pcdeal"', page)
     assert 'bi-src pc' in page
+
+
+def test_pc_comp_keys_on_the_exact_grader_not_a_psa_assumption(board):
+    from cardman.ui_home import _pc_grade
+    # the captured columns are PriceCharting's PSA-assumed defaults
+    assert _pc_grade("10", "PSA") == "PSA 10"
+    assert _pc_grade("10") == "PSA 10"
+    assert _pc_grade("9", "PSA") == "Grade 9"
+    assert _pc_grade(None) == "Ungraded"
+    # a different grader's slab is a different market: abstain rather than price it as PSA
+    assert _pc_grade("10", "CGC") == "CGC 10"
+    assert _pc_grade("10", "BGS") == "BGS 10"
+    assert _pc_grade("9.5", "Beckett") == "BGS 9.5"
+    assert _pc_grade("10", "CGC") not in {"Ungraded", "Grade 7", "Grade 8", "Grade 9", "Grade 9.5", "PSA 10"}
+
+
+def test_a_cgc_slab_is_not_priced_against_the_psa_column(board):
+    get, post, ajax, db = board
+    from tests.test_listing_verdict import D, sc
+    pid = "p:EN_TCG:LOB-EN001:legend-of-blue-eyes-white-dragon:ultra-rare@89631139"
+    _add_listing(db, "cgc10", payload=D(kinds=[], scenarios=[sc(pid=pid)], printing_id=pid, all_in_home=400.0,
+                                        priced_share=1.0, grade_company="CGC", grade="10"))
+    st = Store(db)
+    with st.db:
+        st.db.execute("CREATE TABLE pc_card (printing_id TEXT, grades TEXT, status TEXT)")
+        st.db.execute("INSERT INTO pc_card VALUES (?,?,?)", (pid, json.dumps({"PSA 10": {"p": 100.0}}), "ok"))
+        st.db.execute("INSERT INTO fx_rate (base, quote, mid, as_of, source, spread_pct, recorded_at) VALUES (?,?,?,?,?,?,?)",
+                      ("USD", "TWD", "32", "2026-11-03T12:00:00+00:00", "test", "0", "2026-11-03T12:00:00+00:00"))
+    st.db.close()
+    page = get("/")
+    assert "ebay_browse:EBAY_US:cgc10" in page
+    assert "bi-src pc" not in page          # no CGC column captured -> no comp, never the PSA 10 price
+    assert "PSA 10 $100" not in page
 
 
 def test_home_labels_the_grade_and_collapses_identical_asks(board):

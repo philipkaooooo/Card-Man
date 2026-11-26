@@ -436,6 +436,7 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
         why, worth, refmid = "", None, None
         glabel, gkind = _grade_label(d, title or "")
         name = ""
+        mb_basis = None
         if M is not None and payload:
             try:
                 vv = verdict(d, status or "OPEN", M)
@@ -446,6 +447,7 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
                 name = " \u00b7 ".join((tp.get("label") or "").split(" \u00b7 ")[:2])
                 sub = " \u00b7 ".join(b for b in (name, glabel) if b)
                 ai, mb = d.get("all_in_home"), tp.get("max_buy")
+                mb_basis = tp.get("basis")
                 why = vv.reason
                 worth = M(mb) if mb else None
                 refmid = tp.get("resale_mid") if tp.get("basis") == "reference" else None
@@ -462,7 +464,9 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
         spk = spark_map.get(pid) or spark_map.get(pid.split("@")[0]) or ""
         pcval = ""
         rate, vol = None, ""
-        gkey = _pc_grade(d.get("grade"))
+        gcomp = d.get("grade_company") or (glabel.split(" ", 1)[0] if gkind == "graded" else "")
+        gnum = d.get("grade") or (glabel.split(" ", 1)[1] if gkind == "graded" and " " in glabel else "")
+        gkey = _pc_grade(gnum, gcomp)
         pcvals = pcm.get(pid) or {}
         if not pcvals and oa and gkind == "raw":
             # A raw card identified to one artwork but not one print: the cheapest ungraded comp across the
@@ -485,30 +489,37 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
                 pcval = " \u00b7 ".join(bits) + (" \u00b7 " + e(vol.replace(" per ", "/")) if vol else "")
             except Exception:
                 pcval = ""
-        # The hunt passes on a measured discount, not a flag: an ask at or under the sold ceiling,
-        # or under the PriceCharting comp, is a deal even when the engine never tagged it UNDERPRICED;
-        # an ask within a hair of either is fair market and worth a look. Identity must be settled first -
-        # a confirmed print, or a raw card pinned to one artwork whose ungraded comp bounds every version.
+        # A green seal must agree with the listing profile. The profile only calls a card a Buy on a
+        # recorded-sale ceiling with a confirmed print; a PriceCharting comp or a price guide is not a
+        # sale (it reads as a 2x Check there), and a SHELVED card reads as Skip. So the feed promotes to
+        # good only on a sales-backed ceiling under the ask on a confirmed print - never on a comp alone,
+        # never on a guide ceiling, never on a shelved card. A comp discount lifts an unrated card to a
+        # look, not to a deal. Identity must be settled first.
         ident = pid or (oa if gkind == "raw" else "")
         if code != "good" and ident and not suspect(d) and d.get("photo") != "clash" \
+                and status not in ("SHELVED", "REJECTED") \
                 and "LOT" not in (d.get("kinds") or []) and "MISIDENTIFIED" not in (d.get("kinds") or []):
             try:
                 aif = float(d.get("all_in_home") or 0)
             except (TypeError, ValueError):
                 aif = 0.0
-            ceil = float(mb) if mb else 0.0
+            ceil = float(mb) if (mb and mb_basis == "sales") else 0.0
             comp = float(rate) if rate is not None else 0.0
             under_ceil = bool(aif and ceil and aif <= ceil)
             # A guide is not a sale: an ask under a fifth of the PC comp is a reprint, a fake or the wrong
             # card, not a bargain - the same floor suspect() applies to a reference value.
             under_pc = bool(aif and comp and aif <= comp * 0.97 and aif >= comp * 0.20)
-            if under_ceil or under_pc:
-                code = "good"
+            if under_ceil and pid:
+                code = "good"   # under the recorded-sale ceiling on a confirmed print: the profile agrees
+            elif under_ceil or under_pc:
+                if code == "none":
+                    code = "avg"   # a measured discount worth a look, not a confirmed buy
                 if under_pc and not under_ceil:
-                    why = "Asking {} against a {} PriceCharting comp - {:.0f}% under the market's own sales.{}".format(
+                    why = "Asking {} against a {} PriceCharting comp - {:.0f}% under that comp. A comp is not a recorded sale; check the photos.{}".format(
                         M(aif), M(comp), (comp - aif) / comp * 100, "" if pid else " Exact print unconfirmed.")
             elif aif and ((ceil and aif <= ceil * 1.10) or (comp and aif <= comp * 1.05)):
-                code = "avg"
+                if code in ("none", "bad"):
+                    code = "avg"   # a hair over the ceiling is fair market, worth a second look, not a hard skip
         counts["all"] += 1
         counts[code] += 1
         price_txt = charts.fmt(Decimal(str(price)), currency) if price not in (None, "") else "—"
@@ -673,10 +684,21 @@ def _just_posted(st, now: datetime, game: str, M=None, f: dict | None = None, ba
 _PC_GRADE = {"7": "Grade 7", "8": "Grade 8", "9": "Grade 9", "9.5": "Grade 9.5", "10": "PSA 10"}
 
 
-def _pc_grade(grade) -> str:
-    """Which PriceCharting column a listing's grade maps onto; ungraded is the default shelf."""
+def _pc_grade(grade, company=None) -> str:
+    """Which PriceCharting column a listing's grade maps onto; ungraded is the default shelf.
+
+    The captured cells are PriceCharting's PSA-assumed defaults (Grade 7/8/9/9.5, PSA 10). A different
+    grader's slab is a different market - a CGC 10 is not a PSA 10 - so without that grader's own column
+    we abstain (return a key no row carries) rather than price it against PSA. Future sweeps that capture
+    the grader-specific toggles can map straight onto those columns."""
     m = re.search(r"(\d+(?:\.\d+)?)", str(grade or "").lower())
-    return _PC_GRADE.get(m.group(1), "Ungraded") if m else "Ungraded"
+    if not m:
+        return "Ungraded"
+    num = m.group(1)
+    comp = str(company or "").upper().replace("BECKETT", "BGS").strip()
+    if comp and comp != "PSA":
+        return "{} {}".format(comp, num)
+    return _PC_GRADE.get(num, "Ungraded")
 
 
 _GRADER_RE = re.compile(
@@ -774,7 +796,7 @@ def _pulse(st, now: datetime, game: str, M=None) -> str:
                     (game,)):
                 try:
                     dd = json.loads(pj) or {}
-                    u = (json.loads(grades) or {}).get(_pc_grade(dd.get("grade"))) or {}
+                    u = (json.loads(grades) or {}).get(_pc_grade(dd.get("grade"), dd.get("grade_company"))) or {}
                     ask = dd.get("all_in_home")
                     if not u.get("p") or not ask or M.fx is None:
                         continue
